@@ -2,7 +2,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const core = require("@actions/core");
 const tc = require("@actions/tool-cache");
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-core");
 const { fetch } = require("undici");
 
 async function main() {
