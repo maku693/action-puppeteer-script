@@ -11,6 +11,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prettier -c .
+      - run: npm build
 
   test:
     runs-on: ubuntu-latest
