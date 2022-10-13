@@ -2,7 +2,7 @@ on: [push]
 
 jobs:
   ci:
-    runs-on: ubutu-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - uses: actions/setup-node
@@ -13,7 +13,7 @@ jobs:
       - run: npx prettier -c .
 
   test:
-    runs-on: ubutu-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - id: return-result
