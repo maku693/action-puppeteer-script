@@ -1,0 +1,27 @@
+on: [push]
+
+jobs:
+  ci:
+    runs-on: ubutu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node
+        with:
+          node-version: 16
+          cache: npm
+      - run: npm ci
+      - run: npx prettier -c .
+
+  test:
+    runs-on: ubutu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - id: return-result
+        uses: ./
+        with:
+          script: |
+            const page = await browser.newPage();
+            await page.goto('https://example.com');
+            const title = await page.$eval('title', el => el.textContent);
+            return title;
+      - run: test "${{ steps.return-result.outputs.result }}" = '{"title":"Example Domain"}'
