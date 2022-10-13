@@ -12,6 +12,7 @@ jobs:
       - run: npm ci
       - run: npx prettier -c .
       - run: npm run build
+      - run: git diff --exit-code
 
   test:
     runs-on: ubuntu-latest
