@@ -13,7 +13,7 @@
     "@actions/io": "^1.1.2",
     "@actions/tool-cache": "^2.0.1",
     "@vercel/ncc": "^0.34.0",
-    "puppeteer-core": "^18.2.1",
+    "puppeteer-core": "^18.1.0",
     "undici": "^5.11.0"
   },
   "devDependencies": {

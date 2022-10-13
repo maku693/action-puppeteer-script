@@ -47515,7 +47515,7 @@ const Connection_js_1 = __nccwpck_require__(370);
 const fetch_js_1 = __nccwpck_require__(9831);
 const getWebSocketTransportClass = async () => {
     return environment_js_1.isNode
-        ? (await Promise.resolve().then(() => __importStar(__nccwpck_require__(4098)))).NodeWebSocketTransport
+        ? (await Promise.resolve().then(() => __importStar(__nccwpck_require__(7174)))).NodeWebSocketTransport
         : (await Promise.resolve().then(() => __importStar(__nccwpck_require__(7795))))
             .BrowserWebSocketTransport;
 };
@@ -55088,7 +55088,7 @@ class Mouse {
     }
     /**
      * Performs a drag, dragenter, dragover, and drop in sequence.
-     * @param start - point to drag from
+     * @param target - point to drag from
      * @param target - point to drop on
      * @param options - An object of options. Accepts delay which,
      * if specified, is the time to wait between `dragover` and `drop` in milliseconds.
@@ -56715,94 +56715,6 @@ _NetworkManager_client = new WeakMap(), _NetworkManager_ignoreHTTPSErrors = new 
 
 /***/ }),
 
-/***/ 4098:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-var _NodeWebSocketTransport_ws;
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.NodeWebSocketTransport = void 0;
-/**
- * Copyright 2018 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-const ws_1 = __importDefault(__nccwpck_require__(8867));
-const version_js_1 = __nccwpck_require__(6210);
-/**
- * @internal
- */
-class NodeWebSocketTransport {
-    constructor(ws) {
-        _NodeWebSocketTransport_ws.set(this, void 0);
-        __classPrivateFieldSet(this, _NodeWebSocketTransport_ws, ws, "f");
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('message', event => {
-            if (this.onmessage) {
-                this.onmessage.call(null, event.data);
-            }
-        });
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('close', () => {
-            if (this.onclose) {
-                this.onclose.call(null);
-            }
-        });
-        // Silently ignore all errors - we don't know what to do with them.
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('error', () => { });
-    }
-    static create(url) {
-        return new Promise((resolve, reject) => {
-            const ws = new ws_1.default(url, [], {
-                followRedirects: true,
-                perMessageDeflate: false,
-                maxPayload: 256 * 1024 * 1024,
-                headers: {
-                    'User-Agent': `Puppeteer ${version_js_1.packageVersion}`,
-                },
-            });
-            ws.addEventListener('open', () => {
-                return resolve(new NodeWebSocketTransport(ws));
-            });
-            ws.addEventListener('error', reject);
-        });
-    }
-    send(message) {
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").send(message);
-    }
-    close() {
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").close();
-    }
-}
-exports.NodeWebSocketTransport = NodeWebSocketTransport;
-_NodeWebSocketTransport_ws = new WeakMap();
-//# sourceMappingURL=NodeWebSocketTransport.js.map
-
-/***/ }),
-
 /***/ 4302:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -58025,12 +57937,12 @@ class CDPPage extends Page_js_1.Page {
      */
     async waitForRequest(urlOrPredicate, options = {}) {
         const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
-        return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Request, async (request) => {
+        return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Request, request => {
             if ((0, util_js_1.isString)(urlOrPredicate)) {
                 return urlOrPredicate === request.url();
             }
             if (typeof urlOrPredicate === 'function') {
-                return !!(await urlOrPredicate(request));
+                return !!urlOrPredicate(request);
             }
             return false;
         }, timeout, __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this));
@@ -62149,8 +62061,61 @@ exports.packageVersion = void 0;
 /**
  * @internal
  */
-exports.packageVersion = '18.2.1';
+exports.packageVersion = '18.1.0';
 //# sourceMappingURL=version.js.map
+
+/***/ }),
+
+/***/ 8345:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2020 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.initializePuppeteer = void 0;
+const constants_js_1 = __nccwpck_require__(442);
+const Puppeteer_js_1 = __nccwpck_require__(4860);
+const revisions_js_1 = __nccwpck_require__(2580);
+const getPackageDirectory_js_1 = __nccwpck_require__(2225);
+/**
+ * @internal
+ */
+const initializePuppeteer = (packageName) => {
+    const isPuppeteerCore = packageName === 'puppeteer-core';
+    let preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
+    // puppeteer-core ignores environment variables
+    const productName = !isPuppeteerCore
+        ? (process.env['PUPPETEER_PRODUCT'] ||
+            process.env['npm_config_puppeteer_product'] ||
+            process.env['npm_package_config_puppeteer_product'])
+        : undefined;
+    if (!isPuppeteerCore && productName === 'firefox') {
+        preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.firefox;
+    }
+    return new Puppeteer_js_1.PuppeteerNode({
+        projectRoot: isPuppeteerCore ? undefined : (0, getPackageDirectory_js_1.getPackageDirectory)(constants_js_1.rootDirname),
+        preferredRevision,
+        isPuppeteerCore,
+        productName,
+    });
+};
+exports.initializePuppeteer = initializePuppeteer;
+//# sourceMappingURL=initializePuppeteer.js.map
 
 /***/ }),
 
@@ -62214,23 +62179,23 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 var _BrowserFetcher_instances, _BrowserFetcher_product, _BrowserFetcher_downloadsFolder, _BrowserFetcher_downloadHost, _BrowserFetcher_platform, _BrowserFetcher_getFolderPath;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BrowserFetcher = void 0;
-const childProcess = __importStar(__nccwpck_require__(2081));
-const extract_zip_1 = __importDefault(__nccwpck_require__(460));
-const fs = __importStar(__nccwpck_require__(7147));
-const http = __importStar(__nccwpck_require__(3685));
-const https = __importStar(__nccwpck_require__(5687));
-const https_proxy_agent_1 = __importDefault(__nccwpck_require__(7219));
 const os = __importStar(__nccwpck_require__(2037));
+const fs = __importStar(__nccwpck_require__(7147));
 const path = __importStar(__nccwpck_require__(1017));
-const proxy_from_env_1 = __nccwpck_require__(3329);
+const util = __importStar(__nccwpck_require__(3837));
+const childProcess = __importStar(__nccwpck_require__(2081));
+const https = __importStar(__nccwpck_require__(5687));
+const http = __importStar(__nccwpck_require__(3685));
+const extract_zip_1 = __importDefault(__nccwpck_require__(460));
+const Debug_js_1 = __nccwpck_require__(4090);
+const util_1 = __nccwpck_require__(3837);
 const rimraf_1 = __importDefault(__nccwpck_require__(4959));
+const URL = __importStar(__nccwpck_require__(7310));
+const https_proxy_agent_1 = __importDefault(__nccwpck_require__(7219));
+const proxy_from_env_1 = __nccwpck_require__(3329);
+const assert_js_1 = __nccwpck_require__(7729);
 const tar_fs_1 = __importDefault(__nccwpck_require__(366));
 const unbzip2_stream_1 = __importDefault(__nccwpck_require__(3467));
-const URL = __importStar(__nccwpck_require__(7310));
-const util = __importStar(__nccwpck_require__(3837));
-const util_1 = __nccwpck_require__(3837);
-const Debug_js_1 = __nccwpck_require__(4090);
-const assert_js_1 = __nccwpck_require__(7729);
 const experimentalChromiumMacArm = process.env['PUPPETEER_EXPERIMENTAL_CHROMIUM_MAC_ARM'] ||
     process.env['npm_config_puppeteer_experimental_chromium_mac_arm'];
 const debugFetcher = (0, Debug_js_1.debug)('puppeteer:fetcher');
@@ -62836,14 +62801,14 @@ const path = __importStar(__nccwpck_require__(1017));
 const readline = __importStar(__nccwpck_require__(4521));
 const rimraf_1 = __importDefault(__nccwpck_require__(4959));
 const util_1 = __nccwpck_require__(3837);
-const Connection_js_1 = __nccwpck_require__(5916);
-const Connection_js_2 = __nccwpck_require__(370);
+const assert_js_1 = __nccwpck_require__(7729);
+const Connection_js_1 = __nccwpck_require__(370);
+const Connection_js_2 = __nccwpck_require__(5916);
 const Debug_js_1 = __nccwpck_require__(4090);
 const Errors_js_1 = __nccwpck_require__(6315);
-const NodeWebSocketTransport_js_1 = __nccwpck_require__(4098);
 const util_js_1 = __nccwpck_require__(8274);
-const assert_js_1 = __nccwpck_require__(7729);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
+const NodeWebSocketTransport_js_1 = __nccwpck_require__(7174);
 const PipeTransport_js_1 = __nccwpck_require__(9238);
 const removeFolderAsync = (0, util_1.promisify)(rimraf_1.default);
 const renameAsync = (0, util_1.promisify)(fs.rename);
@@ -63030,7 +62995,7 @@ class BrowserRunner {
         let browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision, /^WebDriver BiDi listening on (ws:\/\/.*)$/);
         browserWSEndpoint += '/session';
         const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
-        return new Connection_js_1.Connection(transport, slowMo);
+        return new Connection_js_2.Connection(transport, slowMo);
     }
     async setupConnection(options) {
         (0, assert_js_1.assert)(this.proc, 'BrowserRunner not started.');
@@ -63038,14 +63003,14 @@ class BrowserRunner {
         if (!usePipe) {
             const browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision);
             const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
-            this.connection = new Connection_js_2.Connection(browserWSEndpoint, transport, slowMo);
+            this.connection = new Connection_js_1.Connection(browserWSEndpoint, transport, slowMo);
         }
         else {
             // stdio was assigned during start(), and the 'pipe' option there adds the
             // 4th and 5th items to stdio array
             const { 3: pipeWrite, 4: pipeRead } = this.proc.stdio;
             const transport = new PipeTransport_js_1.PipeTransport(pipeWrite, pipeRead);
-            this.connection = new Connection_js_2.Connection('', transport, slowMo);
+            this.connection = new Connection_js_1.Connection('', transport, slowMo);
         }
         return this.connection;
     }
@@ -63132,8 +63097,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ChromeLauncher = void 0;
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 const path_1 = __importDefault(__nccwpck_require__(1017));
-const Browser_js_1 = __nccwpck_require__(2087);
 const assert_js_1 = __nccwpck_require__(7729);
+const Browser_js_1 = __nccwpck_require__(2087);
 const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
 const util_js_1 = __nccwpck_require__(7632);
@@ -63317,9 +63282,9 @@ exports.FirefoxLauncher = void 0;
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const path_1 = __importDefault(__nccwpck_require__(1017));
-const Browser_js_1 = __nccwpck_require__(6070);
-const Browser_js_2 = __nccwpck_require__(2087);
 const assert_js_1 = __nccwpck_require__(7729);
+const Browser_js_1 = __nccwpck_require__(2087);
+const Browser_js_2 = __nccwpck_require__(6070);
 const BrowserFetcher_js_1 = __nccwpck_require__(6573);
 const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
@@ -63409,7 +63374,7 @@ class FirefoxLauncher {
                     slowMo,
                     preferredRevision: this._preferredRevision,
                 });
-                browser = await Browser_js_1.Browser.create({
+                browser = await Browser_js_2.Browser.create({
                     connection,
                     closeCallback: runner.close.bind(runner),
                     process: runner.proc,
@@ -63429,7 +63394,7 @@ class FirefoxLauncher {
                 slowMo,
                 preferredRevision: this._preferredRevision,
             });
-            browser = await Browser_js_2.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
+            browser = await Browser_js_1.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
         }
         catch (error) {
             runner.kill();
@@ -63695,6 +63660,94 @@ exports.FirefoxLauncher = FirefoxLauncher;
 
 /***/ }),
 
+/***/ 7174:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+var _NodeWebSocketTransport_ws;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.NodeWebSocketTransport = void 0;
+/**
+ * Copyright 2018 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+const ws_1 = __importDefault(__nccwpck_require__(8867));
+const version_js_1 = __nccwpck_require__(6210);
+/**
+ * @internal
+ */
+class NodeWebSocketTransport {
+    constructor(ws) {
+        _NodeWebSocketTransport_ws.set(this, void 0);
+        __classPrivateFieldSet(this, _NodeWebSocketTransport_ws, ws, "f");
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('message', event => {
+            if (this.onmessage) {
+                this.onmessage.call(null, event.data);
+            }
+        });
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('close', () => {
+            if (this.onclose) {
+                this.onclose.call(null);
+            }
+        });
+        // Silently ignore all errors - we don't know what to do with them.
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('error', () => { });
+    }
+    static create(url) {
+        return new Promise((resolve, reject) => {
+            const ws = new ws_1.default(url, [], {
+                followRedirects: true,
+                perMessageDeflate: false,
+                maxPayload: 256 * 1024 * 1024,
+                headers: {
+                    'User-Agent': `Puppeteer ${version_js_1.packageVersion}`,
+                },
+            });
+            ws.addEventListener('open', () => {
+                return resolve(new NodeWebSocketTransport(ws));
+            });
+            ws.addEventListener('error', reject);
+        });
+    }
+    send(message) {
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").send(message);
+    }
+    close() {
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").close();
+    }
+}
+exports.NodeWebSocketTransport = NodeWebSocketTransport;
+_NodeWebSocketTransport_ws = new WeakMap();
+//# sourceMappingURL=NodeWebSocketTransport.js.map
+
+/***/ }),
+
 /***/ 9238:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -63714,8 +63767,23 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _PipeTransport_instances, _PipeTransport_pipeWrite, _PipeTransport_eventListeners, _PipeTransport_isClosed, _PipeTransport_pendingMessage, _PipeTransport_dispatch;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PipeTransport = void 0;
-const util_js_1 = __nccwpck_require__(8274);
+/**
+ * Copyright 2018 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 const assert_js_1 = __nccwpck_require__(7729);
+const util_js_1 = __nccwpck_require__(8274);
 /**
  * @internal
  */
@@ -63802,11 +63870,11 @@ exports.createLauncher = exports.resolveExecutablePath = exports.executablePathF
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-const fs_1 = __nccwpck_require__(7147);
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const BrowserFetcher_js_1 = __nccwpck_require__(6573);
 const ChromeLauncher_js_1 = __nccwpck_require__(5524);
 const FirefoxLauncher_js_1 = __nccwpck_require__(9585);
+const fs_1 = __nccwpck_require__(7147);
 /**
  * @internal
  */
@@ -63950,7 +64018,7 @@ exports.createLauncher = createLauncher;
 
 /***/ }),
 
-/***/ 4140:
+/***/ 4860:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -63985,9 +64053,9 @@ var _PuppeteerNode_launcher, _PuppeteerNode_projectRoot, _PuppeteerNode_productN
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PuppeteerNode = void 0;
 const Puppeteer_js_1 = __nccwpck_require__(8435);
-const revisions_js_1 = __nccwpck_require__(2580);
 const BrowserFetcher_js_1 = __nccwpck_require__(6573);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
+const revisions_js_1 = __nccwpck_require__(2580);
 /**
  * Extends the main {@link Puppeteer} class with Node specific behaviour for
  * fetching and downloading browsers.
@@ -64033,15 +64101,9 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
         _PuppeteerNode_launcher.set(this, void 0);
         _PuppeteerNode_projectRoot.set(this, void 0);
         _PuppeteerNode_productName.set(this, void 0);
-        /**
-         * @internal
-         */
-        this._preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
         __classPrivateFieldSet(this, _PuppeteerNode_projectRoot, projectRoot, "f");
         __classPrivateFieldSet(this, _PuppeteerNode_productName, productName, "f");
-        if (preferredRevision) {
-            this._preferredRevision = preferredRevision;
-        }
+        this._preferredRevision = preferredRevision;
         this.connect = this.connect.bind(this);
         this.launch = this.launch.bind(this);
         this.executablePath = this.executablePath.bind(this);
@@ -64172,20 +64234,41 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
 }
 exports.PuppeteerNode = PuppeteerNode;
 _PuppeteerNode_launcher = new WeakMap(), _PuppeteerNode_projectRoot = new WeakMap(), _PuppeteerNode_productName = new WeakMap();
-//# sourceMappingURL=PuppeteerNode.js.map
+//# sourceMappingURL=Puppeteer.js.map
 
 /***/ }),
 
 /***/ 7632:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getPackageDirectory = exports.tmpdir = void 0;
-const fs_1 = __nccwpck_require__(7147);
-const path_1 = __nccwpck_require__(1017);
-const os_1 = __nccwpck_require__(2037);
+exports.tmpdir = void 0;
+const os = __importStar(__nccwpck_require__(2037));
 /**
  * Gets the temporary directory, either from the environmental variable
  * `PUPPETEER_TMP_DIR` or the `os.tmpdir`.
@@ -64195,25 +64278,9 @@ const os_1 = __nccwpck_require__(2037);
  * @internal
  */
 const tmpdir = () => {
-    return process.env['PUPPETEER_TMP_DIR'] || (0, os_1.tmpdir)();
+    return process.env['PUPPETEER_TMP_DIR'] || os.tmpdir();
 };
 exports.tmpdir = tmpdir;
-/**
- * @internal
- */
-const getPackageDirectory = (from) => {
-    let found = (0, fs_1.existsSync)((0, path_1.join)(from, 'package.json'));
-    const root = (0, path_1.parse)(from).root;
-    while (!found) {
-        if (from === root) {
-            throw new Error('Cannot find package directory');
-        }
-        from = (0, path_1.dirname)(from);
-        found = (0, fs_1.existsSync)((0, path_1.join)(from, 'package.json'));
-    }
-    return from;
-};
-exports.getPackageDirectory = getPackageDirectory;
 //# sourceMappingURL=util.js.map
 
 /***/ }),
@@ -64254,20 +64321,12 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.launch = exports.executablePath = exports.defaultArgs = exports.createBrowserFetcher = exports.connect = void 0;
-__exportStar(__nccwpck_require__(3902), exports);
-__exportStar(__nccwpck_require__(6315), exports);
+const initializePuppeteer_js_1 = __nccwpck_require__(8345);
 __exportStar(__nccwpck_require__(6414), exports);
 __exportStar(__nccwpck_require__(3200), exports);
-const constants_js_1 = __nccwpck_require__(442);
-const PuppeteerNode_js_1 = __nccwpck_require__(4140);
-const util_js_1 = __nccwpck_require__(7632);
-/**
- * @public
- */
-const puppeteer = new PuppeteerNode_js_1.PuppeteerNode({
-    projectRoot: (0, util_js_1.getPackageDirectory)(constants_js_1.rootDirname),
-    isPuppeteerCore: true,
-});
+__exportStar(__nccwpck_require__(3902), exports);
+__exportStar(__nccwpck_require__(6315), exports);
+const puppeteer = (0, initializePuppeteer_js_1.initializePuppeteer)('puppeteer-core');
 exports.connect = puppeteer.connect, exports.createBrowserFetcher = puppeteer.createBrowserFetcher, exports.defaultArgs = puppeteer.defaultArgs, exports.executablePath = puppeteer.executablePath, exports.launch = puppeteer.launch;
 exports["default"] = puppeteer;
 //# sourceMappingURL=puppeteer-core.js.map
@@ -64462,6 +64521,35 @@ exports.assert = assert;
 
 /***/ }),
 
+/***/ 2225:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getPackageDirectory = void 0;
+const fs_1 = __nccwpck_require__(7147);
+const path_1 = __nccwpck_require__(1017);
+/**
+ * @internal
+ */
+const getPackageDirectory = (from) => {
+    let found = (0, fs_1.existsSync)((0, path_1.join)(from, 'package.json'));
+    const root = (0, path_1.parse)(from).root;
+    while (!found) {
+        if (from === root) {
+            throw new Error('Cannot find package directory');
+        }
+        from = (0, path_1.dirname)(from);
+        found = (0, fs_1.existsSync)((0, path_1.join)(from, 'package.json'));
+    }
+    return from;
+};
+exports.getPackageDirectory = getPackageDirectory;
+//# sourceMappingURL=getPackageDirectory.js.map
+
+/***/ }),
+
 /***/ 3733:
 /***/ ((module) => {
 
@@ -64566,6 +64654,7 @@ async function findOrDownloadChromium() {
   } else {
     core.info(`Chromium cache not found; Downloading`);
     const downloadPath = path.resolve(__dirname, "tmp");
+    new puppeteer.BrowserFetcher();
     const revisionInfo = await puppeteer
       .createBrowserFetcher({
         path: downloadPath,
