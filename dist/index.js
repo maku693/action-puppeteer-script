@@ -64565,10 +64565,10 @@ async function findOrDownloadChromium() {
     core.info("Using cached Chromium");
   } else {
     core.info(`Chromium cache not found; Downloading`);
-    const downloadPath = __nccwpck_require__.ab + "tmp";
+    const downloadPath = path.resolve(__dirname, "tmp");
     const revisionInfo = await puppeteer
       .createBrowserFetcher({
-        path: __nccwpck_require__.ab + "tmp",
+        path: downloadPath,
       })
       .download(latestRevision, (x, y) => {
         core.debug(`Download progress: ${x}/${y}`);
