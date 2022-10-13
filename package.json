@@ -10,8 +10,11 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.10.0",
+    "@actions/io": "^1.1.2",
+    "@actions/tool-cache": "^2.0.1",
     "@vercel/ncc": "^0.34.0",
-    "puppeteer": "^18.2.1"
+    "puppeteer": "^18.2.1",
+    "undici": "^5.11.0"
   },
   "devDependencies": {
     "prettier": "^2.7.1"
