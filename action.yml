@@ -1,0 +1,12 @@
+name: Puppeteer Script
+description: An action to write Puppeteer scripts as workflows
+inputs:
+  script:
+    description: The script to run
+    required: true
+outputs:
+  result:
+    description: The return value of the script 
+runs:
+  using: node16
+  main: index.js
