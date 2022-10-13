@@ -2,11 +2,15 @@
   "name": "actions-puppeteer-script",
   "version": "0.1.0",
   "description": "An action to write Puppeteer scripts as workflows",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "ncc build index.js --license licenses.txt"
+  },
   "author": "Shota Hamada",
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.10.0",
+    "@vercel/ncc": "^0.34.0",
     "puppeteer": "^18.2.1"
   },
   "devDependencies": {
