@@ -24,7 +24,7 @@ The JSON-encoded return value of the script.
 
 ```
 - id: get-title
-  uses: maku693/actions-puppeteer-script@v0
+  uses: maku693/action-puppeteer-script@v0
   with:
     script: |
       const page = await browser.newPage();

@@ -1,5 +1,5 @@
 {
-  "name": "actions-puppeteer-script",
+  "name": "action-puppeteer-script",
   "version": "0.1.0",
   "description": "An action to write Puppeteer scripts as workflows",
   "main": "dist/index.js",
