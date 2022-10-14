@@ -26,4 +26,4 @@ jobs:
             await page.goto('https://example.com');
             const title = await page.$eval('title', el => el.textContent);
             return { title };
-      - run: test "${{ steps.return-result.outputs.result }}" = '{"title":"Example Domain"}'
+      - run: test '${{ steps.return-result.outputs.result }}' = '{"title":"Example Domain"}'
