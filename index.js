@@ -17,7 +17,7 @@ async function main() {
 
   try {
     core.info("Script running");
-    const result = JSON.stringify(callAsyncFunction({ browser }, script));
+    const result = JSON.stringify(await callAsyncFunction({ browser }, script));
     core.debug(`result: ${result}`);
     core.setOutput(result);
     core.info("Script finished!");
