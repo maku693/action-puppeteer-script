@@ -43724,20 +43724,20 @@ function initAsClient(websocket, address, protocols, options) {
   }
 
   const isSecure = parsedUrl.protocol === 'wss:';
-  const isUnixSocket = parsedUrl.protocol === 'ws+unix:';
-  let invalidURLMessage;
+  const isIpcUrl = parsedUrl.protocol === 'ws+unix:';
+  let invalidUrlMessage;
 
-  if (parsedUrl.protocol !== 'ws:' && !isSecure && !isUnixSocket) {
-    invalidURLMessage =
+  if (parsedUrl.protocol !== 'ws:' && !isSecure && !isIpcUrl) {
+    invalidUrlMessage =
       'The URL\'s protocol must be one of "ws:", "wss:", or "ws+unix:"';
-  } else if (isUnixSocket && !parsedUrl.pathname) {
-    invalidURLMessage = "The URL's pathname is empty";
+  } else if (isIpcUrl && !parsedUrl.pathname) {
+    invalidUrlMessage = "The URL's pathname is empty";
   } else if (parsedUrl.hash) {
-    invalidURLMessage = 'The URL contains a fragment identifier';
+    invalidUrlMessage = 'The URL contains a fragment identifier';
   }
 
-  if (invalidURLMessage) {
-    const err = new SyntaxError(invalidURLMessage);
+  if (invalidUrlMessage) {
+    const err = new SyntaxError(invalidUrlMessage);
 
     if (websocket._redirects === 0) {
       throw err;
@@ -43807,7 +43807,7 @@ function initAsClient(websocket, address, protocols, options) {
     opts.auth = `${parsedUrl.username}:${parsedUrl.password}`;
   }
 
-  if (isUnixSocket) {
+  if (isIpcUrl) {
     const parts = opts.path.split(':');
 
     opts.socketPath = parts[0];
@@ -43818,9 +43818,9 @@ function initAsClient(websocket, address, protocols, options) {
 
   if (opts.followRedirects) {
     if (websocket._redirects === 0) {
-      websocket._originalUnixSocket = isUnixSocket;
+      websocket._originalIpc = isIpcUrl;
       websocket._originalSecure = isSecure;
-      websocket._originalHostOrSocketPath = isUnixSocket
+      websocket._originalHostOrSocketPath = isIpcUrl
         ? opts.socketPath
         : parsedUrl.host;
 
@@ -43838,11 +43838,11 @@ function initAsClient(websocket, address, protocols, options) {
         }
       }
     } else if (websocket.listenerCount('redirect') === 0) {
-      const isSameHost = isUnixSocket
-        ? websocket._originalUnixSocket
+      const isSameHost = isIpcUrl
+        ? websocket._originalIpc
           ? opts.socketPath === websocket._originalHostOrSocketPath
           : false
-        : websocket._originalUnixSocket
+        : websocket._originalIpc
         ? false
         : parsedUrl.host === websocket._originalHostOrSocketPath;
 
@@ -45261,14 +45261,6 @@ module.exports = require("diagnostics_channel");
 
 /***/ }),
 
-/***/ 9523:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("dns");
-
-/***/ }),
-
 /***/ 2361:
 /***/ ((module) => {
 
@@ -45434,6 +45426,916 @@ module.exports = require("util");
 
 "use strict";
 module.exports = require("zlib");
+
+/***/ }),
+
+/***/ 3469:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2017 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BrowserContext = exports.Browser = exports.WEB_PERMISSION_TO_PROTOCOL_PERMISSION = void 0;
+const EventEmitter_js_1 = __nccwpck_require__(7692);
+/**
+ * @internal
+ */
+exports.WEB_PERMISSION_TO_PROTOCOL_PERMISSION = new Map([
+    ['geolocation', 'geolocation'],
+    ['midi', 'midi'],
+    ['notifications', 'notifications'],
+    // TODO: push isn't a valid type?
+    // ['push', 'push'],
+    ['camera', 'videoCapture'],
+    ['microphone', 'audioCapture'],
+    ['background-sync', 'backgroundSync'],
+    ['ambient-light-sensor', 'sensors'],
+    ['accelerometer', 'sensors'],
+    ['gyroscope', 'sensors'],
+    ['magnetometer', 'sensors'],
+    ['accessibility-events', 'accessibilityEvents'],
+    ['clipboard-read', 'clipboardReadWrite'],
+    ['clipboard-write', 'clipboardReadWrite'],
+    ['payment-handler', 'paymentHandler'],
+    ['persistent-storage', 'durableStorage'],
+    ['idle-detection', 'idleDetection'],
+    // chrome-specific permissions we have.
+    ['midi-sysex', 'midiSysex'],
+]);
+/**
+ * A Browser is created when Puppeteer connects to a Chromium instance, either through
+ * {@link PuppeteerNode.launch} or {@link Puppeteer.connect}.
+ *
+ * @remarks
+ *
+ * The Browser class extends from Puppeteer's {@link EventEmitter} class and will
+ * emit various events which are documented in the {@link BrowserEmittedEvents} enum.
+ *
+ * @example
+ * An example of using a {@link Browser} to create a {@link Page}:
+ *
+ * ```ts
+ * const puppeteer = require('puppeteer');
+ *
+ * (async () => {
+ *   const browser = await puppeteer.launch();
+ *   const page = await browser.newPage();
+ *   await page.goto('https://example.com');
+ *   await browser.close();
+ * })();
+ * ```
+ *
+ * @example
+ * An example of disconnecting from and reconnecting to a {@link Browser}:
+ *
+ * ```ts
+ * const puppeteer = require('puppeteer');
+ *
+ * (async () => {
+ *   const browser = await puppeteer.launch();
+ *   // Store the endpoint to be able to reconnect to Chromium
+ *   const browserWSEndpoint = browser.wsEndpoint();
+ *   // Disconnect puppeteer from Chromium
+ *   browser.disconnect();
+ *
+ *   // Use the endpoint to reestablish a connection
+ *   const browser2 = await puppeteer.connect({browserWSEndpoint});
+ *   // Close Chromium
+ *   await browser2.close();
+ * })();
+ * ```
+ *
+ * @public
+ */
+class Browser extends EventEmitter_js_1.EventEmitter {
+    /**
+     * @internal
+     */
+    constructor() {
+        super();
+    }
+    /**
+     * @internal
+     */
+    _attach() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    _detach() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    get _targets() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * The spawned browser process. Returns `null` if the browser instance was created with
+     * {@link Puppeteer.connect}.
+     */
+    process() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    _getIsPageTargetCallback() {
+        throw new Error('Not implemented');
+    }
+    createIncognitoBrowserContext() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Returns an array of all open browser contexts. In a newly created browser, this will
+     * return a single instance of {@link BrowserContext}.
+     */
+    browserContexts() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Returns the default browser context. The default browser context cannot be closed.
+     */
+    defaultBrowserContext() {
+        throw new Error('Not implemented');
+    }
+    _disposeContext() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * The browser websocket endpoint which can be used as an argument to
+     * {@link Puppeteer.connect}.
+     *
+     * @returns The Browser websocket url.
+     *
+     * @remarks
+     *
+     * The format is `ws://${host}:${port}/devtools/browser/<id>`.
+     *
+     * You can find the `webSocketDebuggerUrl` from `http://${host}:${port}/json/version`.
+     * Learn more about the
+     * {@link https://chromedevtools.github.io/devtools-protocol | devtools protocol} and
+     * the {@link
+     * https://chromedevtools.github.io/devtools-protocol/#how-do-i-access-the-browser-target
+     * | browser endpoint}.
+     */
+    wsEndpoint() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Promise which resolves to a new {@link Page} object. The Page is created in
+     * a default browser context.
+     */
+    newPage() {
+        throw new Error('Not implemented');
+    }
+    _createPageInContext() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * All active targets inside the Browser. In case of multiple browser contexts, returns
+     * an array with all the targets in all browser contexts.
+     */
+    targets() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * The target associated with the browser.
+     */
+    target() {
+        throw new Error('Not implemented');
+    }
+    waitForTarget() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * An array of all open pages inside the Browser.
+     *
+     * @remarks
+     *
+     * In case of multiple browser contexts, returns an array with all the pages in all
+     * browser contexts. Non-visible pages, such as `"background_page"`, will not be listed
+     * here. You can find them using {@link Target.page}.
+     */
+    pages() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * A string representing the browser name and version.
+     *
+     * @remarks
+     *
+     * For headless Chromium, this is similar to `HeadlessChrome/61.0.3153.0`. For
+     * non-headless, this is similar to `Chrome/61.0.3153.0`.
+     *
+     * The format of browser.version() might change with future releases of Chromium.
+     */
+    version() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * The browser's original user agent. Pages can override the browser user agent with
+     * {@link Page.setUserAgent}.
+     */
+    userAgent() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Closes Chromium and all of its pages (if any were opened). The {@link Browser} object
+     * itself is considered to be disposed and cannot be used anymore.
+     */
+    close() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Disconnects Puppeteer from the browser, but leaves the Chromium process running.
+     * After calling `disconnect`, the {@link Browser} object is considered disposed and
+     * cannot be used anymore.
+     */
+    disconnect() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Indicates that the browser is connected.
+     */
+    isConnected() {
+        throw new Error('Not implemented');
+    }
+}
+exports.Browser = Browser;
+/**
+ * BrowserContexts provide a way to operate multiple independent browser
+ * sessions. When a browser is launched, it has a single BrowserContext used by
+ * default. The method {@link Browser.newPage | Browser.newPage} creates a page
+ * in the default browser context.
+ *
+ * @remarks
+ *
+ * The Browser class extends from Puppeteer's {@link EventEmitter} class and
+ * will emit various events which are documented in the
+ * {@link BrowserContextEmittedEvents} enum.
+ *
+ * If a page opens another page, e.g. with a `window.open` call, the popup will
+ * belong to the parent page's browser context.
+ *
+ * Puppeteer allows creation of "incognito" browser contexts with
+ * {@link Browser.createIncognitoBrowserContext | Browser.createIncognitoBrowserContext}
+ * method. "Incognito" browser contexts don't write any browsing data to disk.
+ *
+ * @example
+ *
+ * ```ts
+ * // Create a new incognito browser context
+ * const context = await browser.createIncognitoBrowserContext();
+ * // Create a new page inside context.
+ * const page = await context.newPage();
+ * // ... do stuff with page ...
+ * await page.goto('https://example.com');
+ * // Dispose context once it's no longer needed.
+ * await context.close();
+ * ```
+ *
+ * @public
+ */
+class BrowserContext extends EventEmitter_js_1.EventEmitter {
+    /**
+     * @internal
+     */
+    constructor() {
+        super();
+    }
+    /**
+     * An array of all active targets inside the browser context.
+     */
+    targets() {
+        throw new Error('Not implemented');
+    }
+    waitForTarget() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * An array of all pages inside the browser context.
+     *
+     * @returns Promise which resolves to an array of all open pages.
+     * Non visible pages, such as `"background_page"`, will not be listed here.
+     * You can find them using {@link Target.page | the target page}.
+     */
+    pages() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Returns whether BrowserContext is incognito.
+     * The default browser context is the only non-incognito browser context.
+     *
+     * @remarks
+     * The default browser context cannot be closed.
+     */
+    isIncognito() {
+        throw new Error('Not implemented');
+    }
+    overridePermissions() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Clears all permission overrides for the browser context.
+     *
+     * @example
+     *
+     * ```ts
+     * const context = browser.defaultBrowserContext();
+     * context.overridePermissions('https://example.com', ['clipboard-read']);
+     * // do stuff ..
+     * context.clearPermissionOverrides();
+     * ```
+     */
+    clearPermissionOverrides() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Creates a new page in the browser context.
+     */
+    newPage() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * The browser this browser context belongs to.
+     */
+    browser() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Closes the browser context. All the targets that belong to the browser context
+     * will be closed.
+     *
+     * @remarks
+     * Only incognito browser contexts can be closed.
+     */
+    close() {
+        throw new Error('Not implemented');
+    }
+}
+exports.BrowserContext = BrowserContext;
+//# sourceMappingURL=Browser.js.map
+
+/***/ }),
+
+/***/ 2194:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2017 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Page_handlerMap;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.unitToPixels = exports.supportedMetrics = exports.Page = void 0;
+const EventEmitter_js_1 = __nccwpck_require__(7692);
+/**
+ * Page provides methods to interact with a single tab or
+ * {@link https://developer.chrome.com/extensions/background_pages | extension background page}
+ * in Chromium.
+ *
+ * :::note
+ *
+ * One Browser instance might have multiple Page instances.
+ *
+ * :::
+ *
+ * @example
+ * This example creates a page, navigates it to a URL, and then saves a screenshot:
+ *
+ * ```ts
+ * const puppeteer = require('puppeteer');
+ *
+ * (async () => {
+ *   const browser = await puppeteer.launch();
+ *   const page = await browser.newPage();
+ *   await page.goto('https://example.com');
+ *   await page.screenshot({path: 'screenshot.png'});
+ *   await browser.close();
+ * })();
+ * ```
+ *
+ * The Page class extends from Puppeteer's {@link EventEmitter} class and will
+ * emit various events which are documented in the {@link PageEmittedEvents} enum.
+ *
+ * @example
+ * This example logs a message for a single page `load` event:
+ *
+ * ```ts
+ * page.once('load', () => console.log('Page loaded!'));
+ * ```
+ *
+ * To unsubscribe from events use the {@link Page.off} method:
+ *
+ * ```ts
+ * function logRequest(interceptedRequest) {
+ *   console.log('A request was made:', interceptedRequest.url());
+ * }
+ * page.on('request', logRequest);
+ * // Sometime later...
+ * page.off('request', logRequest);
+ * ```
+ *
+ * @public
+ */
+class Page extends EventEmitter_js_1.EventEmitter {
+    /**
+     * @internal
+     */
+    constructor() {
+        super();
+        _Page_handlerMap.set(this, new WeakMap());
+    }
+    /**
+     * @returns `true` if drag events are being intercepted, `false` otherwise.
+     */
+    isDragInterceptionEnabled() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns `true` if the page has JavaScript enabled, `false` otherwise.
+     */
+    isJavaScriptEnabled() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Listen to page events.
+     *
+     * :::note
+     *
+     * This method exists to define event typings and handle proper wireup of
+     * cooperative request interception. Actual event listening and dispatching is
+     * delegated to {@link EventEmitter}.
+     *
+     * :::
+     */
+    on(eventName, handler) {
+        if (eventName === 'request') {
+            const wrap = __classPrivateFieldGet(this, _Page_handlerMap, "f").get(handler) ||
+                ((event) => {
+                    event.enqueueInterceptAction(() => {
+                        return handler(event);
+                    });
+                });
+            __classPrivateFieldGet(this, _Page_handlerMap, "f").set(handler, wrap);
+            return super.on(eventName, wrap);
+        }
+        return super.on(eventName, handler);
+    }
+    once(eventName, handler) {
+        // Note: this method only exists to define the types; we delegate the impl
+        // to EventEmitter.
+        return super.once(eventName, handler);
+    }
+    off(eventName, handler) {
+        if (eventName === 'request') {
+            handler = __classPrivateFieldGet(this, _Page_handlerMap, "f").get(handler) || handler;
+        }
+        return super.off(eventName, handler);
+    }
+    waitForFileChooser() {
+        throw new Error('Not implemented');
+    }
+    async setGeolocation() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns A target this page was created from.
+     */
+    target() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Get the browser the page belongs to.
+     */
+    browser() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Get the browser context that the page belongs to.
+     */
+    browserContext() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns The page's main frame.
+     *
+     * @remarks
+     * Page is guaranteed to have a main frame which persists during navigations.
+     */
+    mainFrame() {
+        throw new Error('Not implemented');
+    }
+    get keyboard() {
+        throw new Error('Not implemented');
+    }
+    get touchscreen() {
+        throw new Error('Not implemented');
+    }
+    get coverage() {
+        throw new Error('Not implemented');
+    }
+    get tracing() {
+        throw new Error('Not implemented');
+    }
+    get accessibility() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns An array of all frames attached to the page.
+     */
+    frames() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns all of the dedicated {@link
+     * https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API |
+     * WebWorkers} associated with the page.
+     *
+     * @remarks
+     * This does not contain ServiceWorkers
+     */
+    workers() {
+        throw new Error('Not implemented');
+    }
+    async setRequestInterception() {
+        throw new Error('Not implemented');
+    }
+    async setDragInterception() {
+        throw new Error('Not implemented');
+    }
+    setOfflineMode() {
+        throw new Error('Not implemented');
+    }
+    emulateNetworkConditions() {
+        throw new Error('Not implemented');
+    }
+    setDefaultNavigationTimeout() {
+        throw new Error('Not implemented');
+    }
+    setDefaultTimeout() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns Maximum time in milliseconds.
+     */
+    getDefaultTimeout() {
+        throw new Error('Not implemented');
+    }
+    async $() {
+        throw new Error('Not implemented');
+    }
+    async $$() {
+        throw new Error('Not implemented');
+    }
+    async evaluateHandle() {
+        throw new Error('Not implemented');
+    }
+    async queryObjects() {
+        throw new Error('Not implemented');
+    }
+    async $eval() {
+        throw new Error('Not implemented');
+    }
+    async $$eval() {
+        throw new Error('Not implemented');
+    }
+    async $x() {
+        throw new Error('Not implemented');
+    }
+    async cookies() {
+        throw new Error('Not implemented');
+    }
+    async deleteCookie() {
+        throw new Error('Not implemented');
+    }
+    async setCookie() {
+        throw new Error('Not implemented');
+    }
+    async addScriptTag() {
+        throw new Error('Not implemented');
+    }
+    async addStyleTag() {
+        throw new Error('Not implemented');
+    }
+    async exposeFunction() {
+        throw new Error('Not implemented');
+    }
+    async authenticate() {
+        throw new Error('Not implemented');
+    }
+    async setExtraHTTPHeaders() {
+        throw new Error('Not implemented');
+    }
+    async setUserAgent() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns Object containing metrics as key/value pairs.
+     *
+     * - `Timestamp` : The timestamp when the metrics sample was taken.
+     *
+     * - `Documents` : Number of documents in the page.
+     *
+     * - `Frames` : Number of frames in the page.
+     *
+     * - `JSEventListeners` : Number of events in the page.
+     *
+     * - `Nodes` : Number of DOM nodes in the page.
+     *
+     * - `LayoutCount` : Total number of full or partial page layout.
+     *
+     * - `RecalcStyleCount` : Total number of page style recalculations.
+     *
+     * - `LayoutDuration` : Combined durations of all page layouts.
+     *
+     * - `RecalcStyleDuration` : Combined duration of all page style
+     *   recalculations.
+     *
+     * - `ScriptDuration` : Combined duration of JavaScript execution.
+     *
+     * - `TaskDuration` : Combined duration of all tasks performed by the browser.
+     *
+     * - `JSHeapUsedSize` : Used JavaScript heap size.
+     *
+     * - `JSHeapTotalSize` : Total JavaScript heap size.
+     *
+     * @remarks
+     * All timestamps are in monotonic time: monotonically increasing time
+     * in seconds since an arbitrary point in the past.
+     */
+    async metrics() {
+        throw new Error('Not implemented');
+    }
+    /**
+     *
+     * @returns
+     * @remarks Shortcut for
+     * {@link Frame.url | page.mainFrame().url()}.
+     */
+    url() {
+        throw new Error('Not implemented');
+    }
+    async content() {
+        throw new Error('Not implemented');
+    }
+    async setContent() {
+        throw new Error('Not implemented');
+    }
+    async goto() {
+        throw new Error('Not implemented');
+    }
+    async reload() {
+        throw new Error('Not implemented');
+    }
+    async waitForNavigation() {
+        throw new Error('Not implemented');
+    }
+    async waitForRequest() {
+        throw new Error('Not implemented');
+    }
+    async waitForResponse() {
+        throw new Error('Not implemented');
+    }
+    async waitForNetworkIdle() {
+        throw new Error('Not implemented');
+    }
+    async waitForFrame() {
+        throw new Error('Not implemented');
+    }
+    async goBack() {
+        throw new Error('Not implemented');
+    }
+    async goForward() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Brings page to front (activates tab).
+     */
+    async bringToFront() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Emulates a given device's metrics and user agent.
+     *
+     * To aid emulation, Puppeteer provides a list of known devices that can be
+     * via {@link KnownDevices}.
+     *
+     * @remarks
+     * This method is a shortcut for calling two methods:
+     * {@link Page.setUserAgent} and {@link Page.setViewport}.
+     *
+     * @remarks
+     * This method will resize the page. A lot of websites don't expect phones to
+     * change size, so you should emulate before navigating to the page.
+     *
+     * @example
+     *
+     * ```ts
+     * import {KnownDevices} from 'puppeteer';
+     * const iPhone = KnownDevices['iPhone 6'];
+     *
+     * (async () => {
+     *   const browser = await puppeteer.launch();
+     *   const page = await browser.newPage();
+     *   await page.emulate(iPhone);
+     *   await page.goto('https://www.google.com');
+     *   // other actions...
+     *   await browser.close();
+     * })();
+     * ```
+     */
+    async emulate(device) {
+        await Promise.all([
+            this.setUserAgent(device.userAgent),
+            this.setViewport(device.viewport),
+        ]);
+    }
+    async setJavaScriptEnabled() {
+        throw new Error('Not implemented');
+    }
+    async setBypassCSP() {
+        throw new Error('Not implemented');
+    }
+    async emulateMediaType() {
+        throw new Error('Not implemented');
+    }
+    async emulateCPUThrottling() {
+        throw new Error('Not implemented');
+    }
+    async emulateMediaFeatures() {
+        throw new Error('Not implemented');
+    }
+    async emulateTimezone() {
+        throw new Error('Not implemented');
+    }
+    async emulateIdleState() {
+        throw new Error('Not implemented');
+    }
+    async emulateVisionDeficiency() {
+        throw new Error('Not implemented');
+    }
+    async setViewport() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns
+     *
+     * - `width`: page's width in pixels
+     *
+     * - `height`: page's height in pixels
+     *
+     * - `deviceScalarFactor`: Specify device scale factor (can be though of as
+     *   dpr). Defaults to `1`.
+     *
+     * - `isMobile`: Whether the meta viewport tag is taken into account. Defaults
+     *   to `false`.
+     *
+     * - `hasTouch`: Specifies if viewport supports touch events. Defaults to
+     *   `false`.
+     *
+     * - `isLandScape`: Specifies if viewport is in landscape mode. Defaults to
+     *   `false`.
+     */
+    viewport() {
+        throw new Error('Not implemented');
+    }
+    async evaluate() {
+        throw new Error('Not implemented');
+    }
+    async evaluateOnNewDocument() {
+        throw new Error('Not implemented');
+    }
+    async setCacheEnabled() {
+        throw new Error('Not implemented');
+    }
+    async screenshot() {
+        throw new Error('Not implemented');
+    }
+    async createPDFStream() {
+        throw new Error('Not implemented');
+    }
+    async pdf() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns The page's title
+     * @remarks
+     * Shortcut for {@link Frame.title | page.mainFrame().title()}.
+     */
+    async title() {
+        throw new Error('Not implemented');
+    }
+    async close() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Indicates that the page has been closed.
+     * @returns
+     */
+    isClosed() {
+        throw new Error('Not implemented');
+    }
+    get mouse() {
+        throw new Error('Not implemented');
+    }
+    click() {
+        throw new Error('Not implemented');
+    }
+    focus() {
+        throw new Error('Not implemented');
+    }
+    hover() {
+        throw new Error('Not implemented');
+    }
+    select() {
+        throw new Error('Not implemented');
+    }
+    tap() {
+        throw new Error('Not implemented');
+    }
+    type() {
+        throw new Error('Not implemented');
+    }
+    waitForTimeout() {
+        throw new Error('Not implemented');
+    }
+    async waitForSelector() {
+        throw new Error('Not implemented');
+    }
+    waitForXPath() {
+        throw new Error('Not implemented');
+    }
+    waitForFunction() {
+        throw new Error('Not implemented');
+    }
+}
+exports.Page = Page;
+_Page_handlerMap = new WeakMap();
+/**
+ * @internal
+ */
+exports.supportedMetrics = new Set([
+    'Timestamp',
+    'Documents',
+    'Frames',
+    'JSEventListeners',
+    'Nodes',
+    'LayoutCount',
+    'RecalcStyleCount',
+    'LayoutDuration',
+    'RecalcStyleDuration',
+    'ScriptDuration',
+    'TaskDuration',
+    'JSHeapUsedSize',
+    'JSHeapTotalSize',
+]);
+/**
+ * @internal
+ */
+exports.unitToPixels = {
+    px: 1,
+    in: 96,
+    cm: 37.8,
+    mm: 3.78,
+};
+//# sourceMappingURL=Page.js.map
 
 /***/ }),
 
@@ -45892,6 +46794,9 @@ _AXNode_richlyEditable = new WeakMap(), _AXNode_editable = new WeakMap(), _AXNod
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ariaHandler = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
+const ElementHandle_js_1 = __nccwpck_require__(865);
+const Frame_js_1 = __nccwpck_require__(1106);
+const IsolatedWorld_js_1 = __nccwpck_require__(5651);
 async function queryAXTree(client, element, accessibleName, role) {
     const { nodes } = await client.send('Accessibility.queryAXTree', {
         objectId: element.remoteObject().objectId,
@@ -45935,27 +46840,49 @@ function parseAriaSelector(selector) {
     }
     return queryOptions;
 }
-const queryOne = async (element, selector) => {
-    const exeCtx = element.executionContext();
+const queryOneId = async (element, selector) => {
     const { name, role } = parseAriaSelector(selector);
-    const res = await queryAXTree(exeCtx._client, element, name, role);
+    const res = await queryAXTree(element.client, element, name, role);
     if (!res[0] || !res[0].backendDOMNodeId) {
         return null;
     }
-    return (await exeCtx._world.adoptBackendNode(res[0].backendDOMNodeId));
+    return res[0].backendDOMNodeId;
 };
-const waitFor = async (isolatedWorld, selector, options) => {
-    const binding = {
-        name: 'ariaQuerySelector',
-        pptrFunction: async (selector) => {
-            const root = options.root || (await isolatedWorld.document());
-            const element = await queryOne(root, selector);
-            return element;
-        },
+const queryOne = async (element, selector) => {
+    const id = await queryOneId(element, selector);
+    if (!id) {
+        return null;
+    }
+    return (await element.frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].adoptBackendNode(id));
+};
+const waitFor = async (elementOrFrame, selector, options) => {
+    let frame;
+    let element;
+    if (elementOrFrame instanceof Frame_js_1.Frame) {
+        frame = elementOrFrame;
+    }
+    else {
+        frame = elementOrFrame.frame;
+        element = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].adoptHandle(elementOrFrame);
+    }
+    const ariaQuerySelector = async (selector) => {
+        const id = await queryOneId(element || (await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].document()), selector);
+        if (!id) {
+            return null;
+        }
+        return (await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].adoptBackendNode(id));
     };
-    return (await isolatedWorld._waitForSelectorInPage((_, selector) => {
+    const result = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD]._waitForSelectorInPage((_, selector) => {
         return globalThis.ariaQuerySelector(selector);
-    }, selector, options, binding));
+    }, element, selector, options, new Map([['ariaQuerySelector', ariaQuerySelector]]));
+    if (element) {
+        await element.dispose();
+    }
+    if (!(result instanceof ElementHandle_js_1.ElementHandle)) {
+        await (result === null || result === void 0 ? void 0 : result.dispose());
+        return null;
+    }
+    return result.frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(result);
 };
 const queryAll = async (element, selector) => {
     const exeCtx = element.executionContext();
@@ -45966,14 +46893,6 @@ const queryAll = async (element, selector) => {
         return world.adoptBackendNode(axNode.backendDOMNodeId);
     }));
 };
-const queryAllArray = async (element, selector) => {
-    const elementHandles = await queryAll(element, selector);
-    const exeCtx = element.executionContext();
-    const jsHandle = exeCtx.evaluateHandle((...elements) => {
-        return elements;
-    }, ...elementHandles);
-    return jsHandle;
-};
 /**
  * @internal
  */
@@ -45981,7 +46900,6 @@ exports.ariaHandler = {
     queryOne,
     waitFor,
     queryAll,
-    queryAllArray,
 };
 //# sourceMappingURL=AriaQueryHandler.js.map
 
@@ -46018,119 +46936,55 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _Browser_instances, _Browser_ignoreHTTPSErrors, _Browser_defaultViewport, _Browser_process, _Browser_connection, _Browser_closeCallback, _Browser_targetFilterCallback, _Browser_isPageTargetCallback, _Browser_defaultContext, _Browser_contexts, _Browser_screenshotTaskQueue, _Browser_targetManager, _Browser_emitDisconnected, _Browser_setIsPageTargetCallback, _Browser_createTarget, _Browser_onAttachedToTarget, _Browser_onDetachedFromTarget, _Browser_onTargetChanged, _Browser_onTargetDiscovered, _Browser_getVersion, _BrowserContext_connection, _BrowserContext_browser, _BrowserContext_id;
+var _CDPBrowser_instances, _CDPBrowser_ignoreHTTPSErrors, _CDPBrowser_defaultViewport, _CDPBrowser_process, _CDPBrowser_connection, _CDPBrowser_closeCallback, _CDPBrowser_targetFilterCallback, _CDPBrowser_isPageTargetCallback, _CDPBrowser_defaultContext, _CDPBrowser_contexts, _CDPBrowser_screenshotTaskQueue, _CDPBrowser_targetManager, _CDPBrowser_emitDisconnected, _CDPBrowser_setIsPageTargetCallback, _CDPBrowser_createTarget, _CDPBrowser_onAttachedToTarget, _CDPBrowser_onDetachedFromTarget, _CDPBrowser_onTargetChanged, _CDPBrowser_onTargetDiscovered, _CDPBrowser_getVersion, _CDPBrowserContext_connection, _CDPBrowserContext_browser, _CDPBrowserContext_id;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BrowserContext = exports.Browser = void 0;
+exports.CDPBrowserContext = exports.CDPBrowser = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
 const Connection_js_1 = __nccwpck_require__(370);
-const EventEmitter_js_1 = __nccwpck_require__(7692);
 const util_js_1 = __nccwpck_require__(8274);
 const Target_js_1 = __nccwpck_require__(7005);
 const TaskQueue_js_1 = __nccwpck_require__(2967);
 const ChromeTargetManager_js_1 = __nccwpck_require__(2264);
 const FirefoxTargetManager_js_1 = __nccwpck_require__(9806);
-const WEB_PERMISSION_TO_PROTOCOL_PERMISSION = new Map([
-    ['geolocation', 'geolocation'],
-    ['midi', 'midi'],
-    ['notifications', 'notifications'],
-    // TODO: push isn't a valid type?
-    // ['push', 'push'],
-    ['camera', 'videoCapture'],
-    ['microphone', 'audioCapture'],
-    ['background-sync', 'backgroundSync'],
-    ['ambient-light-sensor', 'sensors'],
-    ['accelerometer', 'sensors'],
-    ['gyroscope', 'sensors'],
-    ['magnetometer', 'sensors'],
-    ['accessibility-events', 'accessibilityEvents'],
-    ['clipboard-read', 'clipboardReadWrite'],
-    ['clipboard-write', 'clipboardReadWrite'],
-    ['payment-handler', 'paymentHandler'],
-    ['persistent-storage', 'durableStorage'],
-    ['idle-detection', 'idleDetection'],
-    // chrome-specific permissions we have.
-    ['midi-sysex', 'midiSysex'],
-]);
+const Browser_js_1 = __nccwpck_require__(3469);
 /**
- * A Browser is created when Puppeteer connects to a Chromium instance, either through
- * {@link PuppeteerNode.launch} or {@link Puppeteer.connect}.
- *
- * @remarks
- *
- * The Browser class extends from Puppeteer's {@link EventEmitter} class and will
- * emit various events which are documented in the {@link BrowserEmittedEvents} enum.
- *
- * @example
- * An example of using a {@link Browser} to create a {@link Page}:
- *
- * ```ts
- * const puppeteer = require('puppeteer');
- *
- * (async () => {
- *   const browser = await puppeteer.launch();
- *   const page = await browser.newPage();
- *   await page.goto('https://example.com');
- *   await browser.close();
- * })();
- * ```
- *
- * @example
- * An example of disconnecting from and reconnecting to a {@link Browser}:
- *
- * ```ts
- * const puppeteer = require('puppeteer');
- *
- * (async () => {
- *   const browser = await puppeteer.launch();
- *   // Store the endpoint to be able to reconnect to Chromium
- *   const browserWSEndpoint = browser.wsEndpoint();
- *   // Disconnect puppeteer from Chromium
- *   browser.disconnect();
- *
- *   // Use the endpoint to reestablish a connection
- *   const browser2 = await puppeteer.connect({browserWSEndpoint});
- *   // Close Chromium
- *   await browser2.close();
- * })();
- * ```
- *
- * @public
+ * @internal
  */
-class Browser extends EventEmitter_js_1.EventEmitter {
+class CDPBrowser extends Browser_js_1.Browser {
     /**
      * @internal
      */
     constructor(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback) {
         super();
-        _Browser_instances.add(this);
-        _Browser_ignoreHTTPSErrors.set(this, void 0);
-        _Browser_defaultViewport.set(this, void 0);
-        _Browser_process.set(this, void 0);
-        _Browser_connection.set(this, void 0);
-        _Browser_closeCallback.set(this, void 0);
-        _Browser_targetFilterCallback.set(this, void 0);
-        _Browser_isPageTargetCallback.set(this, void 0);
-        _Browser_defaultContext.set(this, void 0);
-        _Browser_contexts.set(this, void 0);
-        _Browser_screenshotTaskQueue.set(this, void 0);
-        _Browser_targetManager.set(this, void 0);
-        _Browser_emitDisconnected.set(this, () => {
+        _CDPBrowser_instances.add(this);
+        _CDPBrowser_ignoreHTTPSErrors.set(this, void 0);
+        _CDPBrowser_defaultViewport.set(this, void 0);
+        _CDPBrowser_process.set(this, void 0);
+        _CDPBrowser_connection.set(this, void 0);
+        _CDPBrowser_closeCallback.set(this, void 0);
+        _CDPBrowser_targetFilterCallback.set(this, void 0);
+        _CDPBrowser_isPageTargetCallback.set(this, void 0);
+        _CDPBrowser_defaultContext.set(this, void 0);
+        _CDPBrowser_contexts.set(this, void 0);
+        _CDPBrowser_screenshotTaskQueue.set(this, void 0);
+        _CDPBrowser_targetManager.set(this, void 0);
+        _CDPBrowser_emitDisconnected.set(this, () => {
             this.emit("disconnected" /* BrowserEmittedEvents.Disconnected */);
         });
-        _Browser_createTarget.set(this, (targetInfo, session) => {
+        _CDPBrowser_createTarget.set(this, (targetInfo, session) => {
             var _a;
             const { browserContextId } = targetInfo;
-            const context = browserContextId && __classPrivateFieldGet(this, _Browser_contexts, "f").has(browserContextId)
-                ? __classPrivateFieldGet(this, _Browser_contexts, "f").get(browserContextId)
-                : __classPrivateFieldGet(this, _Browser_defaultContext, "f");
+            const context = browserContextId && __classPrivateFieldGet(this, _CDPBrowser_contexts, "f").has(browserContextId)
+                ? __classPrivateFieldGet(this, _CDPBrowser_contexts, "f").get(browserContextId)
+                : __classPrivateFieldGet(this, _CDPBrowser_defaultContext, "f");
             if (!context) {
                 throw new Error('Missing browser context');
             }
-            return new Target_js_1.Target(targetInfo, session, context, __classPrivateFieldGet(this, _Browser_targetManager, "f"), (isAutoAttachEmulated) => {
-                return __classPrivateFieldGet(this, _Browser_connection, "f")._createSession(targetInfo, isAutoAttachEmulated);
-            }, __classPrivateFieldGet(this, _Browser_ignoreHTTPSErrors, "f"), (_a = __classPrivateFieldGet(this, _Browser_defaultViewport, "f")) !== null && _a !== void 0 ? _a : null, __classPrivateFieldGet(this, _Browser_screenshotTaskQueue, "f"), __classPrivateFieldGet(this, _Browser_isPageTargetCallback, "f"));
+            return new Target_js_1.Target(targetInfo, session, context, __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f"), (isAutoAttachEmulated) => {
+                return __classPrivateFieldGet(this, _CDPBrowser_connection, "f")._createSession(targetInfo, isAutoAttachEmulated);
+            }, __classPrivateFieldGet(this, _CDPBrowser_ignoreHTTPSErrors, "f"), (_a = __classPrivateFieldGet(this, _CDPBrowser_defaultViewport, "f")) !== null && _a !== void 0 ? _a : null, __classPrivateFieldGet(this, _CDPBrowser_screenshotTaskQueue, "f"), __classPrivateFieldGet(this, _CDPBrowser_isPageTargetCallback, "f"));
         });
-        _Browser_onAttachedToTarget.set(this, async (target) => {
+        _CDPBrowser_onAttachedToTarget.set(this, async (target) => {
             if (await target._initializedPromise) {
                 this.emit("targetcreated" /* BrowserEmittedEvents.TargetCreated */, target);
                 target
@@ -46138,7 +46992,7 @@ class Browser extends EventEmitter_js_1.EventEmitter {
                     .emit("targetcreated" /* BrowserContextEmittedEvents.TargetCreated */, target);
             }
         });
-        _Browser_onDetachedFromTarget.set(this, async (target) => {
+        _CDPBrowser_onDetachedFromTarget.set(this, async (target) => {
             target._initializedCallback(false);
             target._closedCallback();
             if (await target._initializedPromise) {
@@ -46148,7 +47002,7 @@ class Browser extends EventEmitter_js_1.EventEmitter {
                     .emit("targetdestroyed" /* BrowserContextEmittedEvents.TargetDestroyed */, target);
             }
         });
-        _Browser_onTargetChanged.set(this, ({ target, targetInfo, }) => {
+        _CDPBrowser_onTargetChanged.set(this, ({ target, targetInfo, }) => {
             const previousURL = target.url();
             const wasInitialized = target._isInitialized;
             target._targetInfoChanged(targetInfo);
@@ -46159,38 +47013,38 @@ class Browser extends EventEmitter_js_1.EventEmitter {
                     .emit("targetchanged" /* BrowserContextEmittedEvents.TargetChanged */, target);
             }
         });
-        _Browser_onTargetDiscovered.set(this, (targetInfo) => {
+        _CDPBrowser_onTargetDiscovered.set(this, (targetInfo) => {
             this.emit('targetdiscovered', targetInfo);
         });
         product = product || 'chrome';
-        __classPrivateFieldSet(this, _Browser_ignoreHTTPSErrors, ignoreHTTPSErrors, "f");
-        __classPrivateFieldSet(this, _Browser_defaultViewport, defaultViewport, "f");
-        __classPrivateFieldSet(this, _Browser_process, process, "f");
-        __classPrivateFieldSet(this, _Browser_screenshotTaskQueue, new TaskQueue_js_1.TaskQueue(), "f");
-        __classPrivateFieldSet(this, _Browser_connection, connection, "f");
-        __classPrivateFieldSet(this, _Browser_closeCallback, closeCallback || function () { }, "f");
-        __classPrivateFieldSet(this, _Browser_targetFilterCallback, targetFilterCallback ||
+        __classPrivateFieldSet(this, _CDPBrowser_ignoreHTTPSErrors, ignoreHTTPSErrors, "f");
+        __classPrivateFieldSet(this, _CDPBrowser_defaultViewport, defaultViewport, "f");
+        __classPrivateFieldSet(this, _CDPBrowser_process, process, "f");
+        __classPrivateFieldSet(this, _CDPBrowser_screenshotTaskQueue, new TaskQueue_js_1.TaskQueue(), "f");
+        __classPrivateFieldSet(this, _CDPBrowser_connection, connection, "f");
+        __classPrivateFieldSet(this, _CDPBrowser_closeCallback, closeCallback || function () { }, "f");
+        __classPrivateFieldSet(this, _CDPBrowser_targetFilterCallback, targetFilterCallback ||
             (() => {
                 return true;
             }), "f");
-        __classPrivateFieldGet(this, _Browser_instances, "m", _Browser_setIsPageTargetCallback).call(this, isPageTargetCallback);
+        __classPrivateFieldGet(this, _CDPBrowser_instances, "m", _CDPBrowser_setIsPageTargetCallback).call(this, isPageTargetCallback);
         if (product === 'firefox') {
-            __classPrivateFieldSet(this, _Browser_targetManager, new FirefoxTargetManager_js_1.FirefoxTargetManager(connection, __classPrivateFieldGet(this, _Browser_createTarget, "f"), __classPrivateFieldGet(this, _Browser_targetFilterCallback, "f")), "f");
+            __classPrivateFieldSet(this, _CDPBrowser_targetManager, new FirefoxTargetManager_js_1.FirefoxTargetManager(connection, __classPrivateFieldGet(this, _CDPBrowser_createTarget, "f"), __classPrivateFieldGet(this, _CDPBrowser_targetFilterCallback, "f")), "f");
         }
         else {
-            __classPrivateFieldSet(this, _Browser_targetManager, new ChromeTargetManager_js_1.ChromeTargetManager(connection, __classPrivateFieldGet(this, _Browser_createTarget, "f"), __classPrivateFieldGet(this, _Browser_targetFilterCallback, "f")), "f");
+            __classPrivateFieldSet(this, _CDPBrowser_targetManager, new ChromeTargetManager_js_1.ChromeTargetManager(connection, __classPrivateFieldGet(this, _CDPBrowser_createTarget, "f"), __classPrivateFieldGet(this, _CDPBrowser_targetFilterCallback, "f")), "f");
         }
-        __classPrivateFieldSet(this, _Browser_defaultContext, new BrowserContext(__classPrivateFieldGet(this, _Browser_connection, "f"), this), "f");
-        __classPrivateFieldSet(this, _Browser_contexts, new Map(), "f");
+        __classPrivateFieldSet(this, _CDPBrowser_defaultContext, new CDPBrowserContext(__classPrivateFieldGet(this, _CDPBrowser_connection, "f"), this), "f");
+        __classPrivateFieldSet(this, _CDPBrowser_contexts, new Map(), "f");
         for (const contextId of contextIds) {
-            __classPrivateFieldGet(this, _Browser_contexts, "f").set(contextId, new BrowserContext(__classPrivateFieldGet(this, _Browser_connection, "f"), this, contextId));
+            __classPrivateFieldGet(this, _CDPBrowser_contexts, "f").set(contextId, new CDPBrowserContext(__classPrivateFieldGet(this, _CDPBrowser_connection, "f"), this, contextId));
         }
     }
     /**
      * @internal
      */
     static async _create(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback) {
-        const browser = new Browser(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback);
+        const browser = new CDPBrowser(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback);
         await browser._attach();
         return browser;
     }
@@ -46198,28 +47052,28 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      * @internal
      */
     get _targets() {
-        return __classPrivateFieldGet(this, _Browser_targetManager, "f").getAvailableTargets();
+        return __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").getAvailableTargets();
     }
     /**
      * @internal
      */
     async _attach() {
-        __classPrivateFieldGet(this, _Browser_connection, "f").on(Connection_js_1.ConnectionEmittedEvents.Disconnected, __classPrivateFieldGet(this, _Browser_emitDisconnected, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").on("targetAvailable" /* TargetManagerEmittedEvents.TargetAvailable */, __classPrivateFieldGet(this, _Browser_onAttachedToTarget, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").on("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _Browser_onDetachedFromTarget, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").on("targetChanged" /* TargetManagerEmittedEvents.TargetChanged */, __classPrivateFieldGet(this, _Browser_onTargetChanged, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").on("targetDiscovered" /* TargetManagerEmittedEvents.TargetDiscovered */, __classPrivateFieldGet(this, _Browser_onTargetDiscovered, "f"));
-        await __classPrivateFieldGet(this, _Browser_targetManager, "f").initialize();
+        __classPrivateFieldGet(this, _CDPBrowser_connection, "f").on(Connection_js_1.ConnectionEmittedEvents.Disconnected, __classPrivateFieldGet(this, _CDPBrowser_emitDisconnected, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").on("targetAvailable" /* TargetManagerEmittedEvents.TargetAvailable */, __classPrivateFieldGet(this, _CDPBrowser_onAttachedToTarget, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").on("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _CDPBrowser_onDetachedFromTarget, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").on("targetChanged" /* TargetManagerEmittedEvents.TargetChanged */, __classPrivateFieldGet(this, _CDPBrowser_onTargetChanged, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").on("targetDiscovered" /* TargetManagerEmittedEvents.TargetDiscovered */, __classPrivateFieldGet(this, _CDPBrowser_onTargetDiscovered, "f"));
+        await __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").initialize();
     }
     /**
      * @internal
      */
     _detach() {
-        __classPrivateFieldGet(this, _Browser_connection, "f").off(Connection_js_1.ConnectionEmittedEvents.Disconnected, __classPrivateFieldGet(this, _Browser_emitDisconnected, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").off("targetAvailable" /* TargetManagerEmittedEvents.TargetAvailable */, __classPrivateFieldGet(this, _Browser_onAttachedToTarget, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").off("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _Browser_onDetachedFromTarget, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").off("targetChanged" /* TargetManagerEmittedEvents.TargetChanged */, __classPrivateFieldGet(this, _Browser_onTargetChanged, "f"));
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").off("targetDiscovered" /* TargetManagerEmittedEvents.TargetDiscovered */, __classPrivateFieldGet(this, _Browser_onTargetDiscovered, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_connection, "f").off(Connection_js_1.ConnectionEmittedEvents.Disconnected, __classPrivateFieldGet(this, _CDPBrowser_emitDisconnected, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").off("targetAvailable" /* TargetManagerEmittedEvents.TargetAvailable */, __classPrivateFieldGet(this, _CDPBrowser_onAttachedToTarget, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").off("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _CDPBrowser_onDetachedFromTarget, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").off("targetChanged" /* TargetManagerEmittedEvents.TargetChanged */, __classPrivateFieldGet(this, _CDPBrowser_onTargetChanged, "f"));
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").off("targetDiscovered" /* TargetManagerEmittedEvents.TargetDiscovered */, __classPrivateFieldGet(this, _CDPBrowser_onTargetDiscovered, "f"));
     }
     /**
      * The spawned browser process. Returns `null` if the browser instance was created with
@@ -46227,19 +47081,19 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      */
     process() {
         var _a;
-        return (_a = __classPrivateFieldGet(this, _Browser_process, "f")) !== null && _a !== void 0 ? _a : null;
+        return (_a = __classPrivateFieldGet(this, _CDPBrowser_process, "f")) !== null && _a !== void 0 ? _a : null;
     }
     /**
      * @internal
      */
     _targetManager() {
-        return __classPrivateFieldGet(this, _Browser_targetManager, "f");
+        return __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f");
     }
     /**
      * @internal
      */
     _getIsPageTargetCallback() {
-        return __classPrivateFieldGet(this, _Browser_isPageTargetCallback, "f");
+        return __classPrivateFieldGet(this, _CDPBrowser_isPageTargetCallback, "f");
     }
     /**
      * Creates a new incognito browser context. This won't share cookies/cache with other
@@ -46261,12 +47115,12 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      */
     async createIncognitoBrowserContext(options = {}) {
         const { proxyServer, proxyBypassList } = options;
-        const { browserContextId } = await __classPrivateFieldGet(this, _Browser_connection, "f").send('Target.createBrowserContext', {
+        const { browserContextId } = await __classPrivateFieldGet(this, _CDPBrowser_connection, "f").send('Target.createBrowserContext', {
             proxyServer,
             proxyBypassList: proxyBypassList && proxyBypassList.join(','),
         });
-        const context = new BrowserContext(__classPrivateFieldGet(this, _Browser_connection, "f"), this, browserContextId);
-        __classPrivateFieldGet(this, _Browser_contexts, "f").set(browserContextId, context);
+        const context = new CDPBrowserContext(__classPrivateFieldGet(this, _CDPBrowser_connection, "f"), this, browserContextId);
+        __classPrivateFieldGet(this, _CDPBrowser_contexts, "f").set(browserContextId, context);
         return context;
     }
     /**
@@ -46274,13 +47128,13 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      * return a single instance of {@link BrowserContext}.
      */
     browserContexts() {
-        return [__classPrivateFieldGet(this, _Browser_defaultContext, "f"), ...Array.from(__classPrivateFieldGet(this, _Browser_contexts, "f").values())];
+        return [__classPrivateFieldGet(this, _CDPBrowser_defaultContext, "f"), ...Array.from(__classPrivateFieldGet(this, _CDPBrowser_contexts, "f").values())];
     }
     /**
      * Returns the default browser context. The default browser context cannot be closed.
      */
     defaultBrowserContext() {
-        return __classPrivateFieldGet(this, _Browser_defaultContext, "f");
+        return __classPrivateFieldGet(this, _CDPBrowser_defaultContext, "f");
     }
     /**
      * @internal
@@ -46289,10 +47143,10 @@ class Browser extends EventEmitter_js_1.EventEmitter {
         if (!contextId) {
             return;
         }
-        await __classPrivateFieldGet(this, _Browser_connection, "f").send('Target.disposeBrowserContext', {
+        await __classPrivateFieldGet(this, _CDPBrowser_connection, "f").send('Target.disposeBrowserContext', {
             browserContextId: contextId,
         });
-        __classPrivateFieldGet(this, _Browser_contexts, "f").delete(contextId);
+        __classPrivateFieldGet(this, _CDPBrowser_contexts, "f").delete(contextId);
     }
     /**
      * The browser websocket endpoint which can be used as an argument to
@@ -46312,24 +47166,24 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      * | browser endpoint}.
      */
     wsEndpoint() {
-        return __classPrivateFieldGet(this, _Browser_connection, "f").url();
+        return __classPrivateFieldGet(this, _CDPBrowser_connection, "f").url();
     }
     /**
      * Promise which resolves to a new {@link Page} object. The Page is created in
      * a default browser context.
      */
     async newPage() {
-        return __classPrivateFieldGet(this, _Browser_defaultContext, "f").newPage();
+        return __classPrivateFieldGet(this, _CDPBrowser_defaultContext, "f").newPage();
     }
     /**
      * @internal
      */
     async _createPageInContext(contextId) {
-        const { targetId } = await __classPrivateFieldGet(this, _Browser_connection, "f").send('Target.createTarget', {
+        const { targetId } = await __classPrivateFieldGet(this, _CDPBrowser_connection, "f").send('Target.createTarget', {
             url: 'about:blank',
             browserContextId: contextId || undefined,
         });
-        const target = __classPrivateFieldGet(this, _Browser_targetManager, "f").getAvailableTargets().get(targetId);
+        const target = __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").getAvailableTargets().get(targetId);
         if (!target) {
             throw new Error(`Missing target for page (id = ${targetId})`);
         }
@@ -46348,7 +47202,7 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      * an array with all the targets in all browser contexts.
      */
     targets() {
-        return Array.from(__classPrivateFieldGet(this, _Browser_targetManager, "f").getAvailableTargets().values()).filter(target => {
+        return Array.from(__classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").getAvailableTargets().values()).filter(target => {
             return target._isInitialized;
         });
     }
@@ -46437,7 +47291,7 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      * The format of browser.version() might change with future releases of Chromium.
      */
     async version() {
-        const version = await __classPrivateFieldGet(this, _Browser_instances, "m", _Browser_getVersion).call(this);
+        const version = await __classPrivateFieldGet(this, _CDPBrowser_instances, "m", _CDPBrowser_getVersion).call(this);
         return version.product;
     }
     /**
@@ -46445,96 +47299,66 @@ class Browser extends EventEmitter_js_1.EventEmitter {
      * {@link Page.setUserAgent}.
      */
     async userAgent() {
-        const version = await __classPrivateFieldGet(this, _Browser_instances, "m", _Browser_getVersion).call(this);
+        const version = await __classPrivateFieldGet(this, _CDPBrowser_instances, "m", _CDPBrowser_getVersion).call(this);
         return version.userAgent;
     }
     /**
-     * Closes Chromium and all of its pages (if any were opened). The {@link Browser} object
-     * itself is considered to be disposed and cannot be used anymore.
+     * Closes Chromium and all of its pages (if any were opened). The
+     * {@link CDPBrowser} object itself is considered to be disposed and cannot be
+     * used anymore.
      */
     async close() {
-        await __classPrivateFieldGet(this, _Browser_closeCallback, "f").call(null);
+        await __classPrivateFieldGet(this, _CDPBrowser_closeCallback, "f").call(null);
         this.disconnect();
     }
     /**
      * Disconnects Puppeteer from the browser, but leaves the Chromium process running.
-     * After calling `disconnect`, the {@link Browser} object is considered disposed and
+     * After calling `disconnect`, the {@link CDPBrowser} object is considered disposed and
      * cannot be used anymore.
      */
     disconnect() {
-        __classPrivateFieldGet(this, _Browser_targetManager, "f").dispose();
-        __classPrivateFieldGet(this, _Browser_connection, "f").dispose();
+        __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").dispose();
+        __classPrivateFieldGet(this, _CDPBrowser_connection, "f").dispose();
     }
     /**
      * Indicates that the browser is connected.
      */
     isConnected() {
-        return !__classPrivateFieldGet(this, _Browser_connection, "f")._closed;
+        return !__classPrivateFieldGet(this, _CDPBrowser_connection, "f")._closed;
     }
 }
-exports.Browser = Browser;
-_Browser_ignoreHTTPSErrors = new WeakMap(), _Browser_defaultViewport = new WeakMap(), _Browser_process = new WeakMap(), _Browser_connection = new WeakMap(), _Browser_closeCallback = new WeakMap(), _Browser_targetFilterCallback = new WeakMap(), _Browser_isPageTargetCallback = new WeakMap(), _Browser_defaultContext = new WeakMap(), _Browser_contexts = new WeakMap(), _Browser_screenshotTaskQueue = new WeakMap(), _Browser_targetManager = new WeakMap(), _Browser_emitDisconnected = new WeakMap(), _Browser_createTarget = new WeakMap(), _Browser_onAttachedToTarget = new WeakMap(), _Browser_onDetachedFromTarget = new WeakMap(), _Browser_onTargetChanged = new WeakMap(), _Browser_onTargetDiscovered = new WeakMap(), _Browser_instances = new WeakSet(), _Browser_setIsPageTargetCallback = function _Browser_setIsPageTargetCallback(isPageTargetCallback) {
-    __classPrivateFieldSet(this, _Browser_isPageTargetCallback, isPageTargetCallback ||
+exports.CDPBrowser = CDPBrowser;
+_CDPBrowser_ignoreHTTPSErrors = new WeakMap(), _CDPBrowser_defaultViewport = new WeakMap(), _CDPBrowser_process = new WeakMap(), _CDPBrowser_connection = new WeakMap(), _CDPBrowser_closeCallback = new WeakMap(), _CDPBrowser_targetFilterCallback = new WeakMap(), _CDPBrowser_isPageTargetCallback = new WeakMap(), _CDPBrowser_defaultContext = new WeakMap(), _CDPBrowser_contexts = new WeakMap(), _CDPBrowser_screenshotTaskQueue = new WeakMap(), _CDPBrowser_targetManager = new WeakMap(), _CDPBrowser_emitDisconnected = new WeakMap(), _CDPBrowser_createTarget = new WeakMap(), _CDPBrowser_onAttachedToTarget = new WeakMap(), _CDPBrowser_onDetachedFromTarget = new WeakMap(), _CDPBrowser_onTargetChanged = new WeakMap(), _CDPBrowser_onTargetDiscovered = new WeakMap(), _CDPBrowser_instances = new WeakSet(), _CDPBrowser_setIsPageTargetCallback = function _CDPBrowser_setIsPageTargetCallback(isPageTargetCallback) {
+    __classPrivateFieldSet(this, _CDPBrowser_isPageTargetCallback, isPageTargetCallback ||
         ((target) => {
             return (target.type === 'page' ||
                 target.type === 'background_page' ||
                 target.type === 'webview');
         }), "f");
-}, _Browser_getVersion = function _Browser_getVersion() {
-    return __classPrivateFieldGet(this, _Browser_connection, "f").send('Browser.getVersion');
+}, _CDPBrowser_getVersion = function _CDPBrowser_getVersion() {
+    return __classPrivateFieldGet(this, _CDPBrowser_connection, "f").send('Browser.getVersion');
 };
 /**
- * BrowserContexts provide a way to operate multiple independent browser
- * sessions. When a browser is launched, it has a single BrowserContext used by
- * default. The method {@link Browser.newPage | Browser.newPage} creates a page
- * in the default browser context.
- *
- * @remarks
- *
- * The Browser class extends from Puppeteer's {@link EventEmitter} class and
- * will emit various events which are documented in the
- * {@link BrowserContextEmittedEvents} enum.
- *
- * If a page opens another page, e.g. with a `window.open` call, the popup will
- * belong to the parent page's browser context.
- *
- * Puppeteer allows creation of "incognito" browser contexts with
- * {@link Browser.createIncognitoBrowserContext | Browser.createIncognitoBrowserContext}
- * method. "Incognito" browser contexts don't write any browsing data to disk.
- *
- * @example
- *
- * ```ts
- * // Create a new incognito browser context
- * const context = await browser.createIncognitoBrowserContext();
- * // Create a new page inside context.
- * const page = await context.newPage();
- * // ... do stuff with page ...
- * await page.goto('https://example.com');
- * // Dispose context once it's no longer needed.
- * await context.close();
- * ```
- *
- * @public
+ * @internal
  */
-class BrowserContext extends EventEmitter_js_1.EventEmitter {
+class CDPBrowserContext extends Browser_js_1.BrowserContext {
     /**
      * @internal
      */
     constructor(connection, browser, contextId) {
         super();
-        _BrowserContext_connection.set(this, void 0);
-        _BrowserContext_browser.set(this, void 0);
-        _BrowserContext_id.set(this, void 0);
-        __classPrivateFieldSet(this, _BrowserContext_connection, connection, "f");
-        __classPrivateFieldSet(this, _BrowserContext_browser, browser, "f");
-        __classPrivateFieldSet(this, _BrowserContext_id, contextId, "f");
+        _CDPBrowserContext_connection.set(this, void 0);
+        _CDPBrowserContext_browser.set(this, void 0);
+        _CDPBrowserContext_id.set(this, void 0);
+        __classPrivateFieldSet(this, _CDPBrowserContext_connection, connection, "f");
+        __classPrivateFieldSet(this, _CDPBrowserContext_browser, browser, "f");
+        __classPrivateFieldSet(this, _CDPBrowserContext_id, contextId, "f");
     }
     /**
      * An array of all active targets inside the browser context.
      */
     targets() {
-        return __classPrivateFieldGet(this, _BrowserContext_browser, "f").targets().filter(target => {
+        return __classPrivateFieldGet(this, _CDPBrowserContext_browser, "f").targets().filter(target => {
             return target.browserContext() === this;
         });
     }
@@ -46559,7 +47383,7 @@ class BrowserContext extends EventEmitter_js_1.EventEmitter {
      * that matches the `predicate` function.
      */
     waitForTarget(predicate, options = {}) {
-        return __classPrivateFieldGet(this, _BrowserContext_browser, "f").waitForTarget(target => {
+        return __classPrivateFieldGet(this, _CDPBrowserContext_browser, "f").waitForTarget(target => {
             return target.browserContext() === this && predicate(target);
         }, options);
     }
@@ -46576,7 +47400,7 @@ class BrowserContext extends EventEmitter_js_1.EventEmitter {
             var _a;
             return (target.type() === 'page' ||
                 (target.type() === 'other' &&
-                    ((_a = __classPrivateFieldGet(this, _BrowserContext_browser, "f")._getIsPageTargetCallback()) === null || _a === void 0 ? void 0 : _a(target._getTargetInfo()))));
+                    ((_a = __classPrivateFieldGet(this, _CDPBrowserContext_browser, "f")._getIsPageTargetCallback()) === null || _a === void 0 ? void 0 : _a(target._getTargetInfo()))));
         })
             .map(target => {
             return target.page();
@@ -46593,7 +47417,7 @@ class BrowserContext extends EventEmitter_js_1.EventEmitter {
      * The default browser context cannot be closed.
      */
     isIncognito() {
-        return !!__classPrivateFieldGet(this, _BrowserContext_id, "f");
+        return !!__classPrivateFieldGet(this, _CDPBrowserContext_id, "f");
     }
     /**
      * @example
@@ -46611,15 +47435,15 @@ class BrowserContext extends EventEmitter_js_1.EventEmitter {
      */
     async overridePermissions(origin, permissions) {
         const protocolPermissions = permissions.map(permission => {
-            const protocolPermission = WEB_PERMISSION_TO_PROTOCOL_PERMISSION.get(permission);
+            const protocolPermission = Browser_js_1.WEB_PERMISSION_TO_PROTOCOL_PERMISSION.get(permission);
             if (!protocolPermission) {
                 throw new Error('Unknown permission: ' + permission);
             }
             return protocolPermission;
         });
-        await __classPrivateFieldGet(this, _BrowserContext_connection, "f").send('Browser.grantPermissions', {
+        await __classPrivateFieldGet(this, _CDPBrowserContext_connection, "f").send('Browser.grantPermissions', {
             origin,
-            browserContextId: __classPrivateFieldGet(this, _BrowserContext_id, "f") || undefined,
+            browserContextId: __classPrivateFieldGet(this, _CDPBrowserContext_id, "f") || undefined,
             permissions: protocolPermissions,
         });
     }
@@ -46636,21 +47460,21 @@ class BrowserContext extends EventEmitter_js_1.EventEmitter {
      * ```
      */
     async clearPermissionOverrides() {
-        await __classPrivateFieldGet(this, _BrowserContext_connection, "f").send('Browser.resetPermissions', {
-            browserContextId: __classPrivateFieldGet(this, _BrowserContext_id, "f") || undefined,
+        await __classPrivateFieldGet(this, _CDPBrowserContext_connection, "f").send('Browser.resetPermissions', {
+            browserContextId: __classPrivateFieldGet(this, _CDPBrowserContext_id, "f") || undefined,
         });
     }
     /**
      * Creates a new page in the browser context.
      */
     newPage() {
-        return __classPrivateFieldGet(this, _BrowserContext_browser, "f")._createPageInContext(__classPrivateFieldGet(this, _BrowserContext_id, "f"));
+        return __classPrivateFieldGet(this, _CDPBrowserContext_browser, "f")._createPageInContext(__classPrivateFieldGet(this, _CDPBrowserContext_id, "f"));
     }
     /**
      * The browser this browser context belongs to.
      */
     browser() {
-        return __classPrivateFieldGet(this, _BrowserContext_browser, "f");
+        return __classPrivateFieldGet(this, _CDPBrowserContext_browser, "f");
     }
     /**
      * Closes the browser context. All the targets that belong to the browser context
@@ -46660,12 +47484,12 @@ class BrowserContext extends EventEmitter_js_1.EventEmitter {
      * Only incognito browser contexts can be closed.
      */
     async close() {
-        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _BrowserContext_id, "f"), 'Non-incognito profiles cannot be closed!');
-        await __classPrivateFieldGet(this, _BrowserContext_browser, "f")._disposeContext(__classPrivateFieldGet(this, _BrowserContext_id, "f"));
+        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _CDPBrowserContext_id, "f"), 'Non-incognito profiles cannot be closed!');
+        await __classPrivateFieldGet(this, _CDPBrowserContext_browser, "f")._disposeContext(__classPrivateFieldGet(this, _CDPBrowserContext_id, "f"));
     }
 }
-exports.BrowserContext = BrowserContext;
-_BrowserContext_connection = new WeakMap(), _BrowserContext_browser = new WeakMap(), _BrowserContext_id = new WeakMap();
+exports.CDPBrowserContext = CDPBrowserContext;
+_CDPBrowserContext_connection = new WeakMap(), _CDPBrowserContext_browser = new WeakMap(), _CDPBrowserContext_id = new WeakMap();
 //# sourceMappingURL=Browser.js.map
 
 /***/ }),
@@ -46714,7 +47538,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports._connectToBrowser = void 0;
+exports._connectToCDPBrowser = void 0;
 const util_js_1 = __nccwpck_require__(8274);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
 const environment_js_1 = __nccwpck_require__(1577);
@@ -46724,7 +47548,7 @@ const Connection_js_1 = __nccwpck_require__(370);
 const fetch_js_1 = __nccwpck_require__(9831);
 const getWebSocketTransportClass = async () => {
     return environment_js_1.isNode
-        ? (await Promise.resolve().then(() => __importStar(__nccwpck_require__(7174)))).NodeWebSocketTransport
+        ? (await Promise.resolve().then(() => __importStar(__nccwpck_require__(4098)))).NodeWebSocketTransport
         : (await Promise.resolve().then(() => __importStar(__nccwpck_require__(7795))))
             .BrowserWebSocketTransport;
 };
@@ -46734,7 +47558,7 @@ const getWebSocketTransportClass = async () => {
  *
  * @internal
  */
-async function _connectToBrowser(options) {
+async function _connectToCDPBrowser(options) {
     const { browserWSEndpoint, browserURL, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, transport, slowMo = 0, targetFilter, _isPageTarget: isPageTarget, } = options;
     (0, assert_js_1.assert)(Number(!!browserWSEndpoint) + Number(!!browserURL) + Number(!!transport) ===
         1, 'Exactly one of browserWSEndpoint, browserURL or transport must be passed to puppeteer.connect');
@@ -46758,13 +47582,12 @@ async function _connectToBrowser(options) {
         ? 'firefox'
         : 'chrome';
     const { browserContextIds } = await connection.send('Target.getBrowserContexts');
-    const browser = await Browser_js_1.Browser._create(product || 'chrome', connection, browserContextIds, ignoreHTTPSErrors, defaultViewport, undefined, () => {
+    const browser = await Browser_js_1.CDPBrowser._create(product || 'chrome', connection, browserContextIds, ignoreHTTPSErrors, defaultViewport, undefined, () => {
         return connection.send('Browser.close').catch(util_js_1.debugError);
     }, targetFilter, isPageTarget);
-    await browser.pages();
     return browser;
 }
-exports._connectToBrowser = _connectToBrowser;
+exports._connectToCDPBrowser = _connectToCDPBrowser;
 async function getWSEndpoint(browserURL) {
     const endpointURL = new URL('/json/version', browserURL);
     const fetch = await (0, fetch_js_1.getFetch)();
@@ -46963,12 +47786,6 @@ class ChromeTargetManager extends EventEmitter_js_1.EventEmitter {
                 }
                 const target = __classPrivateFieldGet(this, _ChromeTargetManager_targetFactory, "f").call(this, event.targetInfo, undefined);
                 __classPrivateFieldGet(this, _ChromeTargetManager_attachedTargetsByTargetId, "f").set(event.targetInfo.targetId, target);
-            }
-            if (event.targetInfo.type === 'shared_worker') {
-                // Special case (https://crbug.com/1338156): currently, shared_workers
-                // don't get auto-attached. This should be removed once the auto-attach
-                // works.
-                await __classPrivateFieldGet(this, _ChromeTargetManager_connection, "f")._createSession(event.targetInfo, true);
             }
         });
         _ChromeTargetManager_onTargetDestroyed.set(this, (event) => {
@@ -47187,9 +48004,9 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _Connection_instances, _Connection_url, _Connection_transport, _Connection_delay, _Connection_lastId, _Connection_sessions, _Connection_closed, _Connection_callbacks, _Connection_manuallyAttached, _Connection_onClose, _CDPSession_sessionId, _CDPSession_targetType, _CDPSession_callbacks, _CDPSession_connection;
+var _Connection_instances, _Connection_url, _Connection_transport, _Connection_delay, _Connection_lastId, _Connection_sessions, _Connection_closed, _Connection_callbacks, _Connection_manuallyAttached, _Connection_onClose, _CDPSessionImpl_sessionId, _CDPSessionImpl_targetType, _CDPSessionImpl_callbacks, _CDPSessionImpl_connection;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CDPSession = exports.CDPSessionEmittedEvents = exports.Connection = exports.ConnectionEmittedEvents = void 0;
+exports.isTargetClosedError = exports.CDPSessionImpl = exports.CDPSession = exports.CDPSessionEmittedEvents = exports.Connection = exports.ConnectionEmittedEvents = void 0;
 /**
  * Copyright 2017 Google Inc. All rights reserved.
  *
@@ -47307,7 +48124,7 @@ class Connection extends EventEmitter_js_1.EventEmitter {
         const object = JSON.parse(message);
         if (object.method === 'Target.attachedToTarget') {
             const sessionId = object.params.sessionId;
-            const session = new CDPSession(this, object.params.targetInfo.type, sessionId);
+            const session = new CDPSessionImpl(this, object.params.targetInfo.type, sessionId);
             __classPrivateFieldGet(this, _Connection_sessions, "f").set(sessionId, session);
             this.emit('sessionattached', session);
             const parentSession = __classPrivateFieldGet(this, _Connection_sessions, "f").get(object.sessionId);
@@ -47444,32 +48261,63 @@ class CDPSession extends EventEmitter_js_1.EventEmitter {
     /**
      * @internal
      */
-    constructor(connection, targetType, sessionId) {
+    constructor() {
         super();
-        _CDPSession_sessionId.set(this, void 0);
-        _CDPSession_targetType.set(this, void 0);
-        _CDPSession_callbacks.set(this, new Map());
-        _CDPSession_connection.set(this, void 0);
-        __classPrivateFieldSet(this, _CDPSession_connection, connection, "f");
-        __classPrivateFieldSet(this, _CDPSession_targetType, targetType, "f");
-        __classPrivateFieldSet(this, _CDPSession_sessionId, sessionId, "f");
     }
     connection() {
-        return __classPrivateFieldGet(this, _CDPSession_connection, "f");
+        throw new Error('Not implemented');
+    }
+    send() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Detaches the cdpSession from the target. Once detached, the cdpSession object
+     * won't emit any events and can't be used to send messages.
+     */
+    async detach() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Returns the session's id.
+     */
+    id() {
+        throw new Error('Not implemented');
+    }
+}
+exports.CDPSession = CDPSession;
+/**
+ * @internal
+ */
+class CDPSessionImpl extends CDPSession {
+    /**
+     * @internal
+     */
+    constructor(connection, targetType, sessionId) {
+        super();
+        _CDPSessionImpl_sessionId.set(this, void 0);
+        _CDPSessionImpl_targetType.set(this, void 0);
+        _CDPSessionImpl_callbacks.set(this, new Map());
+        _CDPSessionImpl_connection.set(this, void 0);
+        __classPrivateFieldSet(this, _CDPSessionImpl_connection, connection, "f");
+        __classPrivateFieldSet(this, _CDPSessionImpl_targetType, targetType, "f");
+        __classPrivateFieldSet(this, _CDPSessionImpl_sessionId, sessionId, "f");
+    }
+    connection() {
+        return __classPrivateFieldGet(this, _CDPSessionImpl_connection, "f");
     }
     send(method, ...paramArgs) {
-        if (!__classPrivateFieldGet(this, _CDPSession_connection, "f")) {
-            return Promise.reject(new Error(`Protocol error (${method}): Session closed. Most likely the ${__classPrivateFieldGet(this, _CDPSession_targetType, "f")} has been closed.`));
+        if (!__classPrivateFieldGet(this, _CDPSessionImpl_connection, "f")) {
+            return Promise.reject(new Error(`Protocol error (${method}): Session closed. Most likely the ${__classPrivateFieldGet(this, _CDPSessionImpl_targetType, "f")} has been closed.`));
         }
         // See the comment in Connection#send explaining why we do this.
         const params = paramArgs.length ? paramArgs[0] : undefined;
-        const id = __classPrivateFieldGet(this, _CDPSession_connection, "f")._rawSend({
-            sessionId: __classPrivateFieldGet(this, _CDPSession_sessionId, "f"),
+        const id = __classPrivateFieldGet(this, _CDPSessionImpl_connection, "f")._rawSend({
+            sessionId: __classPrivateFieldGet(this, _CDPSessionImpl_sessionId, "f"),
             method,
             params,
         });
         return new Promise((resolve, reject) => {
-            __classPrivateFieldGet(this, _CDPSession_callbacks, "f").set(id, {
+            __classPrivateFieldGet(this, _CDPSessionImpl_callbacks, "f").set(id, {
                 resolve,
                 reject,
                 error: new Errors_js_1.ProtocolError(),
@@ -47481,9 +48329,9 @@ class CDPSession extends EventEmitter_js_1.EventEmitter {
      * @internal
      */
     _onMessage(object) {
-        const callback = object.id ? __classPrivateFieldGet(this, _CDPSession_callbacks, "f").get(object.id) : undefined;
+        const callback = object.id ? __classPrivateFieldGet(this, _CDPSessionImpl_callbacks, "f").get(object.id) : undefined;
         if (object.id && callback) {
-            __classPrivateFieldGet(this, _CDPSession_callbacks, "f").delete(object.id);
+            __classPrivateFieldGet(this, _CDPSessionImpl_callbacks, "f").delete(object.id);
             if (object.error) {
                 callback.reject(createProtocolError(callback.error, callback.method, object));
             }
@@ -47501,33 +48349,33 @@ class CDPSession extends EventEmitter_js_1.EventEmitter {
      * won't emit any events and can't be used to send messages.
      */
     async detach() {
-        if (!__classPrivateFieldGet(this, _CDPSession_connection, "f")) {
-            throw new Error(`Session already detached. Most likely the ${__classPrivateFieldGet(this, _CDPSession_targetType, "f")} has been closed.`);
+        if (!__classPrivateFieldGet(this, _CDPSessionImpl_connection, "f")) {
+            throw new Error(`Session already detached. Most likely the ${__classPrivateFieldGet(this, _CDPSessionImpl_targetType, "f")} has been closed.`);
         }
-        await __classPrivateFieldGet(this, _CDPSession_connection, "f").send('Target.detachFromTarget', {
-            sessionId: __classPrivateFieldGet(this, _CDPSession_sessionId, "f"),
+        await __classPrivateFieldGet(this, _CDPSessionImpl_connection, "f").send('Target.detachFromTarget', {
+            sessionId: __classPrivateFieldGet(this, _CDPSessionImpl_sessionId, "f"),
         });
     }
     /**
      * @internal
      */
     _onClosed() {
-        for (const callback of __classPrivateFieldGet(this, _CDPSession_callbacks, "f").values()) {
+        for (const callback of __classPrivateFieldGet(this, _CDPSessionImpl_callbacks, "f").values()) {
             callback.reject(rewriteError(callback.error, `Protocol error (${callback.method}): Target closed.`));
         }
-        __classPrivateFieldGet(this, _CDPSession_callbacks, "f").clear();
-        __classPrivateFieldSet(this, _CDPSession_connection, undefined, "f");
+        __classPrivateFieldGet(this, _CDPSessionImpl_callbacks, "f").clear();
+        __classPrivateFieldSet(this, _CDPSessionImpl_connection, undefined, "f");
         this.emit(exports.CDPSessionEmittedEvents.Disconnected);
     }
     /**
      * Returns the session's id.
      */
     id() {
-        return __classPrivateFieldGet(this, _CDPSession_sessionId, "f");
+        return __classPrivateFieldGet(this, _CDPSessionImpl_sessionId, "f");
     }
 }
-exports.CDPSession = CDPSession;
-_CDPSession_sessionId = new WeakMap(), _CDPSession_targetType = new WeakMap(), _CDPSession_callbacks = new WeakMap(), _CDPSession_connection = new WeakMap();
+exports.CDPSessionImpl = CDPSessionImpl;
+_CDPSessionImpl_sessionId = new WeakMap(), _CDPSessionImpl_targetType = new WeakMap(), _CDPSessionImpl_callbacks = new WeakMap(), _CDPSessionImpl_connection = new WeakMap();
 function createProtocolError(error, method, object) {
     let message = `Protocol error (${method}): ${object.error.message}`;
     if ('data' in object.error) {
@@ -47540,6 +48388,14 @@ function rewriteError(error, message, originalMessage) {
     error.originalMessage = originalMessage !== null && originalMessage !== void 0 ? originalMessage : error.originalMessage;
     return error;
 }
+/**
+ * @internal
+ */
+function isTargetClosedError(err) {
+    return (err.message.includes('Target closed') ||
+        err.message.includes('Session closed'));
+}
+exports.isTargetClosedError = isTargetClosedError;
 //# sourceMappingURL=Connection.js.map
 
 /***/ }),
@@ -47718,14 +48574,16 @@ class Coverage {
     }
     /**
      * @param options - Set of configurable options for coverage defaults to
-     * `resetOnNavigation : true, reportAnonymousScripts : false`
+     * `resetOnNavigation : true, reportAnonymousScripts : false,`
+     * `includeRawScriptCoverage : false, useBlockCoverage : true`
      * @returns Promise that resolves when coverage is started.
      *
      * @remarks
      * Anonymous scripts are ones that don't have an associated url. These are
      * scripts that are dynamically created on the page using `eval` or
      * `new Function`. If `reportAnonymousScripts` is set to `true`, anonymous
-     * scripts will have `pptr://__puppeteer_evaluation_script__` as their URL.
+     * scripts URL will start with `debugger://VM` (unless a magic //# sourceURL
+     * comment is present, in which case that will the be URL).
      */
     async startJSCoverage(options = {}) {
         return await __classPrivateFieldGet(this, _Coverage_jsCoverage, "f").start(options);
@@ -47780,7 +48638,7 @@ class JSCoverage {
     }
     async start(options = {}) {
         (0, assert_js_1.assert)(!__classPrivateFieldGet(this, _JSCoverage_enabled, "f"), 'JSCoverage is already enabled');
-        const { resetOnNavigation = true, reportAnonymousScripts = false, includeRawScriptCoverage = false, } = options;
+        const { resetOnNavigation = true, reportAnonymousScripts = false, includeRawScriptCoverage = false, useBlockCoverage = true, } = options;
         __classPrivateFieldSet(this, _JSCoverage_resetOnNavigation, resetOnNavigation, "f");
         __classPrivateFieldSet(this, _JSCoverage_reportAnonymousScripts, reportAnonymousScripts, "f");
         __classPrivateFieldSet(this, _JSCoverage_includeRawScriptCoverage, includeRawScriptCoverage, "f");
@@ -47795,7 +48653,7 @@ class JSCoverage {
             __classPrivateFieldGet(this, _JSCoverage_client, "f").send('Profiler.enable'),
             __classPrivateFieldGet(this, _JSCoverage_client, "f").send('Profiler.startPreciseCoverage', {
                 callCount: __classPrivateFieldGet(this, _JSCoverage_includeRawScriptCoverage, "f"),
-                detailed: true,
+                detailed: useBlockCoverage,
             }),
             __classPrivateFieldGet(this, _JSCoverage_client, "f").send('Debugger.enable'),
             __classPrivateFieldGet(this, _JSCoverage_client, "f").send('Debugger.setSkipAllPauses', { skip: true }),
@@ -48007,7 +48865,7 @@ function convertToDisjointRanges(nestedRanges) {
     }
     // Filter out empty ranges.
     return results.filter(range => {
-        return range.end - range.start > 1;
+        return range.end - range.start > 0;
     });
 }
 //# sourceMappingURL=Coverage.js.map
@@ -48145,7 +49003,7 @@ exports.debug = debug;
 
 /***/ }),
 
-/***/ 3902:
+/***/ 1626:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -48166,8 +49024,8 @@ exports.debug = debug;
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.devices = void 0;
-const deviceArray = [
+exports.devices = exports.KnownDevices = void 0;
+const knownDevices = [
     {
         name: 'Blackberry PlayBook',
         userAgent: 'Mozilla/5.0 (PlayBook; U; RIM Tablet OS 2.1.0; en-US) AppleWebKit/536.2+ (KHTML like Gecko) Version/7.2.1.0 Safari/536.2+',
@@ -49549,14 +50407,18 @@ const deviceArray = [
         },
     },
 ];
+const knownDevicesByName = {};
+for (const device of knownDevices) {
+    knownDevicesByName[device.name] = device;
+}
 /**
- * A list of devices to be used with `page.emulate(options)`. Actual list of devices can be found in {@link https://github.com/puppeteer/puppeteer/blob/main/src/common/DeviceDescriptors.ts | src/common/DeviceDescriptors.ts}.
+ * A list of devices to be used with {@link Page.emulate}.
  *
  * @example
  *
  * ```ts
- * const puppeteer = require('puppeteer');
- * const iPhone = puppeteer.devices['iPhone 6'];
+ * import {KnownDevices} from 'puppeteer';
+ * const iPhone = KnownDevices['iPhone 6'];
  *
  * (async () => {
  *   const browser = await puppeteer.launch();
@@ -49570,12 +50432,14 @@ const deviceArray = [
  *
  * @public
  */
-const devices = {};
-exports.devices = devices;
-for (const device of deviceArray) {
-    devices[device.name] = device;
-}
-//# sourceMappingURL=DeviceDescriptors.js.map
+exports.KnownDevices = Object.freeze(knownDevicesByName);
+/**
+ * @deprecated Import {@link KnownDevices}
+ *
+ * @public
+ */
+exports.devices = exports.KnownDevices;
+//# sourceMappingURL=Device.js.map
 
 /***/ }),
 
@@ -49708,6 +50572,21 @@ _Dialog_client = new WeakMap(), _Dialog_type = new WeakMap(), _Dialog_message = 
 
 "use strict";
 
+/**
+ * Copyright 2019 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -49742,11 +50621,10 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _ElementHandle_instances, _ElementHandle_frame, _ElementHandle_page, _ElementHandle_frameManager, _ElementHandle_scrollIntoViewIfNeeded, _ElementHandle_getOOPIFOffsets, _ElementHandle_getBoxModel, _ElementHandle_fromProtocolQuad, _ElementHandle_intersectQuadWithViewport;
+var _ElementHandle_instances, _ElementHandle_frame, _ElementHandle_frameManager_get, _ElementHandle_page_get, _ElementHandle_scrollIntoViewIfNeeded, _ElementHandle_getOOPIFOffsets, _ElementHandle_getBoxModel, _ElementHandle_fromProtocolQuad, _ElementHandle_intersectQuadWithViewport;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ElementHandle = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
-const IsolatedWorld_js_1 = __nccwpck_require__(5651);
 const JSHandle_js_1 = __nccwpck_require__(2045);
 const QueryHandler_js_1 = __nccwpck_require__(3200);
 const util_js_1 = __nccwpck_require__(8274);
@@ -49792,15 +50670,14 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     /**
      * @internal
      */
-    constructor(context, client, remoteObject, frame, page, frameManager) {
-        super(context, client, remoteObject);
+    constructor(context, remoteObject, frame) {
+        super(context, remoteObject);
         _ElementHandle_instances.add(this);
         _ElementHandle_frame.set(this, void 0);
-        _ElementHandle_page.set(this, void 0);
-        _ElementHandle_frameManager.set(this, void 0);
         __classPrivateFieldSet(this, _ElementHandle_frame, frame, "f");
-        __classPrivateFieldSet(this, _ElementHandle_page, page, "f");
-        __classPrivateFieldSet(this, _ElementHandle_frameManager, frameManager, "f");
+    }
+    get frame() {
+        return __classPrivateFieldGet(this, _ElementHandle_frame, "f");
     }
     /**
      * Queries the current element for an element matching the given selector.
@@ -49896,16 +50773,29 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      */
     async $$eval(selector, pageFunction, ...args) {
         const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
-        (0, assert_js_1.assert)(queryHandler.queryAllArray);
-        const arrayHandle = (await queryHandler.queryAllArray(this, updatedSelector));
-        const result = await arrayHandle.evaluate(pageFunction, ...args);
-        await arrayHandle.dispose();
+        (0, assert_js_1.assert)(queryHandler.queryAll, 'Cannot handle queries for a multiple element with the given selector');
+        const handles = (await queryHandler.queryAll(this, updatedSelector));
+        const elements = await this.evaluateHandle((_, ...elements) => {
+            return elements;
+        }, ...handles);
+        const [result] = await Promise.all([
+            elements.evaluate(pageFunction, ...args),
+            ...handles.map(handle => {
+                return handle.dispose();
+            }),
+        ]);
+        await elements.dispose();
         return result;
     }
     /**
      * @deprecated Use {@link ElementHandle.$$} with the `xpath` prefix.
      *
+     * Example: `await elementHandle.$$('xpath/' + xpathExpression)`
+     *
      * The method evaluates the XPath expression relative to the elementHandle.
+     * If `xpath` starts with `//` instead of `.//`, the dot will be appended
+     * automatically.
+     *
      * If there are no such elements, the method will resolve to an empty array.
      * @param expression - Expression to {@link https://developer.mozilla.org/en-US/docs/Web/API/Document/evaluate | evaluate}
      */
@@ -49953,24 +50843,17 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      * @throws Throws if an element matching the given selector doesn't appear.
      */
     async waitForSelector(selector, options = {}) {
-        const frame = this.executionContext().frame();
-        (0, assert_js_1.assert)(frame);
-        const adoptedRoot = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].adoptHandle(this);
-        const handle = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].waitForSelector(selector, {
-            ...options,
-            root: adoptedRoot,
-        });
-        await adoptedRoot.dispose();
-        if (!handle) {
-            return null;
-        }
-        const result = (await frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].adoptHandle(handle));
-        await handle.dispose();
-        return result;
+        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
+        (0, assert_js_1.assert)(queryHandler.waitFor, 'Query handler does not support waiting');
+        return (await queryHandler.waitFor(this, updatedSelector, options));
     }
     /**
      * @deprecated Use {@link ElementHandle.waitForSelector} with the `xpath`
      * prefix.
+     *
+     * Example: `await elementHandle.waitForSelector('xpath/' + xpathExpression)`
+     *
+     * The method evaluates the XPath expression relative to the elementHandle.
      *
      * Wait for the `xpath` within the element. If at the moment of calling the
      * method the `xpath` already exists, the method will return immediately. If
@@ -49980,7 +50863,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      * If `xpath` starts with `//` instead of `.//`, the dot will be appended
      * automatically.
      *
-     * This method works across navigation
+     * This method works across navigation.
      *
      * ```ts
      * const puppeteer = require('puppeteer');
@@ -50045,7 +50928,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         if (typeof nodeInfo.node.frameId !== 'string') {
             return null;
         }
-        return __classPrivateFieldGet(this, _ElementHandle_frameManager, "f").frame(nodeInfo.node.frameId);
+        return __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_frameManager_get).frame(nodeInfo.node.frameId);
     }
     /**
      * Returns the middle point within an element unless a specific offset is provided.
@@ -50057,7 +50940,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
                 objectId: this.remoteObject().objectId,
             })
                 .catch(util_js_1.debugError),
-            __classPrivateFieldGet(this, _ElementHandle_page, "f")._client().send('Page.getLayoutMetrics'),
+            __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get)._client().send('Page.getLayoutMetrics'),
         ]);
         if (!result || !result.quads.length) {
             throw new Error('Node is either not clickable or not an HTMLElement');
@@ -50123,7 +51006,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async hover() {
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const { x, y } = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").mouse.move(x, y);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.move(x, y);
     }
     /**
      * This method scrolls element into view if needed, and then
@@ -50133,16 +51016,16 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async click(options = {}) {
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const { x, y } = await this.clickablePoint(options.offset);
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").mouse.click(x, y, options);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.click(x, y, options);
     }
     /**
      * This method creates and captures a dragevent from the element.
      */
     async drag(target) {
-        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _ElementHandle_page, "f").isDragInterceptionEnabled(), 'Drag Interception is not enabled!');
+        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).isDragInterceptionEnabled(), 'Drag Interception is not enabled!');
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const start = await this.clickablePoint();
-        return await __classPrivateFieldGet(this, _ElementHandle_page, "f").mouse.drag(start, target);
+        return await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.drag(start, target);
     }
     /**
      * This method creates a `dragenter` event on the element.
@@ -50150,7 +51033,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async dragEnter(data = { items: [], dragOperationsMask: 1 }) {
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const target = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").mouse.dragEnter(target, data);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.dragEnter(target, data);
     }
     /**
      * This method creates a `dragover` event on the element.
@@ -50158,7 +51041,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async dragOver(data = { items: [], dragOperationsMask: 1 }) {
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const target = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").mouse.dragOver(target, data);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.dragOver(target, data);
     }
     /**
      * This method triggers a drop on the element.
@@ -50166,7 +51049,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async drop(data = { items: [], dragOperationsMask: 1 }) {
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const destination = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").mouse.drop(destination, data);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.drop(destination, data);
     }
     /**
      * This method triggers a dragenter, dragover, and drop on the element.
@@ -50175,7 +51058,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const startPoint = await this.clickablePoint();
         const targetPoint = await target.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").mouse.dragAndDrop(startPoint, targetPoint, options);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.dragAndDrop(startPoint, targetPoint, options);
     }
     /**
      * Triggers a `change` and `input` event once all the provided options have been
@@ -50297,7 +51180,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async tap() {
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
         const { x, y } = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").touchscreen.tap(x, y);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).touchscreen.tap(x, y);
     }
     /**
      * Calls {@link https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus | focus} on the element.
@@ -50335,7 +51218,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      */
     async type(text, options) {
         await this.focus();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").keyboard.type(text, options);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).keyboard.type(text, options);
     }
     /**
      * Focuses the element, and then uses {@link Keyboard.down} and {@link Keyboard.up}.
@@ -50353,7 +51236,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      */
     async press(key, options) {
         await this.focus();
-        await __classPrivateFieldGet(this, _ElementHandle_page, "f").keyboard.press(key, options);
+        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).keyboard.press(key, options);
     }
     /**
      * This method returns the bounding box of the element (relative to the main frame),
@@ -50405,7 +51288,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         let needsViewportReset = false;
         let boundingBox = await this.boundingBox();
         (0, assert_js_1.assert)(boundingBox, 'Node is either not visible or not an HTMLElement');
-        const viewport = __classPrivateFieldGet(this, _ElementHandle_page, "f").viewport();
+        const viewport = __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).viewport();
         if (viewport &&
             (boundingBox.width > viewport.width ||
                 boundingBox.height > viewport.height)) {
@@ -50413,7 +51296,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
                 width: Math.max(viewport.width, Math.ceil(boundingBox.width)),
                 height: Math.max(viewport.height, Math.ceil(boundingBox.height)),
             };
-            await __classPrivateFieldGet(this, _ElementHandle_page, "f").setViewport(Object.assign({}, viewport, newViewport));
+            await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).setViewport(Object.assign({}, viewport, newViewport));
             needsViewportReset = true;
         }
         await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
@@ -50427,11 +51310,11 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         const clip = Object.assign({}, boundingBox);
         clip.x += pageX;
         clip.y += pageY;
-        const imageData = await __classPrivateFieldGet(this, _ElementHandle_page, "f").screenshot(Object.assign({}, {
+        const imageData = await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).screenshot(Object.assign({}, {
             clip,
         }, options));
         if (needsViewportReset && viewport) {
-            await __classPrivateFieldGet(this, _ElementHandle_page, "f").setViewport(viewport);
+            await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).setViewport(viewport);
         }
         return imageData;
     }
@@ -50453,7 +51336,11 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     }
 }
 exports.ElementHandle = ElementHandle;
-_ElementHandle_frame = new WeakMap(), _ElementHandle_page = new WeakMap(), _ElementHandle_frameManager = new WeakMap(), _ElementHandle_instances = new WeakSet(), _ElementHandle_scrollIntoViewIfNeeded = async function _ElementHandle_scrollIntoViewIfNeeded() {
+_ElementHandle_frame = new WeakMap(), _ElementHandle_instances = new WeakSet(), _ElementHandle_frameManager_get = function _ElementHandle_frameManager_get() {
+    return __classPrivateFieldGet(this, _ElementHandle_frame, "f")._frameManager;
+}, _ElementHandle_page_get = function _ElementHandle_page_get() {
+    return __classPrivateFieldGet(this, _ElementHandle_frame, "f").page();
+}, _ElementHandle_scrollIntoViewIfNeeded = async function _ElementHandle_scrollIntoViewIfNeeded() {
     const error = await this.evaluate(async (element) => {
         if (!element.isConnected) {
             return 'Node is detached from document';
@@ -50493,7 +51380,7 @@ _ElementHandle_frame = new WeakMap(), _ElementHandle_page = new WeakMap(), _Elem
                     behavior: 'instant',
                 });
             }
-        }, __classPrivateFieldGet(this, _ElementHandle_page, "f").isJavaScriptEnabled());
+        }, __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).isJavaScriptEnabled());
     }
 }, _ElementHandle_getOOPIFOffsets = async function _ElementHandle_getOOPIFOffsets(frame) {
     let offsetX = 0;
@@ -50622,7 +51509,7 @@ _EmulationManager_client = new WeakMap(), _EmulationManager_emulatingMobile = ne
 /***/ }),
 
 /***/ 6315:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports) {
 
 "use strict";
 
@@ -50641,12 +51528,29 @@ _EmulationManager_client = new WeakMap(), _EmulationManager_emulatingMobile = ne
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _ProtocolError_code, _ProtocolError_originalMessage;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.errors = exports.ProtocolError = exports.TimeoutError = exports.CustomError = void 0;
 /**
+ * @deprecated Do not use.
+ *
  * @public
  */
 class CustomError extends Error {
+    /**
+     * @internal
+     */
     constructor(message) {
         super(message);
         this.name = this.constructor.name;
@@ -50675,11 +51579,39 @@ exports.TimeoutError = TimeoutError;
 class ProtocolError extends CustomError {
     constructor() {
         super(...arguments);
-        this.originalMessage = '';
+        _ProtocolError_code.set(this, void 0);
+        _ProtocolError_originalMessage.set(this, '');
+    }
+    /**
+     * @internal
+     */
+    set code(code) {
+        __classPrivateFieldSet(this, _ProtocolError_code, code, "f");
+    }
+    /**
+     * @public
+     */
+    get code() {
+        return __classPrivateFieldGet(this, _ProtocolError_code, "f");
+    }
+    /**
+     * @internal
+     */
+    set originalMessage(originalMessage) {
+        __classPrivateFieldSet(this, _ProtocolError_originalMessage, originalMessage, "f");
+    }
+    /**
+     * @public
+     */
+    get originalMessage() {
+        return __classPrivateFieldGet(this, _ProtocolError_originalMessage, "f");
     }
 }
 exports.ProtocolError = ProtocolError;
+_ProtocolError_code = new WeakMap(), _ProtocolError_originalMessage = new WeakMap();
 /**
+ * @deprecated Import error classes directly.
+ *
  * Puppeteer methods might throw errors if they are unable to fulfill a request.
  * For example, `page.waitForSelector(selector[, options])` might fail if the
  * selector doesn't match any nodes during the given timeframe.
@@ -50694,7 +51626,7 @@ exports.ProtocolError = ProtocolError;
  * try {
  *   await page.waitForSelector('.foo');
  * } catch (e) {
- *   if (e instanceof puppeteer.errors.TimeoutError) {
+ *   if (e instanceof TimeoutError) {
  *     // Do something if this is a timeout.
  *   }
  * }
@@ -50715,12 +51647,27 @@ exports.errors = Object.freeze({
 
 "use strict";
 
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.EventEmitter = void 0;
-const index_js_1 = __importDefault(__nccwpck_require__(6887));
+const index_js_1 = __importDefault(__nccwpck_require__(3733));
 /**
  * The EventEmitter class that many Puppeteer classes extend.
  *
@@ -50863,8 +51810,8 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _ExecutionContext_instances, _ExecutionContext_evaluate;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ExecutionContext = exports.EVALUATION_SCRIPT_URL = void 0;
-const assert_js_1 = __nccwpck_require__(7729);
 const JSHandle_js_1 = __nccwpck_require__(2045);
+const LazyArg_js_1 = __nccwpck_require__(4897);
 const util_js_1 = __nccwpck_require__(8274);
 /**
  * @public
@@ -50872,8 +51819,6 @@ const util_js_1 = __nccwpck_require__(8274);
 exports.EVALUATION_SCRIPT_URL = 'pptr://__puppeteer_evaluation_script__';
 const SOURCE_URL_REGEX = /^[\040\t]*\/\/[@#] sourceURL=\s*(\S*?)\s*$/m;
 /**
- * @deprecated Do not use directly.
- *
  * Represents a context for JavaScript execution.
  *
  * @example
@@ -50892,6 +51837,8 @@ const SOURCE_URL_REGEX = /^[\040\t]*\/\/[@#] sourceURL=\s*(\S*?)\s*$/m;
  * @remarks
  * Besides pages, execution contexts can be found in
  * {@link WebWorker | workers}.
+ *
+ * @internal
  */
 class ExecutionContext {
     /**
@@ -50903,17 +51850,6 @@ class ExecutionContext {
         this._world = world;
         this._contextId = contextPayload.id;
         this._contextName = contextPayload.name;
-    }
-    /**
-     * @returns The frame associated with this execution context.
-     *
-     * @remarks
-     * Not every execution context is associated with a frame. For example,
-     * {@link WebWorker | workers} have execution contexts that are not associated
-     * with frames.
-     */
-    frame() {
-        return this._world ? this._world.frame() : null;
     }
     /**
      * Evaluates the given function.
@@ -51010,37 +51946,6 @@ class ExecutionContext {
     async evaluateHandle(pageFunction, ...args) {
         return __classPrivateFieldGet(this, _ExecutionContext_instances, "m", _ExecutionContext_evaluate).call(this, false, pageFunction, ...args);
     }
-    /**
-     * Iterates through the JavaScript heap and finds all the objects with the
-     * given prototype.
-     *
-     * @example
-     *
-     * ```ts
-     * // Create a Map object
-     * await page.evaluate(() => (window.map = new Map()));
-     * // Get a handle to the Map object prototype
-     * const mapPrototype = await page.evaluateHandle(() => Map.prototype);
-     * // Query all map instances into an array
-     * const mapInstances = await page.queryObjects(mapPrototype);
-     * // Count amount of map objects in heap
-     * const count = await page.evaluate(maps => maps.length, mapInstances);
-     * await mapInstances.dispose();
-     * await mapPrototype.dispose();
-     * ```
-     *
-     * @param prototypeHandle - a handle to the object prototype
-     * @returns A handle to an array of objects with the given prototype.
-     */
-    async queryObjects(prototypeHandle) {
-        (0, assert_js_1.assert)(!prototypeHandle.disposed, 'Prototype JSHandle is disposed!');
-        const remoteObject = prototypeHandle.remoteObject();
-        (0, assert_js_1.assert)(remoteObject.objectId, 'Prototype JSHandle must not be referencing primitive value');
-        const response = await this._client.send('Runtime.queryObjects', {
-            prototypeObjectId: remoteObject.objectId,
-        });
-        return (0, util_js_1.createJSHandle)(this, response.objects);
-    }
 }
 exports.ExecutionContext = ExecutionContext;
 _ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async function _ExecutionContext_evaluate(returnByValue, pageFunction, ...args) {
@@ -51094,7 +51999,7 @@ _ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async 
         callFunctionOnPromise = this._client.send('Runtime.callFunctionOn', {
             functionDeclaration: functionText + '\n' + suffix + '\n',
             executionContextId: this._contextId,
-            arguments: args.map(convertArgument.bind(this)),
+            arguments: await Promise.all(args.map(convertArgument.bind(this))),
             returnByValue,
             awaitPromise: true,
             userGesture: true,
@@ -51114,7 +52019,10 @@ _ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async 
     return returnByValue
         ? (0, util_js_1.valueFromRemoteObject)(remoteObject)
         : (0, util_js_1.createJSHandle)(this, remoteObject);
-    function convertArgument(arg) {
+    async function convertArgument(arg) {
+        if (arg instanceof LazyArg_js_1.LazyArg) {
+            arg = await arg.get();
+        }
         if (typeof arg === 'bigint') {
             // eslint-disable-line valid-typeof
             return { unserializableValue: `${arg.toString()}n` };
@@ -51151,19 +52059,19 @@ _ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async 
         }
         return { value: arg };
     }
-    function rewriteError(error) {
-        if (error.message.includes('Object reference chain is too long')) {
-            return { result: { type: 'undefined' } };
-        }
-        if (error.message.includes("Object couldn't be returned by value")) {
-            return { result: { type: 'undefined' } };
-        }
-        if (error.message.endsWith('Cannot find context with specified id') ||
-            error.message.endsWith('Inspected target navigated or closed')) {
-            throw new Error('Execution context was destroyed, most likely because of a navigation.');
-        }
-        throw error;
+};
+const rewriteError = (error) => {
+    if (error.message.includes('Object reference chain is too long')) {
+        return { result: { type: 'undefined' } };
     }
+    if (error.message.includes("Object couldn't be returned by value")) {
+        return { result: { type: 'undefined' } };
+    }
+    if (error.message.endsWith('Cannot find context with specified id') ||
+        error.message.endsWith('Inspected target navigated or closed')) {
+        throw new Error('Execution context was destroyed, most likely because of a navigation.');
+    }
+    throw error;
 };
 //# sourceMappingURL=ExecutionContext.js.map
 
@@ -51480,6 +52388,44 @@ _FirefoxTargetManager_connection = new WeakMap(), _FirefoxTargetManager_discover
 
 "use strict";
 
+/**
+ * Copyright 2017 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
@@ -51491,12 +52437,15 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _Frame_parentFrame, _Frame_url, _Frame_detached, _Frame_client;
+var _Frame_url, _Frame_detached, _Frame_client;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Frame = void 0;
+const assert_js_1 = __nccwpck_require__(7729);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
 const IsolatedWorld_js_1 = __nccwpck_require__(5651);
 const LifecycleWatcher_js_1 = __nccwpck_require__(2169);
+const QueryHandler_js_1 = __nccwpck_require__(3200);
+const util_js_1 = __nccwpck_require__(8274);
 /**
  * Represents a DOM frame.
  *
@@ -51554,8 +52503,7 @@ class Frame {
     /**
      * @internal
      */
-    constructor(frameManager, parentFrame, frameId, client) {
-        _Frame_parentFrame.set(this, void 0);
+    constructor(frameManager, frameId, parentFrameId, client) {
         _Frame_url.set(this, '');
         _Frame_detached.set(this, false);
         _Frame_client.set(this, void 0);
@@ -51572,15 +52520,11 @@ class Frame {
          */
         this._lifecycleEvents = new Set();
         this._frameManager = frameManager;
-        __classPrivateFieldSet(this, _Frame_parentFrame, parentFrame !== null && parentFrame !== void 0 ? parentFrame : null, "f");
         __classPrivateFieldSet(this, _Frame_url, '', "f");
         this._id = frameId;
+        this._parentId = parentFrameId;
         __classPrivateFieldSet(this, _Frame_detached, false, "f");
         this._loaderId = '';
-        this._childFrames = new Set();
-        if (__classPrivateFieldGet(this, _Frame_parentFrame, "f")) {
-            __classPrivateFieldGet(this, _Frame_parentFrame, "f")._childFrames.add(this);
-        }
         this.updateClient(client);
     }
     /**
@@ -51589,8 +52533,8 @@ class Frame {
     updateClient(client) {
         __classPrivateFieldSet(this, _Frame_client, client, "f");
         this.worlds = {
-            [IsolatedWorld_js_1.MAIN_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(client, this._frameManager, this, this._frameManager.timeoutSettings),
-            [IsolatedWorld_js_1.PUPPETEER_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(client, this._frameManager, this, this._frameManager.timeoutSettings),
+            [IsolatedWorld_js_1.MAIN_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(this),
+            [IsolatedWorld_js_1.PUPPETEER_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(this),
         };
     }
     /**
@@ -51736,9 +52680,7 @@ class Frame {
         return __classPrivateFieldGet(this, _Frame_client, "f");
     }
     /**
-     * @deprecated Do not use the execution context directly.
-     *
-     * @returns a promise that resolves to the frame's default execution context.
+     * @internal
      */
     executionContext() {
         return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].executionContext();
@@ -51830,7 +52772,11 @@ class Frame {
     /**
      * @deprecated Use {@link Frame.$$} with the `xpath` prefix.
      *
+     * Example: `await frame.$$('xpath/' + xpathExpression)`
+     *
      * This method evaluates the given XPath expression and returns the results.
+     * If `xpath` starts with `//` instead of `.//`, the dot will be appended
+     * automatically.
      * @param expression - the XPath expression to evaluate.
      */
     async $x(expression) {
@@ -51872,16 +52818,18 @@ class Frame {
      * @throws Throws if an element matching the given selector doesn't appear.
      */
     async waitForSelector(selector, options = {}) {
-        const handle = await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].waitForSelector(selector, options);
-        if (!handle) {
-            return null;
-        }
-        const mainHandle = (await this.worlds[IsolatedWorld_js_1.MAIN_WORLD].adoptHandle(handle));
-        await handle.dispose();
-        return mainHandle;
+        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
+        (0, assert_js_1.assert)(queryHandler.waitFor, 'Query handler does not support waiting');
+        return (await queryHandler.waitFor(this, updatedSelector, options));
     }
     /**
      * @deprecated Use {@link Frame.waitForSelector} with the `xpath` prefix.
+     *
+     * Example: `await frame.waitForSelector('xpath/' + xpathExpression)`
+     *
+     * The method evaluates the XPath expression relative to the Frame.
+     * If `xpath` starts with `//` instead of `.//`, the dot will be appended
+     * automatically.
      *
      * Wait for the `xpath` to appear in page. If at the moment of calling the
      * method the `xpath` already exists, the method will return immediately. If
@@ -51936,7 +52884,6 @@ class Frame {
      * @returns the promise which resolve when the `pageFunction` returns a truthy value.
      */
     waitForFunction(pageFunction, options = {}, ...args) {
-        // TODO: Fix when NodeHandle has been added.
         return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].waitForFunction(pageFunction, options, ...args);
     }
     /**
@@ -51978,13 +52925,13 @@ class Frame {
      * @returns The parent frame, if any. Detached and main frames return `null`.
      */
     parentFrame() {
-        return __classPrivateFieldGet(this, _Frame_parentFrame, "f");
+        return this._frameManager._frameTree.parentFrame(this._id) || null;
     }
     /**
      * @returns An array of child frames.
      */
     childFrames() {
-        return Array.from(this._childFrames);
+        return this._frameManager._frameTree.childFrames(this._id);
     }
     /**
      * @returns `true` if the frame has been detached. Otherwise, `false`.
@@ -51996,24 +52943,101 @@ class Frame {
      * Adds a `<script>` tag into the page with the desired url or content.
      *
      * @param options - Options for the script.
-     * @returns a promise that resolves to the added tag when the script's
-     * `onload` event fires or when the script content was injected into the
-     * frame.
+     * @returns An {@link ElementHandle | element handle} to the injected
+     * `<script>` element.
      */
     async addScriptTag(options) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].addScriptTag(options);
+        let { content = '', type } = options;
+        const { path } = options;
+        if (+!!options.url + +!!path + +!!content !== 1) {
+            throw new Error('Exactly one of `url`, `path`, or `content` must be specified.');
+        }
+        if (path) {
+            let fs;
+            try {
+                fs = (await Promise.resolve().then(() => __importStar(__nccwpck_require__(7147)))).promises;
+            }
+            catch (error) {
+                if (error instanceof TypeError) {
+                    throw new Error('Can only pass a file path in a Node-like environment.');
+                }
+                throw error;
+            }
+            content = await fs.readFile(path, 'utf8');
+            content += `//# sourceURL=${path.replace(/\n/g, '')}`;
+        }
+        type = type !== null && type !== void 0 ? type : 'text/javascript';
+        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].evaluateHandle(async ({ createDeferredPromise }, { url, id, type, content }) => {
+            const promise = createDeferredPromise();
+            const script = document.createElement('script');
+            script.type = type;
+            script.text = content;
+            if (url) {
+                script.src = url;
+                script.addEventListener('load', () => {
+                    return promise.resolve();
+                }, { once: true });
+                script.addEventListener('error', event => {
+                    var _a;
+                    promise.reject(new Error((_a = event.message) !== null && _a !== void 0 ? _a : 'Could not load script'));
+                }, { once: true });
+            }
+            else {
+                promise.resolve();
+            }
+            if (id) {
+                script.id = id;
+            }
+            document.head.appendChild(script);
+            await promise;
+            return script;
+        }, await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].puppeteerUtil, { ...options, type, content }));
     }
-    /**
-     * Adds a `<link rel="stylesheet">` tag into the page with the desired url or
-     * a `<style type="text/css">` tag with the content.
-     *
-     * @param options - Options for the style link.
-     * @returns a promise that resolves to the added tag when the stylesheets's
-     * `onload` event fires or when the CSS content was injected into the
-     * frame.
-     */
     async addStyleTag(options) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].addStyleTag(options);
+        let { content = '' } = options;
+        const { path } = options;
+        if (+!!options.url + +!!path + +!!content !== 1) {
+            throw new Error('Exactly one of `url`, `path`, or `content` must be specified.');
+        }
+        if (path) {
+            let fs;
+            try {
+                fs = (await (0, util_js_1.importFS)()).promises;
+            }
+            catch (error) {
+                if (error instanceof TypeError) {
+                    throw new Error('Can only pass a file path in a Node-like environment.');
+                }
+                throw error;
+            }
+            content = await fs.readFile(path, 'utf8');
+            content += '/*# sourceURL=' + path.replace(/\n/g, '') + '*/';
+            options.content = content;
+        }
+        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].evaluateHandle(async ({ createDeferredPromise }, { url, content }) => {
+            const promise = createDeferredPromise();
+            let element;
+            if (!url) {
+                element = document.createElement('style');
+                element.appendChild(document.createTextNode(content));
+            }
+            else {
+                const link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = url;
+                element = link;
+            }
+            element.addEventListener('load', () => {
+                promise.resolve();
+            }, { once: true });
+            element.addEventListener('error', event => {
+                var _a;
+                promise.reject(new Error((_a = event.message) !== null && _a !== void 0 ? _a : 'Could not load style'));
+            }, { once: true });
+            document.head.appendChild(element);
+            await promise;
+            return element;
+        }, await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].puppeteerUtil, options));
     }
     /**
      * Clicks the first element found that matches `selector`.
@@ -52110,7 +53134,7 @@ class Frame {
         return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].type(selector, text, options);
     }
     /**
-     * @deprecated Use `new Promise(r => setTimeout(r, milliseconds));`.
+     * @deprecated Replace with `new Promise(r => setTimeout(r, milliseconds));`.
      *
      * Causes your script to wait for the given number of milliseconds.
      *
@@ -52183,14 +53207,10 @@ class Frame {
         __classPrivateFieldSet(this, _Frame_detached, true, "f");
         this.worlds[IsolatedWorld_js_1.MAIN_WORLD]._detach();
         this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD]._detach();
-        if (__classPrivateFieldGet(this, _Frame_parentFrame, "f")) {
-            __classPrivateFieldGet(this, _Frame_parentFrame, "f")._childFrames.delete(this);
-        }
-        __classPrivateFieldSet(this, _Frame_parentFrame, null, "f");
     }
 }
 exports.Frame = Frame;
-_Frame_parentFrame = new WeakMap(), _Frame_url = new WeakMap(), _Frame_detached = new WeakMap(), _Frame_client = new WeakMap();
+_Frame_url = new WeakMap(), _Frame_detached = new WeakMap(), _Frame_client = new WeakMap();
 //# sourceMappingURL=Frame.js.map
 
 /***/ }),
@@ -52226,15 +53246,16 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _FrameManager_instances, _FrameManager_page, _FrameManager_networkManager, _FrameManager_timeoutSettings, _FrameManager_frames, _FrameManager_contextIdToContext, _FrameManager_isolatedWorlds, _FrameManager_mainFrame, _FrameManager_client, _FrameManager_framesPendingTargetInit, _FrameManager_framesPendingAttachment, _FrameManager_onLifecycleEvent, _FrameManager_onFrameStartedLoading, _FrameManager_onFrameStoppedLoading, _FrameManager_handleFrameTree, _FrameManager_onFrameAttached, _FrameManager_onFrameNavigated, _FrameManager_createIsolatedWorld, _FrameManager_onFrameNavigatedWithinDocument, _FrameManager_onFrameDetached, _FrameManager_onExecutionContextCreated, _FrameManager_onExecutionContextDestroyed, _FrameManager_onExecutionContextsCleared, _FrameManager_removeFramesRecursively;
+var _FrameManager_instances, _FrameManager_page, _FrameManager_networkManager, _FrameManager_timeoutSettings, _FrameManager_contextIdToContext, _FrameManager_isolatedWorlds, _FrameManager_client, _FrameManager_onLifecycleEvent, _FrameManager_onFrameStartedLoading, _FrameManager_onFrameStoppedLoading, _FrameManager_handleFrameTree, _FrameManager_onFrameAttached, _FrameManager_onFrameNavigated, _FrameManager_createIsolatedWorld, _FrameManager_onFrameNavigatedWithinDocument, _FrameManager_onFrameDetached, _FrameManager_onExecutionContextCreated, _FrameManager_onExecutionContextDestroyed, _FrameManager_onExecutionContextsCleared, _FrameManager_removeFramesRecursively;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FrameManager = exports.FrameManagerEmittedEvents = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
-const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
+const Connection_js_1 = __nccwpck_require__(370);
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 const ExecutionContext_js_1 = __nccwpck_require__(8272);
 const Frame_js_1 = __nccwpck_require__(1106);
+const FrameTree_js_1 = __nccwpck_require__(3751);
 const IsolatedWorld_js_1 = __nccwpck_require__(5651);
 const NetworkManager_js_1 = __nccwpck_require__(5381);
 const util_js_1 = __nccwpck_require__(8274);
@@ -52267,20 +53288,13 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
         _FrameManager_page.set(this, void 0);
         _FrameManager_networkManager.set(this, void 0);
         _FrameManager_timeoutSettings.set(this, void 0);
-        _FrameManager_frames.set(this, new Map());
         _FrameManager_contextIdToContext.set(this, new Map());
         _FrameManager_isolatedWorlds.set(this, new Set());
-        _FrameManager_mainFrame.set(this, void 0);
         _FrameManager_client.set(this, void 0);
         /**
-         * Keeps track of OOPIF targets/frames (target ID == frame ID for OOPIFs)
-         * that are being initialized.
+         * @internal
          */
-        _FrameManager_framesPendingTargetInit.set(this, new Map());
-        /**
-         * Keeps track of frames that are in the process of being attached in #onFrameAttached.
-         */
-        _FrameManager_framesPendingAttachment.set(this, new Map());
+        this._frameTree = new FrameTree_js_1.FrameTree();
         __classPrivateFieldSet(this, _FrameManager_client, client, "f");
         __classPrivateFieldSet(this, _FrameManager_page, page, "f");
         __classPrivateFieldSet(this, _FrameManager_networkManager, new NetworkManager_js_1.NetworkManager(client, ignoreHTTPSErrors, this), "f");
@@ -52328,12 +53342,8 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
             __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_onLifecycleEvent).call(this, event);
         });
     }
-    async initialize(targetId, client = __classPrivateFieldGet(this, _FrameManager_client, "f")) {
-        var _a;
+    async initialize(client = __classPrivateFieldGet(this, _FrameManager_client, "f")) {
         try {
-            if (!__classPrivateFieldGet(this, _FrameManager_framesPendingTargetInit, "f").has(targetId)) {
-                __classPrivateFieldGet(this, _FrameManager_framesPendingTargetInit, "f").set(targetId, (0, DeferredPromise_js_1.createDeferredPromiseWithTimer)(`Waiting for target frame ${targetId} failed`));
-            }
             const result = await Promise.all([
                 client.send('Page.enable'),
                 client.send('Page.getFrameTree'),
@@ -52353,16 +53363,10 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
         }
         catch (error) {
             // The target might have been closed before the initialization finished.
-            if ((0, ErrorLike_js_1.isErrorLike)(error) &&
-                (error.message.includes('Target closed') ||
-                    error.message.includes('Session closed'))) {
+            if ((0, ErrorLike_js_1.isErrorLike)(error) && (0, Connection_js_1.isTargetClosedError)(error)) {
                 return;
             }
             throw error;
-        }
-        finally {
-            (_a = __classPrivateFieldGet(this, _FrameManager_framesPendingTargetInit, "f").get(targetId)) === null || _a === void 0 ? void 0 : _a.resolve();
-            __classPrivateFieldGet(this, _FrameManager_framesPendingTargetInit, "f").delete(targetId);
         }
     }
     executionContextById(contextId, session = __classPrivateFieldGet(this, _FrameManager_client, "f")) {
@@ -52375,28 +53379,29 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
         return __classPrivateFieldGet(this, _FrameManager_page, "f");
     }
     mainFrame() {
-        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _FrameManager_mainFrame, "f"), 'Requesting main frame too early!');
-        return __classPrivateFieldGet(this, _FrameManager_mainFrame, "f");
+        const mainFrame = this._frameTree.getMainFrame();
+        (0, assert_js_1.assert)(mainFrame, 'Requesting main frame too early!');
+        return mainFrame;
     }
     frames() {
-        return Array.from(__classPrivateFieldGet(this, _FrameManager_frames, "f").values());
+        return Array.from(this._frameTree.frames());
     }
     frame(frameId) {
-        return __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId) || null;
+        return this._frameTree.getById(frameId) || null;
     }
     onAttachedToTarget(target) {
         if (target._getTargetInfo().type !== 'iframe') {
             return;
         }
-        const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(target._getTargetInfo().targetId);
+        const frame = this.frame(target._getTargetInfo().targetId);
         if (frame) {
             frame.updateClient(target._session());
         }
         this.setupEventListeners(target._session());
-        this.initialize(target._getTargetInfo().targetId, target._session());
+        this.initialize(target._session());
     }
     onDetachedFromTarget(target) {
-        const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(target._targetId);
+        const frame = this.frame(target._targetId);
         if (frame && frame.isOOPFrame()) {
             // When an OOP iframe is removed from the page, it
             // will only get a Target.detachedFromTarget event.
@@ -52405,21 +53410,21 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
     }
 }
 exports.FrameManager = FrameManager;
-_FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap(), _FrameManager_timeoutSettings = new WeakMap(), _FrameManager_frames = new WeakMap(), _FrameManager_contextIdToContext = new WeakMap(), _FrameManager_isolatedWorlds = new WeakMap(), _FrameManager_mainFrame = new WeakMap(), _FrameManager_client = new WeakMap(), _FrameManager_framesPendingTargetInit = new WeakMap(), _FrameManager_framesPendingAttachment = new WeakMap(), _FrameManager_instances = new WeakSet(), _FrameManager_onLifecycleEvent = function _FrameManager_onLifecycleEvent(event) {
-    const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(event.frameId);
+_FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap(), _FrameManager_timeoutSettings = new WeakMap(), _FrameManager_contextIdToContext = new WeakMap(), _FrameManager_isolatedWorlds = new WeakMap(), _FrameManager_client = new WeakMap(), _FrameManager_instances = new WeakSet(), _FrameManager_onLifecycleEvent = function _FrameManager_onLifecycleEvent(event) {
+    const frame = this.frame(event.frameId);
     if (!frame) {
         return;
     }
     frame._onLifecycleEvent(event.loaderId, event.name);
     this.emit(exports.FrameManagerEmittedEvents.LifecycleEvent, frame);
 }, _FrameManager_onFrameStartedLoading = function _FrameManager_onFrameStartedLoading(frameId) {
-    const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId);
+    const frame = this.frame(frameId);
     if (!frame) {
         return;
     }
     frame._onLoadingStarted();
 }, _FrameManager_onFrameStoppedLoading = function _FrameManager_onFrameStoppedLoading(frameId) {
-    const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId);
+    const frame = this.frame(frameId);
     if (!frame) {
         return;
     }
@@ -52437,8 +53442,8 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
         __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_handleFrameTree).call(this, session, child);
     }
 }, _FrameManager_onFrameAttached = function _FrameManager_onFrameAttached(session, frameId, parentFrameId) {
-    if (__classPrivateFieldGet(this, _FrameManager_frames, "f").has(frameId)) {
-        const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId);
+    let frame = this.frame(frameId);
+    if (frame) {
         if (session && frame.isOOPFrame()) {
             // If an OOP iframes becomes a normal iframe again
             // it is first attached to the parent page before
@@ -52447,70 +53452,35 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
         }
         return;
     }
-    const parentFrame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(parentFrameId);
-    const complete = (parentFrame) => {
-        (0, assert_js_1.assert)(parentFrame, `Parent frame ${parentFrameId} not found`);
-        const frame = new Frame_js_1.Frame(this, parentFrame, frameId, session);
-        __classPrivateFieldGet(this, _FrameManager_frames, "f").set(frame._id, frame);
-        this.emit(exports.FrameManagerEmittedEvents.FrameAttached, frame);
-    };
-    if (parentFrame) {
-        return complete(parentFrame);
-    }
-    const frame = __classPrivateFieldGet(this, _FrameManager_framesPendingTargetInit, "f").get(parentFrameId);
-    if (frame) {
-        if (!__classPrivateFieldGet(this, _FrameManager_framesPendingAttachment, "f").has(frameId)) {
-            __classPrivateFieldGet(this, _FrameManager_framesPendingAttachment, "f").set(frameId, (0, DeferredPromise_js_1.createDeferredPromiseWithTimer)(`Waiting for frame ${frameId} to attach failed`));
-        }
-        frame.then(() => {
-            var _a;
-            complete(__classPrivateFieldGet(this, _FrameManager_frames, "f").get(parentFrameId));
-            (_a = __classPrivateFieldGet(this, _FrameManager_framesPendingAttachment, "f").get(frameId)) === null || _a === void 0 ? void 0 : _a.resolve();
-            __classPrivateFieldGet(this, _FrameManager_framesPendingAttachment, "f").delete(frameId);
-        });
-        return;
-    }
-    throw new Error(`Parent frame ${parentFrameId} not found`);
-}, _FrameManager_onFrameNavigated = function _FrameManager_onFrameNavigated(framePayload) {
+    frame = new Frame_js_1.Frame(this, frameId, parentFrameId, session);
+    this._frameTree.addFrame(frame);
+    this.emit(exports.FrameManagerEmittedEvents.FrameAttached, frame);
+}, _FrameManager_onFrameNavigated = async function _FrameManager_onFrameNavigated(framePayload) {
     const frameId = framePayload.id;
     const isMainFrame = !framePayload.parentId;
-    const frame = isMainFrame ? __classPrivateFieldGet(this, _FrameManager_mainFrame, "f") : __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId);
-    const complete = (frame) => {
-        (0, assert_js_1.assert)(isMainFrame || frame, `Missing frame isMainFrame=${isMainFrame}, frameId=${frameId}`);
-        // Detach all child frames first.
+    let frame = this._frameTree.getById(frameId);
+    // Detach all child frames first.
+    if (frame) {
+        for (const child of frame.childFrames()) {
+            __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_removeFramesRecursively).call(this, child);
+        }
+    }
+    // Update or create main frame.
+    if (isMainFrame) {
         if (frame) {
-            for (const child of frame.childFrames()) {
-                __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_removeFramesRecursively).call(this, child);
-            }
+            // Update frame id to retain frame identity on cross-process navigation.
+            this._frameTree.removeFrame(frame);
+            frame._id = frameId;
         }
-        // Update or create main frame.
-        if (isMainFrame) {
-            if (frame) {
-                // Update frame id to retain frame identity on cross-process navigation.
-                __classPrivateFieldGet(this, _FrameManager_frames, "f").delete(frame._id);
-                frame._id = frameId;
-            }
-            else {
-                // Initial main frame navigation.
-                frame = new Frame_js_1.Frame(this, null, frameId, __classPrivateFieldGet(this, _FrameManager_client, "f"));
-            }
-            __classPrivateFieldGet(this, _FrameManager_frames, "f").set(frameId, frame);
-            __classPrivateFieldSet(this, _FrameManager_mainFrame, frame, "f");
+        else {
+            // Initial main frame navigation.
+            frame = new Frame_js_1.Frame(this, frameId, undefined, __classPrivateFieldGet(this, _FrameManager_client, "f"));
         }
-        // Update frame payload.
-        (0, assert_js_1.assert)(frame);
-        frame._navigated(framePayload);
-        this.emit(exports.FrameManagerEmittedEvents.FrameNavigated, frame);
-    };
-    const pendingFrame = __classPrivateFieldGet(this, _FrameManager_framesPendingAttachment, "f").get(frameId);
-    if (pendingFrame) {
-        pendingFrame.then(() => {
-            complete(isMainFrame ? __classPrivateFieldGet(this, _FrameManager_mainFrame, "f") : __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId));
-        });
+        this._frameTree.addFrame(frame);
     }
-    else {
-        complete(frame);
-    }
+    frame = await this._frameTree.waitForFrame(frameId);
+    frame._navigated(framePayload);
+    this.emit(exports.FrameManagerEmittedEvents.FrameNavigated, frame);
 }, _FrameManager_createIsolatedWorld = async function _FrameManager_createIsolatedWorld(session, name) {
     const key = `${session.id()}:${name}`;
     if (__classPrivateFieldGet(this, _FrameManager_isolatedWorlds, "f").has(key)) {
@@ -52537,7 +53507,7 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
     }));
     __classPrivateFieldGet(this, _FrameManager_isolatedWorlds, "f").add(key);
 }, _FrameManager_onFrameNavigatedWithinDocument = function _FrameManager_onFrameNavigatedWithinDocument(frameId, url) {
-    const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId);
+    const frame = this.frame(frameId);
     if (!frame) {
         return;
     }
@@ -52545,7 +53515,7 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
     this.emit(exports.FrameManagerEmittedEvents.FrameNavigatedWithinDocument, frame);
     this.emit(exports.FrameManagerEmittedEvents.FrameNavigated, frame);
 }, _FrameManager_onFrameDetached = function _FrameManager_onFrameDetached(frameId, reason) {
-    const frame = __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId);
+    const frame = this.frame(frameId);
     if (reason === 'remove') {
         // Only remove the frame if the reason for the detached event is
         // an actual removement of the frame.
@@ -52560,7 +53530,7 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
 }, _FrameManager_onExecutionContextCreated = function _FrameManager_onExecutionContextCreated(contextPayload, session) {
     const auxData = contextPayload.auxData;
     const frameId = auxData && auxData.frameId;
-    const frame = typeof frameId === 'string' ? __classPrivateFieldGet(this, _FrameManager_frames, "f").get(frameId) : undefined;
+    const frame = typeof frameId === 'string' ? this.frame(frameId) : undefined;
     let world;
     if (frame) {
         // Only care about execution contexts created for the current session.
@@ -52611,10 +53581,137 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
         __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_removeFramesRecursively).call(this, child);
     }
     frame._detach();
-    __classPrivateFieldGet(this, _FrameManager_frames, "f").delete(frame._id);
+    this._frameTree.removeFrame(frame);
     this.emit(exports.FrameManagerEmittedEvents.FrameDetached, frame);
 };
 //# sourceMappingURL=FrameManager.js.map
+
+/***/ }),
+
+/***/ 3751:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var _FrameTree_frames, _FrameTree_parentIds, _FrameTree_childIds, _FrameTree_mainFrame, _FrameTree_waitRequests;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FrameTree = void 0;
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
+/**
+ * Keeps track of the page frame tree and it's is managed by
+ * {@link FrameManager}. FrameTree uses frame IDs to reference frame and it
+ * means that referenced frames might not be in the tree anymore. Thus, the tree
+ * structure is eventually consistent.
+ * @internal
+ */
+class FrameTree {
+    constructor() {
+        _FrameTree_frames.set(this, new Map());
+        // frameID -> parentFrameID
+        _FrameTree_parentIds.set(this, new Map());
+        // frameID -> childFrameIDs
+        _FrameTree_childIds.set(this, new Map());
+        _FrameTree_mainFrame.set(this, void 0);
+        _FrameTree_waitRequests.set(this, new Map());
+    }
+    getMainFrame() {
+        return __classPrivateFieldGet(this, _FrameTree_mainFrame, "f");
+    }
+    getById(frameId) {
+        return __classPrivateFieldGet(this, _FrameTree_frames, "f").get(frameId);
+    }
+    /**
+     * Returns a promise that is resolved once the frame with
+     * the given ID is added to the tree.
+     */
+    waitForFrame(frameId) {
+        const frame = this.getById(frameId);
+        if (frame) {
+            return Promise.resolve(frame);
+        }
+        const deferred = (0, DeferredPromise_js_1.createDeferredPromise)();
+        const callbacks = __classPrivateFieldGet(this, _FrameTree_waitRequests, "f").get(frameId) || new Set();
+        callbacks.add(deferred);
+        return deferred;
+    }
+    frames() {
+        return Array.from(__classPrivateFieldGet(this, _FrameTree_frames, "f").values());
+    }
+    addFrame(frame) {
+        var _a;
+        __classPrivateFieldGet(this, _FrameTree_frames, "f").set(frame._id, frame);
+        if (frame._parentId) {
+            __classPrivateFieldGet(this, _FrameTree_parentIds, "f").set(frame._id, frame._parentId);
+            if (!__classPrivateFieldGet(this, _FrameTree_childIds, "f").has(frame._parentId)) {
+                __classPrivateFieldGet(this, _FrameTree_childIds, "f").set(frame._parentId, new Set());
+            }
+            __classPrivateFieldGet(this, _FrameTree_childIds, "f").get(frame._parentId).add(frame._id);
+        }
+        else {
+            __classPrivateFieldSet(this, _FrameTree_mainFrame, frame, "f");
+        }
+        (_a = __classPrivateFieldGet(this, _FrameTree_waitRequests, "f").get(frame._id)) === null || _a === void 0 ? void 0 : _a.forEach(request => {
+            return request.resolve(frame);
+        });
+    }
+    removeFrame(frame) {
+        var _a;
+        __classPrivateFieldGet(this, _FrameTree_frames, "f").delete(frame._id);
+        __classPrivateFieldGet(this, _FrameTree_parentIds, "f").delete(frame._id);
+        if (frame._parentId) {
+            (_a = __classPrivateFieldGet(this, _FrameTree_childIds, "f").get(frame._parentId)) === null || _a === void 0 ? void 0 : _a.delete(frame._id);
+        }
+        else {
+            __classPrivateFieldSet(this, _FrameTree_mainFrame, undefined, "f");
+        }
+    }
+    childFrames(frameId) {
+        const childIds = __classPrivateFieldGet(this, _FrameTree_childIds, "f").get(frameId);
+        if (!childIds) {
+            return [];
+        }
+        return Array.from(childIds)
+            .map(id => {
+            return this.getById(id);
+        })
+            .filter((frame) => {
+            return frame !== undefined;
+        });
+    }
+    parentFrame(frameId) {
+        const parentId = __classPrivateFieldGet(this, _FrameTree_parentIds, "f").get(frameId);
+        return parentId ? this.getById(parentId) : undefined;
+    }
+}
+exports.FrameTree = FrameTree;
+_FrameTree_frames = new WeakMap(), _FrameTree_parentIds = new WeakMap(), _FrameTree_childIds = new WeakMap(), _FrameTree_mainFrame = new WeakMap(), _FrameTree_waitRequests = new WeakMap();
+//# sourceMappingURL=FrameTree.js.map
 
 /***/ }),
 
@@ -53281,7 +54378,7 @@ const STATUS_TEXTS = {
 
 /***/ }),
 
-/***/ 3733:
+/***/ 4410:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -53557,7 +54654,7 @@ const USKeyboardLayout_js_1 = __nccwpck_require__(9931);
  * {@link Keyboard.up}, and {@link Keyboard.sendCharacter}
  * to manually fire events as if they were generated from a real keyboard.
  *
- * On MacOS, keyboard shortcuts like `⌘ A` -\> Select All do not work.
+ * On macOS, keyboard shortcuts like `⌘ A` -\> Select All do not work.
  * See {@link https://github.com/puppeteer/puppeteer/issues/1313 | #1313}.
  *
  * @example
@@ -54070,7 +55167,7 @@ class Mouse {
     }
     /**
      * Performs a drag, dragenter, dragover, and drop in sequence.
-     * @param target - point to drag from
+     * @param start - point to drag from
      * @param target - point to drop on
      * @param options - An object of options. Accepts delay which,
      * if specified, is the time to wait between `dragover` and `drop` in milliseconds.
@@ -54151,29 +55248,6 @@ _Touchscreen_client = new WeakMap(), _Touchscreen_keyboard = new WeakMap();
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
@@ -54185,15 +55259,17 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _a, _IsolatedWorld_frameManager, _IsolatedWorld_client, _IsolatedWorld_frame, _IsolatedWorld_timeoutSettings, _IsolatedWorld_documentPromise, _IsolatedWorld_contextPromise, _IsolatedWorld_detached, _IsolatedWorld_ctxBindings, _IsolatedWorld_boundFunctions, _IsolatedWorld_waitTasks, _IsolatedWorld_bindingIdentifier, _IsolatedWorld_settingUpBinding, _IsolatedWorld_onBindingCalled, _WaitTask_instances, _WaitTask_isolatedWorld, _WaitTask_polling, _WaitTask_timeout, _WaitTask_predicateBody, _WaitTask_predicateAcceptsContextElement, _WaitTask_args, _WaitTask_binding, _WaitTask_runCount, _WaitTask_resolve, _WaitTask_reject, _WaitTask_timeoutTimer, _WaitTask_terminated, _WaitTask_root, _WaitTask_cleanup;
+var _IsolatedWorld_instances, _a, _IsolatedWorld_frame, _IsolatedWorld_document, _IsolatedWorld_context, _IsolatedWorld_detached, _IsolatedWorld_ctxBindings, _IsolatedWorld_boundFunctions, _IsolatedWorld_taskManager, _IsolatedWorld_puppeteerUtil, _IsolatedWorld_bindingIdentifier, _IsolatedWorld_client_get, _IsolatedWorld_frameManager_get, _IsolatedWorld_timeoutSettings_get, _IsolatedWorld_injectPuppeteerUtil, _IsolatedWorld_settingUpBinding, _IsolatedWorld_onBindingCalled;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.WaitTask = exports.IsolatedWorld = exports.PUPPETEER_WORLD = exports.MAIN_WORLD = void 0;
+exports.IsolatedWorld = exports.PUPPETEER_WORLD = exports.MAIN_WORLD = void 0;
+const injected_js_1 = __nccwpck_require__(8153);
 const assert_js_1 = __nccwpck_require__(7729);
-const Errors_js_1 = __nccwpck_require__(6315);
-const LifecycleWatcher_js_1 = __nccwpck_require__(2169);
-const QueryHandler_js_1 = __nccwpck_require__(3200);
-const util_js_1 = __nccwpck_require__(8274);
 const DeferredPromise_js_1 = __nccwpck_require__(7015);
+const ErrorLike_js_1 = __nccwpck_require__(2937);
+const LazyArg_js_1 = __nccwpck_require__(4897);
+const LifecycleWatcher_js_1 = __nccwpck_require__(2169);
+const util_js_1 = __nccwpck_require__(8274);
+const WaitTask_js_1 = __nccwpck_require__(806);
 /**
  * A unique key for {@link IsolatedWorldChart} to denote the default world.
  * Execution contexts are automatically created in the default world.
@@ -54212,19 +55288,18 @@ exports.PUPPETEER_WORLD = Symbol('puppeteerWorld');
  * @internal
  */
 class IsolatedWorld {
-    constructor(client, frameManager, frame, timeoutSettings) {
-        _IsolatedWorld_frameManager.set(this, void 0);
-        _IsolatedWorld_client.set(this, void 0);
+    constructor(frame) {
+        _IsolatedWorld_instances.add(this);
         _IsolatedWorld_frame.set(this, void 0);
-        _IsolatedWorld_timeoutSettings.set(this, void 0);
-        _IsolatedWorld_documentPromise.set(this, null);
-        _IsolatedWorld_contextPromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
+        _IsolatedWorld_document.set(this, void 0);
+        _IsolatedWorld_context.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _IsolatedWorld_detached.set(this, false);
         // Set of bindings that have been registered in the current context.
         _IsolatedWorld_ctxBindings.set(this, new Set());
         // Contains mapping from functions that should be bound to Puppeteer functions.
         _IsolatedWorld_boundFunctions.set(this, new Map());
-        _IsolatedWorld_waitTasks.set(this, new Set());
+        _IsolatedWorld_taskManager.set(this, new WaitTask_js_1.TaskManager());
+        _IsolatedWorld_puppeteerUtil.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         // If multiple waitFor are set up asynchronously, we need to wait for the
         // first one to set up the binding in the page before running the others.
         _IsolatedWorld_settingUpBinding.set(this, null);
@@ -54256,7 +55331,12 @@ class IsolatedWorld {
                     throw new Error(`Bound function $name is not found`);
                 }
                 const result = await fn(...args);
-                await context.evaluate(deliverResult, name, seq, result);
+                await context.evaluate((name, seq, result) => {
+                    // @ts-expect-error Code is evaluated in a different context.
+                    const callbacks = self[name].callbacks;
+                    callbacks.get(seq).resolve(result);
+                    callbacks.delete(seq);
+                }, name, seq, result);
             }
             catch (error) {
                 // The WaitTask may already have been resolved by timing out, or the
@@ -54269,25 +55349,17 @@ class IsolatedWorld {
                 }
                 (0, util_js_1.debugError)(error);
             }
-            function deliverResult(name, seq, result) {
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-ignore Code is evaluated in a different context.
-                globalThis[name].callbacks.get(seq).resolve(result);
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-ignore Code is evaluated in a different context.
-                globalThis[name].callbacks.delete(seq);
-            }
         });
         // Keep own reference to client because it might differ from the FrameManager's
         // client for OOP iframes.
-        __classPrivateFieldSet(this, _IsolatedWorld_client, client, "f");
-        __classPrivateFieldSet(this, _IsolatedWorld_frameManager, frameManager, "f");
         __classPrivateFieldSet(this, _IsolatedWorld_frame, frame, "f");
-        __classPrivateFieldSet(this, _IsolatedWorld_timeoutSettings, timeoutSettings, "f");
-        __classPrivateFieldGet(this, _IsolatedWorld_client, "f").on('Runtime.bindingCalled', __classPrivateFieldGet(this, _IsolatedWorld_onBindingCalled, "f"));
+        __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_client_get).on('Runtime.bindingCalled', __classPrivateFieldGet(this, _IsolatedWorld_onBindingCalled, "f"));
     }
-    get _waitTasks() {
-        return __classPrivateFieldGet(this, _IsolatedWorld_waitTasks, "f");
+    get puppeteerUtil() {
+        return __classPrivateFieldGet(this, _IsolatedWorld_puppeteerUtil, "f");
+    }
+    get taskManager() {
+        return __classPrivateFieldGet(this, _IsolatedWorld_taskManager, "f");
     }
     get _boundFunctions() {
         return __classPrivateFieldGet(this, _IsolatedWorld_boundFunctions, "f");
@@ -54296,35 +55368,31 @@ class IsolatedWorld {
         return __classPrivateFieldGet(this, _IsolatedWorld_frame, "f");
     }
     clearContext() {
-        __classPrivateFieldSet(this, _IsolatedWorld_documentPromise, null, "f");
-        __classPrivateFieldSet(this, _IsolatedWorld_contextPromise, (0, DeferredPromise_js_1.createDeferredPromise)(), "f");
+        __classPrivateFieldSet(this, _IsolatedWorld_document, undefined, "f");
+        __classPrivateFieldSet(this, _IsolatedWorld_puppeteerUtil, (0, DeferredPromise_js_1.createDeferredPromise)(), "f");
+        __classPrivateFieldSet(this, _IsolatedWorld_context, (0, DeferredPromise_js_1.createDeferredPromise)(), "f");
     }
     setContext(context) {
-        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _IsolatedWorld_contextPromise, "f"), `ExecutionContext ${context._contextId} has already been set.`);
+        __classPrivateFieldGet(this, _IsolatedWorld_instances, "m", _IsolatedWorld_injectPuppeteerUtil).call(this, context);
         __classPrivateFieldGet(this, _IsolatedWorld_ctxBindings, "f").clear();
-        __classPrivateFieldGet(this, _IsolatedWorld_contextPromise, "f").resolve(context);
-        for (const waitTask of this._waitTasks) {
-            waitTask.rerun();
-        }
+        __classPrivateFieldGet(this, _IsolatedWorld_context, "f").resolve(context);
     }
     hasContext() {
-        return __classPrivateFieldGet(this, _IsolatedWorld_contextPromise, "f").resolved();
+        return __classPrivateFieldGet(this, _IsolatedWorld_context, "f").resolved();
     }
     _detach() {
         __classPrivateFieldSet(this, _IsolatedWorld_detached, true, "f");
-        __classPrivateFieldGet(this, _IsolatedWorld_client, "f").off('Runtime.bindingCalled', __classPrivateFieldGet(this, _IsolatedWorld_onBindingCalled, "f"));
-        for (const waitTask of this._waitTasks) {
-            waitTask.terminate(new Error('waitForFunction failed: frame got detached.'));
-        }
+        __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_client_get).off('Runtime.bindingCalled', __classPrivateFieldGet(this, _IsolatedWorld_onBindingCalled, "f"));
+        __classPrivateFieldGet(this, _IsolatedWorld_taskManager, "f").terminateAll(new Error('waitForFunction failed: frame got detached.'));
     }
     executionContext() {
         if (__classPrivateFieldGet(this, _IsolatedWorld_detached, "f")) {
             throw new Error(`Execution context is not available in detached frame "${__classPrivateFieldGet(this, _IsolatedWorld_frame, "f").url()}" (are you trying to evaluate?)`);
         }
-        if (__classPrivateFieldGet(this, _IsolatedWorld_contextPromise, "f") === null) {
+        if (__classPrivateFieldGet(this, _IsolatedWorld_context, "f") === null) {
             throw new Error(`Execution content promise is missing`);
         }
-        return __classPrivateFieldGet(this, _IsolatedWorld_contextPromise, "f");
+        return __classPrivateFieldGet(this, _IsolatedWorld_context, "f");
     }
     async evaluateHandle(pageFunction, ...args) {
         const context = await this.executionContext();
@@ -54343,15 +55411,14 @@ class IsolatedWorld {
         return document.$$(selector);
     }
     async document() {
-        if (__classPrivateFieldGet(this, _IsolatedWorld_documentPromise, "f")) {
-            return __classPrivateFieldGet(this, _IsolatedWorld_documentPromise, "f");
+        if (__classPrivateFieldGet(this, _IsolatedWorld_document, "f")) {
+            return __classPrivateFieldGet(this, _IsolatedWorld_document, "f");
         }
-        __classPrivateFieldSet(this, _IsolatedWorld_documentPromise, this.executionContext().then(async (context) => {
-            return await context.evaluateHandle(() => {
-                return document;
-            });
+        const context = await this.executionContext();
+        __classPrivateFieldSet(this, _IsolatedWorld_document, await context.evaluateHandle(() => {
+            return document;
         }), "f");
-        return __classPrivateFieldGet(this, _IsolatedWorld_documentPromise, "f");
+        return __classPrivateFieldGet(this, _IsolatedWorld_document, "f");
     }
     async $x(expression) {
         const document = await this.document();
@@ -54364,11 +55431,6 @@ class IsolatedWorld {
     async $$eval(selector, pageFunction, ...args) {
         const document = await this.document();
         return document.$$eval(selector, pageFunction, ...args);
-    }
-    async waitForSelector(selector, options) {
-        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
-        (0, assert_js_1.assert)(queryHandler.waitFor, 'Query handler does not support waiting');
-        return (await queryHandler.waitFor(this, updatedSelector, options));
     }
     async content() {
         return await this.evaluate(() => {
@@ -54383,7 +55445,7 @@ class IsolatedWorld {
         });
     }
     async setContent(html, options = {}) {
-        const { waitUntil = ['load'], timeout = __classPrivateFieldGet(this, _IsolatedWorld_timeoutSettings, "f").navigationTimeout(), } = options;
+        const { waitUntil = ['load'], timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).navigationTimeout(), } = options;
         // We rely upon the fact that document.open() will reset frame lifecycle with "init"
         // lifecycle event. @see https://crrev.com/608658
         await this.evaluate(html => {
@@ -54391,7 +55453,7 @@ class IsolatedWorld {
             document.write(html);
             document.close();
         }, html);
-        const watcher = new LifecycleWatcher_js_1.LifecycleWatcher(__classPrivateFieldGet(this, _IsolatedWorld_frameManager, "f"), __classPrivateFieldGet(this, _IsolatedWorld_frame, "f"), waitUntil, timeout);
+        const watcher = new LifecycleWatcher_js_1.LifecycleWatcher(__classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_frameManager_get), __classPrivateFieldGet(this, _IsolatedWorld_frame, "f"), waitUntil, timeout);
         const error = await Promise.race([
             watcher.timeoutOrTerminationPromise(),
             watcher.lifecyclePromise(),
@@ -54399,145 +55461,6 @@ class IsolatedWorld {
         watcher.dispose();
         if (error) {
             throw error;
-        }
-    }
-    /**
-     * Adds a script tag into the current context.
-     *
-     * @remarks
-     * You can pass a URL, filepath or string of contents. Note that when running Puppeteer
-     * in a browser environment you cannot pass a filepath and should use either
-     * `url` or `content`.
-     */
-    async addScriptTag(options) {
-        const { url = null, path = null, content = null, id = '', type = '', } = options;
-        if (url !== null) {
-            try {
-                const context = await this.executionContext();
-                return await context.evaluateHandle(addScriptUrl, url, id, type);
-            }
-            catch (error) {
-                throw new Error(`Loading script from ${url} failed`);
-            }
-        }
-        if (path !== null) {
-            let fs;
-            try {
-                fs = (await Promise.resolve().then(() => __importStar(__nccwpck_require__(7147)))).promises;
-            }
-            catch (error) {
-                if (error instanceof TypeError) {
-                    throw new Error('Can only pass a filepath to addScriptTag in a Node-like environment.');
-                }
-                throw error;
-            }
-            let contents = await fs.readFile(path, 'utf8');
-            contents += '//# sourceURL=' + path.replace(/\n/g, '');
-            const context = await this.executionContext();
-            return await context.evaluateHandle(addScriptContent, contents, id, type);
-        }
-        if (content !== null) {
-            const context = await this.executionContext();
-            return await context.evaluateHandle(addScriptContent, content, id, type);
-        }
-        throw new Error('Provide an object with a `url`, `path` or `content` property');
-        async function addScriptUrl(url, id, type) {
-            const script = document.createElement('script');
-            script.src = url;
-            if (id) {
-                script.id = id;
-            }
-            if (type) {
-                script.type = type;
-            }
-            const promise = new Promise((res, rej) => {
-                script.onload = res;
-                script.onerror = rej;
-            });
-            document.head.appendChild(script);
-            await promise;
-            return script;
-        }
-        function addScriptContent(content, id, type = 'text/javascript') {
-            const script = document.createElement('script');
-            script.type = type;
-            script.text = content;
-            if (id) {
-                script.id = id;
-            }
-            let error = null;
-            script.onerror = e => {
-                return (error = e);
-            };
-            document.head.appendChild(script);
-            if (error) {
-                throw error;
-            }
-            return script;
-        }
-    }
-    /**
-     * Adds a style tag into the current context.
-     *
-     * @remarks
-     * You can pass a URL, filepath or string of contents. Note that when running Puppeteer
-     * in a browser environment you cannot pass a filepath and should use either
-     * `url` or `content`.
-     */
-    async addStyleTag(options) {
-        const { url = null, path = null, content = null } = options;
-        if (url !== null) {
-            try {
-                const context = await this.executionContext();
-                return (await context.evaluateHandle(addStyleUrl, url));
-            }
-            catch (error) {
-                throw new Error(`Loading style from ${url} failed`);
-            }
-        }
-        if (path !== null) {
-            let fs;
-            try {
-                fs = (await (0, util_js_1.importFS)()).promises;
-            }
-            catch (error) {
-                if (error instanceof TypeError) {
-                    throw new Error('Cannot pass a filepath to addStyleTag in the browser environment.');
-                }
-                throw error;
-            }
-            let contents = await fs.readFile(path, 'utf8');
-            contents += '/*# sourceURL=' + path.replace(/\n/g, '') + '*/';
-            const context = await this.executionContext();
-            return (await context.evaluateHandle(addStyleContent, contents));
-        }
-        if (content !== null) {
-            const context = await this.executionContext();
-            return (await context.evaluateHandle(addStyleContent, content));
-        }
-        throw new Error('Provide an object with a `url`, `path` or `content` property');
-        async function addStyleUrl(url) {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = url;
-            const promise = new Promise((res, rej) => {
-                link.onload = res;
-                link.onerror = rej;
-            });
-            document.head.appendChild(link);
-            await promise;
-            return link;
-        }
-        async function addStyleContent(content) {
-            const style = document.createElement('style');
-            style.appendChild(document.createTextNode(content));
-            const promise = new Promise((res, rej) => {
-                style.onload = res;
-                style.onerror = rej;
-            });
-            document.head.appendChild(style);
-            await promise;
-            return style;
         }
     }
     async click(selector, options) {
@@ -54593,8 +55516,6 @@ class IsolatedWorld {
                 // TODO: In theory, it would be enough to call this just once
                 await context._client.send('Runtime.addBinding', {
                     name,
-                    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                    // @ts-ignore The protocol definition is not up to date.
                     executionContextName: context._contextName,
                 });
                 await context.evaluate(expression);
@@ -54603,15 +55524,18 @@ class IsolatedWorld {
                 // We could have tried to evaluate in a context which was already
                 // destroyed. This happens, for example, if the page is navigated while
                 // we are trying to add the binding
-                const ctxDestroyed = error.message.includes('Execution context was destroyed');
-                const ctxNotFound = error.message.includes('Cannot find context with specified id');
-                if (ctxDestroyed || ctxNotFound) {
-                    return;
+                if (error instanceof Error) {
+                    // Destroyed context.
+                    if (error.message.includes('Execution context was destroyed')) {
+                        return;
+                    }
+                    // Missing context.
+                    if (error.message.includes('Cannot find context with specified id')) {
+                        return;
+                    }
                 }
-                else {
-                    (0, util_js_1.debugError)(error);
-                    return;
-                }
+                (0, util_js_1.debugError)(error);
+                return;
             }
             __classPrivateFieldGet(this, _IsolatedWorld_ctxBindings, "f").add(__classPrivateFieldGet(IsolatedWorld, _a, "f", _IsolatedWorld_bindingIdentifier).call(IsolatedWorld, name, context._contextId));
         };
@@ -54619,47 +55543,56 @@ class IsolatedWorld {
         await __classPrivateFieldGet(this, _IsolatedWorld_settingUpBinding, "f");
         __classPrivateFieldSet(this, _IsolatedWorld_settingUpBinding, null, "f");
     }
-    async _waitForSelectorInPage(queryOne, selector, options, binding) {
-        const { visible: waitForVisible = false, hidden: waitForHidden = false, timeout = __classPrivateFieldGet(this, _IsolatedWorld_timeoutSettings, "f").timeout(), } = options;
-        const polling = waitForVisible || waitForHidden ? 'raf' : 'mutation';
-        const title = `selector \`${selector}\`${waitForHidden ? ' to be hidden' : ''}`;
-        async function predicate(root, selector, waitForVisible, waitForHidden) {
-            const node = (await predicateQueryHandler(root, selector));
-            return checkWaitForOptions(node, waitForVisible, waitForHidden);
+    async _waitForSelectorInPage(queryOne, root, selector, options, bindings = new Map()) {
+        const { visible: waitForVisible = false, hidden: waitForHidden = false, timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).timeout(), } = options;
+        try {
+            const handle = await this.waitForFunction(async (PuppeteerUtil, query, selector, root, visible) => {
+                if (!PuppeteerUtil) {
+                    return;
+                }
+                const node = (await PuppeteerUtil.createFunction(query)(root || document, selector, PuppeteerUtil));
+                return PuppeteerUtil.checkVisibility(node, visible);
+            }, {
+                bindings,
+                polling: waitForVisible || waitForHidden ? 'raf' : 'mutation',
+                root,
+                timeout,
+            }, new LazyArg_js_1.LazyArg(async () => {
+                try {
+                    // In case CDP fails.
+                    return await this.puppeteerUtil;
+                }
+                catch {
+                    return undefined;
+                }
+            }), queryOne.toString(), selector, root, waitForVisible ? true : waitForHidden ? false : undefined);
+            const elementHandle = handle.asElement();
+            if (!elementHandle) {
+                await handle.dispose();
+                return null;
+            }
+            return elementHandle;
         }
-        const waitTaskOptions = {
-            isolatedWorld: this,
-            predicateBody: (0, util_js_1.makePredicateString)(predicate, queryOne),
-            predicateAcceptsContextElement: true,
-            title,
-            polling,
-            timeout,
-            args: [selector, waitForVisible, waitForHidden],
-            binding,
-            root: options.root,
-        };
-        const waitTask = new WaitTask(waitTaskOptions);
-        const jsHandle = await waitTask.promise;
-        const elementHandle = jsHandle.asElement();
-        if (!elementHandle) {
-            await jsHandle.dispose();
-            return null;
+        catch (error) {
+            if (!(0, ErrorLike_js_1.isErrorLike)(error)) {
+                throw error;
+            }
+            error.message = `Waiting for selector \`${selector}\` failed: ${error.message}`;
+            throw error;
         }
-        return elementHandle;
     }
     waitForFunction(pageFunction, options = {}, ...args) {
-        const { polling = 'raf', timeout = __classPrivateFieldGet(this, _IsolatedWorld_timeoutSettings, "f").timeout() } = options;
-        const waitTaskOptions = {
-            isolatedWorld: this,
-            predicateBody: pageFunction,
-            predicateAcceptsContextElement: false,
-            title: 'function',
+        const { polling = 'raf', timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).timeout(), bindings, root, } = options;
+        if (typeof polling === 'number' && polling < 0) {
+            throw new Error('Cannot poll with non-positive interval');
+        }
+        const waitTask = new WaitTask_js_1.WaitTask(this, {
+            bindings,
             polling,
+            root,
             timeout,
-            args,
-        };
-        const waitTask = new WaitTask(waitTaskOptions);
-        return waitTask.promise;
+        }, pageFunction, ...args);
+        return waitTask.result;
     }
     async title() {
         return this.evaluate(() => {
@@ -54668,7 +55601,7 @@ class IsolatedWorld {
     }
     async adoptBackendNode(backendNodeId) {
         const executionContext = await this.executionContext();
-        const { object } = await __classPrivateFieldGet(this, _IsolatedWorld_client, "f").send('DOM.resolveNode', {
+        const { object } = await __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_client_get).send('DOM.resolveNode', {
             backendNodeId: backendNodeId,
             executionContextId: executionContext._contextId,
         });
@@ -54677,263 +55610,40 @@ class IsolatedWorld {
     async adoptHandle(handle) {
         const executionContext = await this.executionContext();
         (0, assert_js_1.assert)(handle.executionContext() !== executionContext, 'Cannot adopt handle that already belongs to this execution context');
-        const nodeInfo = await __classPrivateFieldGet(this, _IsolatedWorld_client, "f").send('DOM.describeNode', {
+        const nodeInfo = await __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_client_get).send('DOM.describeNode', {
             objectId: handle.remoteObject().objectId,
         });
         return (await this.adoptBackendNode(nodeInfo.node.backendNodeId));
     }
+    async transferHandle(handle) {
+        const result = await this.adoptHandle(handle);
+        await handle.dispose();
+        return result;
+    }
 }
 exports.IsolatedWorld = IsolatedWorld;
-_a = IsolatedWorld, _IsolatedWorld_frameManager = new WeakMap(), _IsolatedWorld_client = new WeakMap(), _IsolatedWorld_frame = new WeakMap(), _IsolatedWorld_timeoutSettings = new WeakMap(), _IsolatedWorld_documentPromise = new WeakMap(), _IsolatedWorld_contextPromise = new WeakMap(), _IsolatedWorld_detached = new WeakMap(), _IsolatedWorld_ctxBindings = new WeakMap(), _IsolatedWorld_boundFunctions = new WeakMap(), _IsolatedWorld_waitTasks = new WeakMap(), _IsolatedWorld_settingUpBinding = new WeakMap(), _IsolatedWorld_onBindingCalled = new WeakMap();
+_a = IsolatedWorld, _IsolatedWorld_frame = new WeakMap(), _IsolatedWorld_document = new WeakMap(), _IsolatedWorld_context = new WeakMap(), _IsolatedWorld_detached = new WeakMap(), _IsolatedWorld_ctxBindings = new WeakMap(), _IsolatedWorld_boundFunctions = new WeakMap(), _IsolatedWorld_taskManager = new WeakMap(), _IsolatedWorld_puppeteerUtil = new WeakMap(), _IsolatedWorld_settingUpBinding = new WeakMap(), _IsolatedWorld_onBindingCalled = new WeakMap(), _IsolatedWorld_instances = new WeakSet(), _IsolatedWorld_client_get = function _IsolatedWorld_client_get() {
+    return __classPrivateFieldGet(this, _IsolatedWorld_frame, "f")._client();
+}, _IsolatedWorld_frameManager_get = function _IsolatedWorld_frameManager_get() {
+    return __classPrivateFieldGet(this, _IsolatedWorld_frame, "f")._frameManager;
+}, _IsolatedWorld_timeoutSettings_get = function _IsolatedWorld_timeoutSettings_get() {
+    return __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_frameManager_get).timeoutSettings;
+}, _IsolatedWorld_injectPuppeteerUtil = async function _IsolatedWorld_injectPuppeteerUtil(context) {
+    try {
+        __classPrivateFieldGet(this, _IsolatedWorld_puppeteerUtil, "f").resolve((await context.evaluateHandle(`(() => {
+              const module = {};
+              ${injected_js_1.source}
+              return module.exports.default;
+            })()`)));
+        __classPrivateFieldGet(this, _IsolatedWorld_taskManager, "f").rerunAll();
+    }
+    catch (error) {
+        (0, util_js_1.debugError)(error);
+    }
+};
 _IsolatedWorld_bindingIdentifier = { value: (name, contextId) => {
         return `${name}_${contextId}`;
     } };
-const noop = () => { };
-/**
- * @internal
- */
-class WaitTask {
-    constructor(options) {
-        _WaitTask_instances.add(this);
-        _WaitTask_isolatedWorld.set(this, void 0);
-        _WaitTask_polling.set(this, void 0);
-        _WaitTask_timeout.set(this, void 0);
-        _WaitTask_predicateBody.set(this, void 0);
-        _WaitTask_predicateAcceptsContextElement.set(this, void 0);
-        _WaitTask_args.set(this, void 0);
-        _WaitTask_binding.set(this, void 0);
-        _WaitTask_runCount.set(this, 0);
-        _WaitTask_resolve.set(this, noop);
-        _WaitTask_reject.set(this, noop);
-        _WaitTask_timeoutTimer.set(this, void 0);
-        _WaitTask_terminated.set(this, false);
-        _WaitTask_root.set(this, null);
-        if ((0, util_js_1.isString)(options.polling)) {
-            (0, assert_js_1.assert)(options.polling === 'raf' || options.polling === 'mutation', 'Unknown polling option: ' + options.polling);
-        }
-        else if ((0, util_js_1.isNumber)(options.polling)) {
-            (0, assert_js_1.assert)(options.polling > 0, 'Cannot poll with non-positive interval: ' + options.polling);
-        }
-        else {
-            throw new Error('Unknown polling options: ' + options.polling);
-        }
-        function getPredicateBody(predicateBody) {
-            if ((0, util_js_1.isString)(predicateBody)) {
-                return `return (${predicateBody});`;
-            }
-            return `return (${predicateBody})(...args);`;
-        }
-        __classPrivateFieldSet(this, _WaitTask_isolatedWorld, options.isolatedWorld, "f");
-        __classPrivateFieldSet(this, _WaitTask_polling, options.polling, "f");
-        __classPrivateFieldSet(this, _WaitTask_timeout, options.timeout, "f");
-        __classPrivateFieldSet(this, _WaitTask_root, options.root || null, "f");
-        __classPrivateFieldSet(this, _WaitTask_predicateBody, getPredicateBody(options.predicateBody), "f");
-        __classPrivateFieldSet(this, _WaitTask_predicateAcceptsContextElement, options.predicateAcceptsContextElement, "f");
-        __classPrivateFieldSet(this, _WaitTask_args, options.args, "f");
-        __classPrivateFieldSet(this, _WaitTask_binding, options.binding, "f");
-        __classPrivateFieldSet(this, _WaitTask_runCount, 0, "f");
-        __classPrivateFieldGet(this, _WaitTask_isolatedWorld, "f")._waitTasks.add(this);
-        if (__classPrivateFieldGet(this, _WaitTask_binding, "f")) {
-            __classPrivateFieldGet(this, _WaitTask_isolatedWorld, "f")._boundFunctions.set(__classPrivateFieldGet(this, _WaitTask_binding, "f").name, __classPrivateFieldGet(this, _WaitTask_binding, "f").pptrFunction);
-        }
-        this.promise = new Promise((resolve, reject) => {
-            __classPrivateFieldSet(this, _WaitTask_resolve, resolve, "f");
-            __classPrivateFieldSet(this, _WaitTask_reject, reject, "f");
-        });
-        // Since page navigation requires us to re-install the pageScript, we should track
-        // timeout on our end.
-        if (options.timeout) {
-            const timeoutError = new Errors_js_1.TimeoutError(`waiting for ${options.title} failed: timeout ${options.timeout}ms exceeded`);
-            __classPrivateFieldSet(this, _WaitTask_timeoutTimer, setTimeout(() => {
-                return this.terminate(timeoutError);
-            }, options.timeout), "f");
-        }
-        this.rerun();
-    }
-    terminate(error) {
-        __classPrivateFieldSet(this, _WaitTask_terminated, true, "f");
-        __classPrivateFieldGet(this, _WaitTask_reject, "f").call(this, error);
-        __classPrivateFieldGet(this, _WaitTask_instances, "m", _WaitTask_cleanup).call(this);
-    }
-    async rerun() {
-        var _b;
-        const runCount = __classPrivateFieldSet(this, _WaitTask_runCount, (_b = __classPrivateFieldGet(this, _WaitTask_runCount, "f"), ++_b), "f");
-        let success = null;
-        let error = null;
-        const context = await __classPrivateFieldGet(this, _WaitTask_isolatedWorld, "f").executionContext();
-        if (__classPrivateFieldGet(this, _WaitTask_terminated, "f") || runCount !== __classPrivateFieldGet(this, _WaitTask_runCount, "f")) {
-            return;
-        }
-        if (__classPrivateFieldGet(this, _WaitTask_binding, "f")) {
-            await __classPrivateFieldGet(this, _WaitTask_isolatedWorld, "f")._addBindingToContext(context, __classPrivateFieldGet(this, _WaitTask_binding, "f").name);
-        }
-        if (__classPrivateFieldGet(this, _WaitTask_terminated, "f") || runCount !== __classPrivateFieldGet(this, _WaitTask_runCount, "f")) {
-            return;
-        }
-        try {
-            success = await context.evaluateHandle(waitForPredicatePageFunction, __classPrivateFieldGet(this, _WaitTask_root, "f") || null, __classPrivateFieldGet(this, _WaitTask_predicateBody, "f"), __classPrivateFieldGet(this, _WaitTask_predicateAcceptsContextElement, "f"), __classPrivateFieldGet(this, _WaitTask_polling, "f"), __classPrivateFieldGet(this, _WaitTask_timeout, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f"));
-        }
-        catch (error_) {
-            error = error_;
-        }
-        if (__classPrivateFieldGet(this, _WaitTask_terminated, "f") || runCount !== __classPrivateFieldGet(this, _WaitTask_runCount, "f")) {
-            if (success) {
-                await success.dispose();
-            }
-            return;
-        }
-        // Ignore timeouts in pageScript - we track timeouts ourselves.
-        // If the frame's execution context has already changed, `frame.evaluate` will
-        // throw an error - ignore this predicate run altogether.
-        if (!error &&
-            (await __classPrivateFieldGet(this, _WaitTask_isolatedWorld, "f")
-                .evaluate(s => {
-                return !s;
-            }, success)
-                .catch(() => {
-                return true;
-            }))) {
-            if (!success) {
-                throw new Error('Assertion: result handle is not available');
-            }
-            await success.dispose();
-            return;
-        }
-        if (error) {
-            if (error.message.includes('TypeError: binding is not a function')) {
-                return this.rerun();
-            }
-            // When frame is detached the task should have been terminated by the IsolatedWorld.
-            // This can fail if we were adding this task while the frame was detached,
-            // so we terminate here instead.
-            if (error.message.includes('Execution context is not available in detached frame')) {
-                this.terminate(new Error('waitForFunction failed: frame got detached.'));
-                return;
-            }
-            // When the page is navigated, the promise is rejected.
-            // We will try again in the new execution context.
-            if (error.message.includes('Execution context was destroyed')) {
-                return;
-            }
-            // We could have tried to evaluate in a context which was already
-            // destroyed.
-            if (error.message.includes('Cannot find context with specified id')) {
-                return;
-            }
-            __classPrivateFieldGet(this, _WaitTask_reject, "f").call(this, error);
-        }
-        else {
-            if (!success) {
-                throw new Error('Assertion: result handle is not available');
-            }
-            __classPrivateFieldGet(this, _WaitTask_resolve, "f").call(this, success);
-        }
-        __classPrivateFieldGet(this, _WaitTask_instances, "m", _WaitTask_cleanup).call(this);
-    }
-}
-exports.WaitTask = WaitTask;
-_WaitTask_isolatedWorld = new WeakMap(), _WaitTask_polling = new WeakMap(), _WaitTask_timeout = new WeakMap(), _WaitTask_predicateBody = new WeakMap(), _WaitTask_predicateAcceptsContextElement = new WeakMap(), _WaitTask_args = new WeakMap(), _WaitTask_binding = new WeakMap(), _WaitTask_runCount = new WeakMap(), _WaitTask_resolve = new WeakMap(), _WaitTask_reject = new WeakMap(), _WaitTask_timeoutTimer = new WeakMap(), _WaitTask_terminated = new WeakMap(), _WaitTask_root = new WeakMap(), _WaitTask_instances = new WeakSet(), _WaitTask_cleanup = function _WaitTask_cleanup() {
-    __classPrivateFieldGet(this, _WaitTask_timeoutTimer, "f") !== undefined && clearTimeout(__classPrivateFieldGet(this, _WaitTask_timeoutTimer, "f"));
-    __classPrivateFieldGet(this, _WaitTask_isolatedWorld, "f")._waitTasks.delete(this);
-};
-async function waitForPredicatePageFunction(root, predicateBody, predicateAcceptsContextElement, polling, timeout, ...args) {
-    root = root || document;
-    const predicate = new Function('...args', predicateBody);
-    let timedOut = false;
-    if (timeout) {
-        setTimeout(() => {
-            return (timedOut = true);
-        }, timeout);
-    }
-    switch (polling) {
-        case 'raf':
-            return await pollRaf();
-        case 'mutation':
-            return await pollMutation();
-        default:
-            return await pollInterval(polling);
-    }
-    async function pollMutation() {
-        const success = predicateAcceptsContextElement
-            ? await predicate(root, ...args)
-            : await predicate(...args);
-        if (success) {
-            return Promise.resolve(success);
-        }
-        let fulfill = (_) => { };
-        const result = new Promise(x => {
-            return (fulfill = x);
-        });
-        const observer = new MutationObserver(async () => {
-            if (timedOut) {
-                observer.disconnect();
-                fulfill();
-            }
-            const success = predicateAcceptsContextElement
-                ? await predicate(root, ...args)
-                : await predicate(...args);
-            if (success) {
-                observer.disconnect();
-                fulfill(success);
-            }
-        });
-        if (!root) {
-            throw new Error('Root element is not found.');
-        }
-        observer.observe(root, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-        });
-        return result;
-    }
-    async function pollRaf() {
-        let fulfill = (_) => { };
-        const result = new Promise(x => {
-            return (fulfill = x);
-        });
-        await onRaf();
-        return result;
-        async function onRaf() {
-            if (timedOut) {
-                fulfill();
-                return;
-            }
-            const success = predicateAcceptsContextElement
-                ? await predicate(root, ...args)
-                : await predicate(...args);
-            if (success) {
-                fulfill(success);
-            }
-            else {
-                requestAnimationFrame(onRaf);
-            }
-        }
-    }
-    async function pollInterval(pollInterval) {
-        let fulfill = (_) => { };
-        const result = new Promise(x => {
-            return (fulfill = x);
-        });
-        await onTimeout();
-        return result;
-        async function onTimeout() {
-            if (timedOut) {
-                fulfill();
-                return;
-            }
-            const success = predicateAcceptsContextElement
-                ? await predicate(root, ...args)
-                : await predicate(...args);
-            if (success) {
-                fulfill(success);
-            }
-            else {
-                setTimeout(onTimeout, pollInterval);
-            }
-        }
-    }
-}
 //# sourceMappingURL=IsolatedWorld.js.map
 
 /***/ }),
@@ -54969,7 +55679,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _JSHandle_client, _JSHandle_disposed, _JSHandle_context, _JSHandle_remoteObject;
+var _JSHandle_disposed, _JSHandle_context, _JSHandle_remoteObject;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.JSHandle = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
@@ -54999,20 +55709,18 @@ class JSHandle {
     /**
      * @internal
      */
-    constructor(context, client, remoteObject) {
-        _JSHandle_client.set(this, void 0);
+    constructor(context, remoteObject) {
         _JSHandle_disposed.set(this, false);
         _JSHandle_context.set(this, void 0);
         _JSHandle_remoteObject.set(this, void 0);
         __classPrivateFieldSet(this, _JSHandle_context, context, "f");
-        __classPrivateFieldSet(this, _JSHandle_client, client, "f");
         __classPrivateFieldSet(this, _JSHandle_remoteObject, remoteObject, "f");
     }
     /**
      * @internal
      */
     get client() {
-        return __classPrivateFieldGet(this, _JSHandle_client, "f");
+        return __classPrivateFieldGet(this, _JSHandle_context, "f")._client;
     }
     /**
      * @internal
@@ -55021,7 +55729,7 @@ class JSHandle {
         return __classPrivateFieldGet(this, _JSHandle_disposed, "f");
     }
     /**
-     * @returns The execution context the handle belongs to.
+     * @internal
      */
     executionContext() {
         return __classPrivateFieldGet(this, _JSHandle_context, "f");
@@ -55069,7 +55777,7 @@ class JSHandle {
         (0, assert_js_1.assert)(__classPrivateFieldGet(this, _JSHandle_remoteObject, "f").objectId);
         // We use Runtime.getProperties rather than iterative building because the
         // iterative approach might create a distorted snapshot.
-        const response = await __classPrivateFieldGet(this, _JSHandle_client, "f").send('Runtime.getProperties', {
+        const response = await this.client.send('Runtime.getProperties', {
             objectId: __classPrivateFieldGet(this, _JSHandle_remoteObject, "f").objectId,
             ownProperties: true,
         });
@@ -55117,7 +55825,7 @@ class JSHandle {
             return;
         }
         __classPrivateFieldSet(this, _JSHandle_disposed, true, "f");
-        await (0, util_js_1.releaseObject)(__classPrivateFieldGet(this, _JSHandle_client, "f"), __classPrivateFieldGet(this, _JSHandle_remoteObject, "f"));
+        await (0, util_js_1.releaseObject)(this.client, __classPrivateFieldGet(this, _JSHandle_remoteObject, "f"));
     }
     /**
      * Returns a string representation of the JSHandle.
@@ -55142,8 +55850,60 @@ class JSHandle {
     }
 }
 exports.JSHandle = JSHandle;
-_JSHandle_client = new WeakMap(), _JSHandle_disposed = new WeakMap(), _JSHandle_context = new WeakMap(), _JSHandle_remoteObject = new WeakMap();
+_JSHandle_disposed = new WeakMap(), _JSHandle_context = new WeakMap(), _JSHandle_remoteObject = new WeakMap();
 //# sourceMappingURL=JSHandle.js.map
+
+/***/ }),
+
+/***/ 4897:
+/***/ (function(__unused_webpack_module, exports) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _LazyArg_get;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LazyArg = void 0;
+/**
+ * @internal
+ */
+class LazyArg {
+    constructor(get) {
+        _LazyArg_get.set(this, void 0);
+        __classPrivateFieldSet(this, _LazyArg_get, get, "f");
+    }
+    get() {
+        return __classPrivateFieldGet(this, _LazyArg_get, "f").call(this);
+    }
+}
+exports.LazyArg = LazyArg;
+_LazyArg_get = new WeakMap();
+//# sourceMappingURL=LazyArg.js.map
 
 /***/ }),
 
@@ -55287,7 +56047,10 @@ _LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameMana
         return;
     }
     __classPrivateFieldSet(this, _LifecycleWatcher_navigationRequest, request, "f");
-    (_a = __classPrivateFieldGet(this, _LifecycleWatcher_navigationResponseReceived, "f")) === null || _a === void 0 ? void 0 : _a.reject(new Error('New navigation request was received'));
+    // Resolve previous navigation response in case there are multiple
+    // navigation requests reported by the backend. This generally should not
+    // happen by it looks like it's possible.
+    (_a = __classPrivateFieldGet(this, _LifecycleWatcher_navigationResponseReceived, "f")) === null || _a === void 0 ? void 0 : _a.resolve();
     __classPrivateFieldSet(this, _LifecycleWatcher_navigationResponseReceived, (0, DeferredPromise_js_1.createDeferredPromise)(), "f");
     if (request.response() !== null) {
         (_b = __classPrivateFieldGet(this, _LifecycleWatcher_navigationResponseReceived, "f")) === null || _b === void 0 ? void 0 : _b.resolve();
@@ -55363,13 +56126,13 @@ _LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameMana
 
 /***/ }),
 
-/***/ 6414:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ 9739:
+/***/ (function(__unused_webpack_module, exports) {
 
 "use strict";
 
 /**
- * Copyright 2021 Google Inc. All rights reserved.
+ * Copyright 2022 Google Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55383,53 +56146,6 @@ _LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameMana
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.networkConditions = void 0;
-/**
- * A list of network conditions to be used with
- * `page.emulateNetworkConditions(networkConditions)`. Actual list of predefined
- * conditions can be found in
- * {@link https://github.com/puppeteer/puppeteer/blob/main/src/common/NetworkConditions.ts | src/common/NetworkConditions.ts}.
- *
- * @example
- *
- * ```ts
- * const puppeteer = require('puppeteer');
- * const slow3G = puppeteer.networkConditions['Slow 3G'];
- *
- * (async () => {
- *   const browser = await puppeteer.launch();
- *   const page = await browser.newPage();
- *   await page.emulateNetworkConditions(slow3G);
- *   await page.goto('https://www.google.com');
- *   // other actions...
- *   await browser.close();
- * })();
- * ```
- *
- * @public
- */
-exports.networkConditions = Object.freeze({
-    'Slow 3G': {
-        download: ((500 * 1000) / 8) * 0.8,
-        upload: ((500 * 1000) / 8) * 0.8,
-        latency: 400 * 5,
-    },
-    'Fast 3G': {
-        download: ((1.6 * 1000 * 1000) / 8) * 0.9,
-        upload: ((750 * 1000) / 8) * 0.9,
-        latency: 150 * 3.75,
-    },
-});
-//# sourceMappingURL=NetworkConditions.js.map
-
-/***/ }),
-
-/***/ 9739:
-/***/ (function(__unused_webpack_module, exports) {
-
-"use strict";
-
 var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
@@ -55603,10 +56319,10 @@ exports.NetworkManager = exports.NetworkManagerEmittedEvents = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 const HTTPRequest_js_1 = __nccwpck_require__(3780);
-const HTTPResponse_js_1 = __nccwpck_require__(3733);
+const HTTPResponse_js_1 = __nccwpck_require__(4410);
 const NetworkEventManager_js_1 = __nccwpck_require__(9739);
 const util_js_1 = __nccwpck_require__(8274);
-const DeferredPromise_js_1 = __nccwpck_require__(7015);
+const DebuggableDeferredPromise_js_1 = __nccwpck_require__(7454);
 /**
  * We use symbols to prevent any external parties listening to these events.
  * They are internal to Puppeteer.
@@ -55664,7 +56380,7 @@ class NetworkManager extends EventEmitter_js_1.EventEmitter {
         if (__classPrivateFieldGet(this, _NetworkManager_deferredInitPromise, "f")) {
             return __classPrivateFieldGet(this, _NetworkManager_deferredInitPromise, "f");
         }
-        __classPrivateFieldSet(this, _NetworkManager_deferredInitPromise, (0, DeferredPromise_js_1.createDeferredPromiseWithTimer)('NetworkManager initialization timed out', 30000), "f");
+        __classPrivateFieldSet(this, _NetworkManager_deferredInitPromise, (0, DebuggableDeferredPromise_js_1.createDebuggableDeferredPromise)('NetworkManager initialization timed out'), "f");
         const init = Promise.all([
             __classPrivateFieldGet(this, _NetworkManager_ignoreHTTPSErrors, "f")
                 ? __classPrivateFieldGet(this, _NetworkManager_client, "f").send('Security.setIgnoreCertificateErrors', {
@@ -56016,6 +56732,94 @@ _NetworkManager_client = new WeakMap(), _NetworkManager_ignoreHTTPSErrors = new 
 
 /***/ }),
 
+/***/ 4098:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+var _NodeWebSocketTransport_ws;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.NodeWebSocketTransport = void 0;
+/**
+ * Copyright 2018 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+const ws_1 = __importDefault(__nccwpck_require__(8867));
+const version_js_1 = __nccwpck_require__(6210);
+/**
+ * @internal
+ */
+class NodeWebSocketTransport {
+    constructor(ws) {
+        _NodeWebSocketTransport_ws.set(this, void 0);
+        __classPrivateFieldSet(this, _NodeWebSocketTransport_ws, ws, "f");
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('message', event => {
+            if (this.onmessage) {
+                this.onmessage.call(null, event.data);
+            }
+        });
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('close', () => {
+            if (this.onclose) {
+                this.onclose.call(null);
+            }
+        });
+        // Silently ignore all errors - we don't know what to do with them.
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('error', () => { });
+    }
+    static create(url) {
+        return new Promise((resolve, reject) => {
+            const ws = new ws_1.default(url, [], {
+                followRedirects: true,
+                perMessageDeflate: false,
+                maxPayload: 256 * 1024 * 1024,
+                headers: {
+                    'User-Agent': `Puppeteer ${version_js_1.packageVersion}`,
+                },
+            });
+            ws.addEventListener('open', () => {
+                return resolve(new NodeWebSocketTransport(ws));
+            });
+            ws.addEventListener('error', reject);
+        });
+    }
+    send(message) {
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").send(message);
+    }
+    close() {
+        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").close();
+    }
+}
+exports.NodeWebSocketTransport = NodeWebSocketTransport;
+_NodeWebSocketTransport_ws = new WeakMap();
+//# sourceMappingURL=NodeWebSocketTransport.js.map
+
+/***/ }),
+
 /***/ 4302:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -56089,160 +56893,113 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _Page_instances, _Page_closed, _Page_client, _Page_target, _Page_keyboard, _Page_mouse, _Page_timeoutSettings, _Page_touchscreen, _Page_accessibility, _Page_frameManager, _Page_emulationManager, _Page_tracing, _Page_pageBindings, _Page_coverage, _Page_javascriptEnabled, _Page_viewport, _Page_screenshotTaskQueue, _Page_workers, _Page_fileChooserPromises, _Page_disconnectPromise, _Page_userDragInterceptionEnabled, _Page_handlerMap, _Page_onDetachedFromTarget, _Page_onAttachedToTarget, _Page_initialize, _Page_onFileChooser, _Page_onTargetCrashed, _Page_onLogEntryAdded, _Page_emitMetrics, _Page_buildMetricsObject, _Page_handleException, _Page_onConsoleAPI, _Page_onBindingCalled, _Page_addConsoleMessage, _Page_onDialog, _Page_resetDefaultBackgroundColor, _Page_setTransparentBackgroundColor, _Page_sessionClosePromise, _Page_go, _Page_screenshotTask;
+var _CDPPage_instances, _CDPPage_closed, _CDPPage_client, _CDPPage_target, _CDPPage_keyboard, _CDPPage_mouse, _CDPPage_timeoutSettings, _CDPPage_touchscreen, _CDPPage_accessibility, _CDPPage_frameManager, _CDPPage_emulationManager, _CDPPage_tracing, _CDPPage_pageBindings, _CDPPage_coverage, _CDPPage_javascriptEnabled, _CDPPage_viewport, _CDPPage_screenshotTaskQueue, _CDPPage_workers, _CDPPage_fileChooserPromises, _CDPPage_disconnectPromise, _CDPPage_userDragInterceptionEnabled, _CDPPage_onDetachedFromTarget, _CDPPage_onAttachedToTarget, _CDPPage_initialize, _CDPPage_onFileChooser, _CDPPage_onTargetCrashed, _CDPPage_onLogEntryAdded, _CDPPage_emitMetrics, _CDPPage_buildMetricsObject, _CDPPage_handleException, _CDPPage_onConsoleAPI, _CDPPage_onBindingCalled, _CDPPage_addConsoleMessage, _CDPPage_onDialog, _CDPPage_resetDefaultBackgroundColor, _CDPPage_setTransparentBackgroundColor, _CDPPage_sessionClosePromise, _CDPPage_go, _CDPPage_screenshotTask;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Page = void 0;
-const Accessibility_js_1 = __nccwpck_require__(7473);
+exports.CDPPage = void 0;
+const Page_js_1 = __nccwpck_require__(2194);
 const assert_js_1 = __nccwpck_require__(7729);
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
+const ErrorLike_js_1 = __nccwpck_require__(2937);
+const Accessibility_js_1 = __nccwpck_require__(7473);
 const Connection_js_1 = __nccwpck_require__(370);
 const ConsoleMessage_js_1 = __nccwpck_require__(1167);
 const Coverage_js_1 = __nccwpck_require__(9321);
 const Dialog_js_1 = __nccwpck_require__(7859);
-const IsolatedWorld_js_1 = __nccwpck_require__(5651);
 const EmulationManager_js_1 = __nccwpck_require__(8392);
-const EventEmitter_js_1 = __nccwpck_require__(7692);
 const FileChooser_js_1 = __nccwpck_require__(8450);
 const FrameManager_js_1 = __nccwpck_require__(490);
 const Input_js_1 = __nccwpck_require__(7773);
+const IsolatedWorld_js_1 = __nccwpck_require__(5651);
 const NetworkManager_js_1 = __nccwpck_require__(5381);
 const PDFOptions_js_1 = __nccwpck_require__(4302);
 const TimeoutSettings_js_1 = __nccwpck_require__(7258);
 const Tracing_js_1 = __nccwpck_require__(5321);
 const util_js_1 = __nccwpck_require__(8274);
-const ErrorLike_js_1 = __nccwpck_require__(2937);
-const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const WebWorker_js_1 = __nccwpck_require__(4878);
 /**
- * Page provides methods to interact with a single tab or
- * {@link https://developer.chrome.com/extensions/background_pages | extension background page}
- * in Chromium.
- *
- * :::note
- *
- * One Browser instance might have multiple Page instances.
- *
- * :::
- *
- * @example
- * This example creates a page, navigates it to a URL, and then saves a screenshot:
- *
- * ```ts
- * const puppeteer = require('puppeteer');
- *
- * (async () => {
- *   const browser = await puppeteer.launch();
- *   const page = await browser.newPage();
- *   await page.goto('https://example.com');
- *   await page.screenshot({path: 'screenshot.png'});
- *   await browser.close();
- * })();
- * ```
- *
- * The Page class extends from Puppeteer's {@link EventEmitter} class and will
- * emit various events which are documented in the {@link PageEmittedEvents} enum.
- *
- * @example
- * This example logs a message for a single page `load` event:
- *
- * ```ts
- * page.once('load', () => console.log('Page loaded!'));
- * ```
- *
- * To unsubscribe from events use the {@link Page.off} method:
- *
- * ```ts
- * function logRequest(interceptedRequest) {
- *   console.log('A request was made:', interceptedRequest.url());
- * }
- * page.on('request', logRequest);
- * // Sometime later...
- * page.off('request', logRequest);
- * ```
- *
- * @public
+ * @internal
  */
-class Page extends EventEmitter_js_1.EventEmitter {
+class CDPPage extends Page_js_1.Page {
     /**
      * @internal
      */
     constructor(client, target, ignoreHTTPSErrors, screenshotTaskQueue) {
         super();
-        _Page_instances.add(this);
-        _Page_closed.set(this, false);
-        _Page_client.set(this, void 0);
-        _Page_target.set(this, void 0);
-        _Page_keyboard.set(this, void 0);
-        _Page_mouse.set(this, void 0);
-        _Page_timeoutSettings.set(this, new TimeoutSettings_js_1.TimeoutSettings());
-        _Page_touchscreen.set(this, void 0);
-        _Page_accessibility.set(this, void 0);
-        _Page_frameManager.set(this, void 0);
-        _Page_emulationManager.set(this, void 0);
-        _Page_tracing.set(this, void 0);
-        _Page_pageBindings.set(this, new Map());
-        _Page_coverage.set(this, void 0);
-        _Page_javascriptEnabled.set(this, true);
-        _Page_viewport.set(this, void 0);
-        _Page_screenshotTaskQueue.set(this, void 0);
-        _Page_workers.set(this, new Map());
-        _Page_fileChooserPromises.set(this, new Set());
-        _Page_disconnectPromise.set(this, void 0);
-        _Page_userDragInterceptionEnabled.set(this, false);
-        _Page_handlerMap.set(this, new WeakMap());
-        _Page_onDetachedFromTarget.set(this, (target) => {
+        _CDPPage_instances.add(this);
+        _CDPPage_closed.set(this, false);
+        _CDPPage_client.set(this, void 0);
+        _CDPPage_target.set(this, void 0);
+        _CDPPage_keyboard.set(this, void 0);
+        _CDPPage_mouse.set(this, void 0);
+        _CDPPage_timeoutSettings.set(this, new TimeoutSettings_js_1.TimeoutSettings());
+        _CDPPage_touchscreen.set(this, void 0);
+        _CDPPage_accessibility.set(this, void 0);
+        _CDPPage_frameManager.set(this, void 0);
+        _CDPPage_emulationManager.set(this, void 0);
+        _CDPPage_tracing.set(this, void 0);
+        _CDPPage_pageBindings.set(this, new Map());
+        _CDPPage_coverage.set(this, void 0);
+        _CDPPage_javascriptEnabled.set(this, true);
+        _CDPPage_viewport.set(this, void 0);
+        _CDPPage_screenshotTaskQueue.set(this, void 0);
+        _CDPPage_workers.set(this, new Map());
+        _CDPPage_fileChooserPromises.set(this, new Set());
+        _CDPPage_disconnectPromise.set(this, void 0);
+        _CDPPage_userDragInterceptionEnabled.set(this, false);
+        _CDPPage_onDetachedFromTarget.set(this, (target) => {
             var _a;
             const sessionId = (_a = target._session()) === null || _a === void 0 ? void 0 : _a.id();
-            __classPrivateFieldGet(this, _Page_frameManager, "f").onDetachedFromTarget(target);
-            const worker = __classPrivateFieldGet(this, _Page_workers, "f").get(sessionId);
+            __classPrivateFieldGet(this, _CDPPage_frameManager, "f").onDetachedFromTarget(target);
+            const worker = __classPrivateFieldGet(this, _CDPPage_workers, "f").get(sessionId);
             if (!worker) {
                 return;
             }
-            __classPrivateFieldGet(this, _Page_workers, "f").delete(sessionId);
+            __classPrivateFieldGet(this, _CDPPage_workers, "f").delete(sessionId);
             this.emit("workerdestroyed" /* PageEmittedEvents.WorkerDestroyed */, worker);
         });
-        _Page_onAttachedToTarget.set(this, async (createdTarget) => {
-            __classPrivateFieldGet(this, _Page_frameManager, "f").onAttachedToTarget(createdTarget);
+        _CDPPage_onAttachedToTarget.set(this, async (createdTarget) => {
+            __classPrivateFieldGet(this, _CDPPage_frameManager, "f").onAttachedToTarget(createdTarget);
             if (createdTarget._getTargetInfo().type === 'worker') {
                 const session = createdTarget._session();
                 (0, assert_js_1.assert)(session);
-                const worker = new WebWorker_js_1.WebWorker(session, createdTarget.url(), __classPrivateFieldGet(this, _Page_instances, "m", _Page_addConsoleMessage).bind(this), __classPrivateFieldGet(this, _Page_instances, "m", _Page_handleException).bind(this));
-                __classPrivateFieldGet(this, _Page_workers, "f").set(session.id(), worker);
+                const worker = new WebWorker_js_1.WebWorker(session, createdTarget.url(), __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_addConsoleMessage).bind(this), __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_handleException).bind(this));
+                __classPrivateFieldGet(this, _CDPPage_workers, "f").set(session.id(), worker);
                 this.emit("workercreated" /* PageEmittedEvents.WorkerCreated */, worker);
             }
             if (createdTarget._session()) {
-                __classPrivateFieldGet(this, _Page_target, "f")
+                __classPrivateFieldGet(this, _CDPPage_target, "f")
                     ._targetManager()
-                    .addTargetInterceptor(createdTarget._session(), __classPrivateFieldGet(this, _Page_onAttachedToTarget, "f"));
+                    .addTargetInterceptor(createdTarget._session(), __classPrivateFieldGet(this, _CDPPage_onAttachedToTarget, "f"));
             }
         });
-        __classPrivateFieldSet(this, _Page_client, client, "f");
-        __classPrivateFieldSet(this, _Page_target, target, "f");
-        __classPrivateFieldSet(this, _Page_keyboard, new Input_js_1.Keyboard(client), "f");
-        __classPrivateFieldSet(this, _Page_mouse, new Input_js_1.Mouse(client, __classPrivateFieldGet(this, _Page_keyboard, "f")), "f");
-        __classPrivateFieldSet(this, _Page_touchscreen, new Input_js_1.Touchscreen(client, __classPrivateFieldGet(this, _Page_keyboard, "f")), "f");
-        __classPrivateFieldSet(this, _Page_accessibility, new Accessibility_js_1.Accessibility(client), "f");
-        __classPrivateFieldSet(this, _Page_frameManager, new FrameManager_js_1.FrameManager(client, this, ignoreHTTPSErrors, __classPrivateFieldGet(this, _Page_timeoutSettings, "f")), "f");
-        __classPrivateFieldSet(this, _Page_emulationManager, new EmulationManager_js_1.EmulationManager(client), "f");
-        __classPrivateFieldSet(this, _Page_tracing, new Tracing_js_1.Tracing(client), "f");
-        __classPrivateFieldSet(this, _Page_coverage, new Coverage_js_1.Coverage(client), "f");
-        __classPrivateFieldSet(this, _Page_screenshotTaskQueue, screenshotTaskQueue, "f");
-        __classPrivateFieldSet(this, _Page_viewport, null, "f");
-        __classPrivateFieldGet(this, _Page_target, "f")
+        __classPrivateFieldSet(this, _CDPPage_client, client, "f");
+        __classPrivateFieldSet(this, _CDPPage_target, target, "f");
+        __classPrivateFieldSet(this, _CDPPage_keyboard, new Input_js_1.Keyboard(client), "f");
+        __classPrivateFieldSet(this, _CDPPage_mouse, new Input_js_1.Mouse(client, __classPrivateFieldGet(this, _CDPPage_keyboard, "f")), "f");
+        __classPrivateFieldSet(this, _CDPPage_touchscreen, new Input_js_1.Touchscreen(client, __classPrivateFieldGet(this, _CDPPage_keyboard, "f")), "f");
+        __classPrivateFieldSet(this, _CDPPage_accessibility, new Accessibility_js_1.Accessibility(client), "f");
+        __classPrivateFieldSet(this, _CDPPage_frameManager, new FrameManager_js_1.FrameManager(client, this, ignoreHTTPSErrors, __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f")), "f");
+        __classPrivateFieldSet(this, _CDPPage_emulationManager, new EmulationManager_js_1.EmulationManager(client), "f");
+        __classPrivateFieldSet(this, _CDPPage_tracing, new Tracing_js_1.Tracing(client), "f");
+        __classPrivateFieldSet(this, _CDPPage_coverage, new Coverage_js_1.Coverage(client), "f");
+        __classPrivateFieldSet(this, _CDPPage_screenshotTaskQueue, screenshotTaskQueue, "f");
+        __classPrivateFieldSet(this, _CDPPage_viewport, null, "f");
+        __classPrivateFieldGet(this, _CDPPage_target, "f")
             ._targetManager()
-            .addTargetInterceptor(__classPrivateFieldGet(this, _Page_client, "f"), __classPrivateFieldGet(this, _Page_onAttachedToTarget, "f"));
-        __classPrivateFieldGet(this, _Page_target, "f")
+            .addTargetInterceptor(__classPrivateFieldGet(this, _CDPPage_client, "f"), __classPrivateFieldGet(this, _CDPPage_onAttachedToTarget, "f"));
+        __classPrivateFieldGet(this, _CDPPage_target, "f")
             ._targetManager()
-            .on("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _Page_onDetachedFromTarget, "f"));
-        __classPrivateFieldGet(this, _Page_frameManager, "f").on(FrameManager_js_1.FrameManagerEmittedEvents.FrameAttached, event => {
+            .on("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _CDPPage_onDetachedFromTarget, "f"));
+        __classPrivateFieldGet(this, _CDPPage_frameManager, "f").on(FrameManager_js_1.FrameManagerEmittedEvents.FrameAttached, event => {
             return this.emit("frameattached" /* PageEmittedEvents.FrameAttached */, event);
         });
-        __classPrivateFieldGet(this, _Page_frameManager, "f").on(FrameManager_js_1.FrameManagerEmittedEvents.FrameDetached, event => {
+        __classPrivateFieldGet(this, _CDPPage_frameManager, "f").on(FrameManager_js_1.FrameManagerEmittedEvents.FrameDetached, event => {
             return this.emit("framedetached" /* PageEmittedEvents.FrameDetached */, event);
         });
-        __classPrivateFieldGet(this, _Page_frameManager, "f").on(FrameManager_js_1.FrameManagerEmittedEvents.FrameNavigated, event => {
+        __classPrivateFieldGet(this, _CDPPage_frameManager, "f").on(FrameManager_js_1.FrameManagerEmittedEvents.FrameNavigated, event => {
             return this.emit("framenavigated" /* PageEmittedEvents.FrameNavigated */, event);
         });
-        const networkManager = __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager;
+        const networkManager = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager;
         networkManager.on(NetworkManager_js_1.NetworkManagerEmittedEvents.Request, event => {
             return this.emit("request" /* PageEmittedEvents.Request */, event);
         });
@@ -56265,48 +57022,58 @@ class Page extends EventEmitter_js_1.EventEmitter {
             return this.emit("load" /* PageEmittedEvents.Load */);
         });
         client.on('Runtime.consoleAPICalled', event => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_onConsoleAPI).call(this, event);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_onConsoleAPI).call(this, event);
         });
         client.on('Runtime.bindingCalled', event => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_onBindingCalled).call(this, event);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_onBindingCalled).call(this, event);
         });
         client.on('Page.javascriptDialogOpening', event => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_onDialog).call(this, event);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_onDialog).call(this, event);
         });
         client.on('Runtime.exceptionThrown', exception => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_handleException).call(this, exception.exceptionDetails);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_handleException).call(this, exception.exceptionDetails);
         });
         client.on('Inspector.targetCrashed', () => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_onTargetCrashed).call(this);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_onTargetCrashed).call(this);
         });
         client.on('Performance.metrics', event => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_emitMetrics).call(this, event);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_emitMetrics).call(this, event);
         });
         client.on('Log.entryAdded', event => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_onLogEntryAdded).call(this, event);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_onLogEntryAdded).call(this, event);
         });
         client.on('Page.fileChooserOpened', event => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_onFileChooser).call(this, event);
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_onFileChooser).call(this, event);
         });
-        __classPrivateFieldGet(this, _Page_target, "f")._isClosedPromise.then(() => {
-            __classPrivateFieldGet(this, _Page_target, "f")
+        __classPrivateFieldGet(this, _CDPPage_target, "f")._isClosedPromise.then(() => {
+            __classPrivateFieldGet(this, _CDPPage_target, "f")
                 ._targetManager()
-                .removeTargetInterceptor(__classPrivateFieldGet(this, _Page_client, "f"), __classPrivateFieldGet(this, _Page_onAttachedToTarget, "f"));
-            __classPrivateFieldGet(this, _Page_target, "f")
+                .removeTargetInterceptor(__classPrivateFieldGet(this, _CDPPage_client, "f"), __classPrivateFieldGet(this, _CDPPage_onAttachedToTarget, "f"));
+            __classPrivateFieldGet(this, _CDPPage_target, "f")
                 ._targetManager()
-                .off("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _Page_onDetachedFromTarget, "f"));
+                .off("targetGone" /* TargetManagerEmittedEvents.TargetGone */, __classPrivateFieldGet(this, _CDPPage_onDetachedFromTarget, "f"));
             this.emit("close" /* PageEmittedEvents.Close */);
-            __classPrivateFieldSet(this, _Page_closed, true, "f");
+            __classPrivateFieldSet(this, _CDPPage_closed, true, "f");
         });
     }
     /**
      * @internal
      */
     static async _create(client, target, ignoreHTTPSErrors, defaultViewport, screenshotTaskQueue) {
-        const page = new Page(client, target, ignoreHTTPSErrors, screenshotTaskQueue);
-        await __classPrivateFieldGet(page, _Page_instances, "m", _Page_initialize).call(page);
+        const page = new CDPPage(client, target, ignoreHTTPSErrors, screenshotTaskQueue);
+        await __classPrivateFieldGet(page, _CDPPage_instances, "m", _CDPPage_initialize).call(page);
         if (defaultViewport) {
-            await page.setViewport(defaultViewport);
+            try {
+                await page.setViewport(defaultViewport);
+            }
+            catch (err) {
+                if ((0, ErrorLike_js_1.isErrorLike)(err) && (0, Connection_js_1.isTargetClosedError)(err)) {
+                    (0, util_js_1.debugError)(err);
+                }
+                else {
+                    throw err;
+                }
+            }
         }
         return page;
     }
@@ -56314,48 +57081,13 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * @returns `true` if drag events are being intercepted, `false` otherwise.
      */
     isDragInterceptionEnabled() {
-        return __classPrivateFieldGet(this, _Page_userDragInterceptionEnabled, "f");
+        return __classPrivateFieldGet(this, _CDPPage_userDragInterceptionEnabled, "f");
     }
     /**
      * @returns `true` if the page has JavaScript enabled, `false` otherwise.
      */
     isJavaScriptEnabled() {
-        return __classPrivateFieldGet(this, _Page_javascriptEnabled, "f");
-    }
-    /**
-     * Listen to page events.
-     *
-     * :::note
-     *
-     * This method exists to define event typings and handle proper wireup of
-     * cooperative request interception. Actual event listening and dispatching is
-     * delegated to {@link EventEmitter}.
-     *
-     * :::
-     */
-    on(eventName, handler) {
-        if (eventName === 'request') {
-            const wrap = __classPrivateFieldGet(this, _Page_handlerMap, "f").get(handler) ||
-                ((event) => {
-                    event.enqueueInterceptAction(() => {
-                        return handler(event);
-                    });
-                });
-            __classPrivateFieldGet(this, _Page_handlerMap, "f").set(handler, wrap);
-            return super.on(eventName, wrap);
-        }
-        return super.on(eventName, handler);
-    }
-    once(eventName, handler) {
-        // Note: this method only exists to define the types; we delegate the impl
-        // to EventEmitter.
-        return super.once(eventName, handler);
-    }
-    off(eventName, handler) {
-        if (eventName === 'request') {
-            handler = __classPrivateFieldGet(this, _Page_handlerMap, "f").get(handler) || handler;
-        }
-        return super.off(eventName, handler);
+        return __classPrivateFieldGet(this, _CDPPage_javascriptEnabled, "f");
     }
     /**
      * This method is typically coupled with an action that triggers file
@@ -56385,17 +57117,26 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * await fileChooser.accept(['/tmp/myfile.pdf']);
      * ```
      */
-    async waitForFileChooser(options = {}) {
-        if (!__classPrivateFieldGet(this, _Page_fileChooserPromises, "f").size) {
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Page.setInterceptFileChooserDialog', {
+    waitForFileChooser(options = {}) {
+        const needsEnable = __classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f").size === 0;
+        const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
+        const promise = (0, DeferredPromise_js_1.createDeferredPromise)({
+            message: `Waiting for \`FileChooser\` failed: ${timeout}ms exceeded`,
+            timeout,
+        });
+        __classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f").add(promise);
+        let enablePromise;
+        if (needsEnable) {
+            enablePromise = __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.setInterceptFileChooserDialog', {
                 enabled: true,
             });
         }
-        const { timeout = __classPrivateFieldGet(this, _Page_timeoutSettings, "f").timeout() } = options;
-        const promise = (0, DeferredPromise_js_1.createDeferredPromiseWithTimer)(`Waiting for \`FileChooser\` failed: ${timeout}ms exceeded`);
-        __classPrivateFieldGet(this, _Page_fileChooserPromises, "f").add(promise);
-        return promise.catch(error => {
-            __classPrivateFieldGet(this, _Page_fileChooserPromises, "f").delete(promise);
+        return Promise.all([promise, enablePromise])
+            .then(([result]) => {
+            return result;
+        })
+            .catch(error => {
+            __classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f").delete(promise);
             throw error;
         });
     }
@@ -56423,7 +57164,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         if (accuracy < 0) {
             throw new Error(`Invalid accuracy "${accuracy}": precondition 0 <= ACCURACY failed.`);
         }
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setGeolocationOverride', {
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setGeolocationOverride', {
             longitude,
             latitude,
             accuracy,
@@ -56433,25 +57174,25 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * @returns A target this page was created from.
      */
     target() {
-        return __classPrivateFieldGet(this, _Page_target, "f");
+        return __classPrivateFieldGet(this, _CDPPage_target, "f");
     }
     /**
      * @internal
      */
     _client() {
-        return __classPrivateFieldGet(this, _Page_client, "f");
+        return __classPrivateFieldGet(this, _CDPPage_client, "f");
     }
     /**
      * Get the browser the page belongs to.
      */
     browser() {
-        return __classPrivateFieldGet(this, _Page_target, "f").browser();
+        return __classPrivateFieldGet(this, _CDPPage_target, "f").browser();
     }
     /**
      * Get the browser context that the page belongs to.
      */
     browserContext() {
-        return __classPrivateFieldGet(this, _Page_target, "f").browserContext();
+        return __classPrivateFieldGet(this, _CDPPage_target, "f").browserContext();
     }
     /**
      * @returns The page's main frame.
@@ -56460,28 +57201,28 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * Page is guaranteed to have a main frame which persists during navigations.
      */
     mainFrame() {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").mainFrame();
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame();
     }
     get keyboard() {
-        return __classPrivateFieldGet(this, _Page_keyboard, "f");
+        return __classPrivateFieldGet(this, _CDPPage_keyboard, "f");
     }
     get touchscreen() {
-        return __classPrivateFieldGet(this, _Page_touchscreen, "f");
+        return __classPrivateFieldGet(this, _CDPPage_touchscreen, "f");
     }
     get coverage() {
-        return __classPrivateFieldGet(this, _Page_coverage, "f");
+        return __classPrivateFieldGet(this, _CDPPage_coverage, "f");
     }
     get tracing() {
-        return __classPrivateFieldGet(this, _Page_tracing, "f");
+        return __classPrivateFieldGet(this, _CDPPage_tracing, "f");
     }
     get accessibility() {
-        return __classPrivateFieldGet(this, _Page_accessibility, "f");
+        return __classPrivateFieldGet(this, _CDPPage_accessibility, "f");
     }
     /**
      * @returns An array of all frames attached to the page.
      */
     frames() {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").frames();
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").frames();
     }
     /**
      * @returns all of the dedicated {@link
@@ -56492,7 +57233,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * This does not contain ServiceWorkers
      */
     workers() {
-        return Array.from(__classPrivateFieldGet(this, _Page_workers, "f").values());
+        return Array.from(__classPrivateFieldGet(this, _CDPPage_workers, "f").values());
     }
     /**
      * Activating request interception enables {@link HTTPRequest.abort},
@@ -56533,7 +57274,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * @param value - Whether to enable request interception.
      */
     async setRequestInterception(value) {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager.setRequestInterception(value);
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setRequestInterception(value);
     }
     /**
      * @param enabled - Whether to enable drag interception.
@@ -56544,44 +57285,14 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * on the page, which can then be used to simulate drag-and-drop.
      */
     async setDragInterception(enabled) {
-        __classPrivateFieldSet(this, _Page_userDragInterceptionEnabled, enabled, "f");
-        return __classPrivateFieldGet(this, _Page_client, "f").send('Input.setInterceptDrags', { enabled });
+        __classPrivateFieldSet(this, _CDPPage_userDragInterceptionEnabled, enabled, "f");
+        return __classPrivateFieldGet(this, _CDPPage_client, "f").send('Input.setInterceptDrags', { enabled });
     }
-    /**
-     * @param enabled - When `true`, enables offline mode for the page.
-     * @remarks
-     * NOTE: while this method sets the network connection to offline, it does
-     * not change the parameters used in [page.emulateNetworkConditions(networkConditions)]
-     * (#pageemulatenetworkconditionsnetworkconditions)
-     */
     setOfflineMode(enabled) {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager.setOfflineMode(enabled);
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setOfflineMode(enabled);
     }
-    /**
-     * @param networkConditions - Passing `null` disables network condition emulation.
-     * @example
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * const slow3G = puppeteer.networkConditions['Slow 3G'];
-     *
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   await page.emulateNetworkConditions(slow3G);
-     *   await page.goto('https://www.google.com');
-     *   // other actions...
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @remarks
-     * NOTE: This does not affect WebSockets and WebRTC PeerConnections (see
-     * https://crbug.com/563644). To set the page offline, you can use
-     * [page.setOfflineMode(enabled)](#pagesetofflinemodeenabled).
-     */
     emulateNetworkConditions(networkConditions) {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager.emulateNetworkConditions(networkConditions);
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.emulateNetworkConditions(networkConditions);
     }
     /**
      * This setting will change the default maximum navigation time for the
@@ -56601,13 +57312,19 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   @param timeout - Maximum navigation time in milliseconds.
      */
     setDefaultNavigationTimeout(timeout) {
-        __classPrivateFieldGet(this, _Page_timeoutSettings, "f").setDefaultNavigationTimeout(timeout);
+        __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").setDefaultNavigationTimeout(timeout);
     }
     /**
      * @param timeout - Maximum time in milliseconds.
      */
     setDefaultTimeout(timeout) {
-        __classPrivateFieldGet(this, _Page_timeoutSettings, "f").setDefaultTimeout(timeout);
+        __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").setDefaultTimeout(timeout);
+    }
+    /**
+     * @returns Maximum time in milliseconds.
+     */
+    getDefaultTimeout() {
+        return __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout();
     }
     /**
      * Runs `document.querySelector` within the page. If no element matches the
@@ -56695,11 +57412,6 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * This method iterates the JavaScript heap and finds all objects with the
      * given prototype.
      *
-     * @remarks
-     * Shortcut for
-     * {@link ExecutionContext.queryObjects |
-     * page.mainFrame().executionContext().queryObjects(prototypeHandle)}.
-     *
      * @example
      *
      * ```ts
@@ -56721,7 +57433,13 @@ class Page extends EventEmitter_js_1.EventEmitter {
      */
     async queryObjects(prototypeHandle) {
         const context = await this.mainFrame().executionContext();
-        return context.queryObjects(prototypeHandle);
+        (0, assert_js_1.assert)(!prototypeHandle.disposed, 'Prototype JSHandle is disposed!');
+        const remoteObject = prototypeHandle.remoteObject();
+        (0, assert_js_1.assert)(remoteObject.objectId, 'Prototype JSHandle must not be referencing primitive value');
+        const response = await context._client.send('Runtime.queryObjects', {
+            prototypeObjectId: remoteObject.objectId,
+        });
+        return (0, util_js_1.createJSHandle)(context, response.objects);
     }
     /**
      * This method runs `document.querySelector` within the page and passes the
@@ -56871,7 +57589,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * URL. If URLs are specified, only cookies for those URLs are returned.
      */
     async cookies(...urls) {
-        const originalCookies = (await __classPrivateFieldGet(this, _Page_client, "f").send('Network.getCookies', {
+        const originalCookies = (await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Network.getCookies', {
             urls: urls.length ? urls : [this.url()],
         })).cookies;
         const unsupportedCookieAttributes = ['priority'];
@@ -56890,7 +57608,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
             if (!cookie.url && pageURL.startsWith('http')) {
                 item.url = pageURL;
             }
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Network.deleteCookies', item);
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Network.deleteCookies', item);
         }
     }
     /**
@@ -56914,7 +57632,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         });
         await this.deleteCookie(...items);
         if (items.length) {
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Network.setCookies', { cookies: items });
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Network.setCookies', { cookies: items });
         }
     }
     /**
@@ -56924,18 +57642,13 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * Shortcut for
      * {@link Frame.addScriptTag | page.mainFrame().addScriptTag(options)}.
      *
-     * @returns Promise which resolves to the added tag when the script's onload
-     * fires or when the script content was injected into frame.
+     * @param options - Options for the script.
+     * @returns An {@link ElementHandle | element handle} to the injected
+     * `<script>` element.
      */
     async addScriptTag(options) {
         return this.mainFrame().addScriptTag(options);
     }
-    /**
-     * Adds a `<link rel="stylesheet">` tag into the page with the desired URL or a
-     * `<style type="text/css">` tag with the content.
-     * @returns Promise which resolves to the added tag when the stylesheet's
-     * onload fires or when the CSS content was injected into frame.
-     */
     async addStyleTag(options) {
         return this.mainFrame().addStyleTag(options);
     }
@@ -57010,7 +57723,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * context.
      */
     async exposeFunction(name, pptrFunction) {
-        if (__classPrivateFieldGet(this, _Page_pageBindings, "f").has(name)) {
+        if (__classPrivateFieldGet(this, _CDPPage_pageBindings, "f").has(name)) {
             throw new Error(`Failed to add page binding with name ${name}: window['${name}'] already exists!`);
         }
         let exposedFunction;
@@ -57022,10 +57735,10 @@ class Page extends EventEmitter_js_1.EventEmitter {
                 exposedFunction = pptrFunction.default;
                 break;
         }
-        __classPrivateFieldGet(this, _Page_pageBindings, "f").set(name, exposedFunction);
+        __classPrivateFieldGet(this, _CDPPage_pageBindings, "f").set(name, exposedFunction);
         const expression = (0, util_js_1.pageBindingInitString)('exposedFun', name);
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Runtime.addBinding', { name: name });
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Page.addScriptToEvaluateOnNewDocument', {
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Runtime.addBinding', { name: name });
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.addScriptToEvaluateOnNewDocument', {
             source: expression,
         });
         await Promise.all(this.frames().map(frame => {
@@ -57039,7 +57752,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * To disable authentication, pass `null`.
      */
     async authenticate(credentials) {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager.authenticate(credentials);
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.authenticate(credentials);
     }
     /**
      * The extra HTTP headers will be sent with every request the page initiates.
@@ -57062,7 +57775,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * with every request. All header values must be strings.
      */
     async setExtraHTTPHeaders(headers) {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager.setExtraHTTPHeaders(headers);
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setExtraHTTPHeaders(headers);
     }
     /**
      * @param userAgent - Specific user agent to use in this page
@@ -57071,7 +57784,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * @returns Promise which resolves when the user agent is set.
      */
     async setUserAgent(userAgent, userAgentMetadata) {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager.setUserAgent(userAgent, userAgentMetadata);
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setUserAgent(userAgent, userAgentMetadata);
     }
     /**
      * @returns Object containing metrics as key/value pairs.
@@ -57108,8 +57821,8 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * in seconds since an arbitrary point in the past.
      */
     async metrics() {
-        const response = await __classPrivateFieldGet(this, _Page_client, "f").send('Performance.getMetrics');
-        return __classPrivateFieldGet(this, _Page_instances, "m", _Page_buildMetricsObject).call(this, response.metrics);
+        const response = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Performance.getMetrics');
+        return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_buildMetricsObject).call(this, response.metrics);
     }
     /**
      *
@@ -57121,7 +57834,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         return this.mainFrame().url();
     }
     async content() {
-        return await __classPrivateFieldGet(this, _Page_frameManager, "f").mainFrame().content();
+        return await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().content();
     }
     /**
      * @param html - HTML markup to assign to the page.
@@ -57148,7 +57861,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   no more than 2 network connections for at least `500` ms.
      */
     async setContent(html, options = {}) {
-        await __classPrivateFieldGet(this, _Page_frameManager, "f").mainFrame().setContent(html, options);
+        await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().setContent(html, options);
     }
     /**
      * @param url - URL to navigate page to. The URL should include scheme, e.g.
@@ -57205,7 +57918,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * Shortcut for {@link Frame.goto | page.mainFrame().goto(url, options)}.
      */
     async goto(url, options = {}) {
-        return await __classPrivateFieldGet(this, _Page_frameManager, "f").mainFrame().goto(url, options);
+        return await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().goto(url, options);
     }
     /**
      * @param options - Navigation parameters which might have the following
@@ -57236,7 +57949,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
     async reload(options) {
         const result = await Promise.all([
             this.waitForNavigation(options),
-            __classPrivateFieldGet(this, _Page_client, "f").send('Page.reload'),
+            __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.reload'),
         ]);
         return result[0];
     }
@@ -57268,7 +57981,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   API usage, the navigation will resolve with `null`.
      */
     async waitForNavigation(options = {}) {
-        return await __classPrivateFieldGet(this, _Page_frameManager, "f").mainFrame().waitForNavigation(options);
+        return await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().waitForNavigation(options);
     }
     /**
      * @param urlOrPredicate - A URL or predicate to wait for
@@ -57298,16 +58011,16 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   {@link Page.setDefaultTimeout} method.
      */
     async waitForRequest(urlOrPredicate, options = {}) {
-        const { timeout = __classPrivateFieldGet(this, _Page_timeoutSettings, "f").timeout() } = options;
-        return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _Page_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Request, request => {
+        const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
+        return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Request, async (request) => {
             if ((0, util_js_1.isString)(urlOrPredicate)) {
                 return urlOrPredicate === request.url();
             }
             if (typeof urlOrPredicate === 'function') {
-                return !!urlOrPredicate(request);
+                return !!(await urlOrPredicate(request));
             }
             return false;
-        }, timeout, __classPrivateFieldGet(this, _Page_instances, "m", _Page_sessionClosePromise).call(this));
+        }, timeout, __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this));
     }
     /**
      * @param urlOrPredicate - A URL or predicate to wait for.
@@ -57337,8 +58050,8 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   the {@link Page.setDefaultTimeout} method.
      */
     async waitForResponse(urlOrPredicate, options = {}) {
-        const { timeout = __classPrivateFieldGet(this, _Page_timeoutSettings, "f").timeout() } = options;
-        return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _Page_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Response, async (response) => {
+        const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
+        return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Response, async (response) => {
             if ((0, util_js_1.isString)(urlOrPredicate)) {
                 return urlOrPredicate === response.url();
             }
@@ -57346,15 +58059,15 @@ class Page extends EventEmitter_js_1.EventEmitter {
                 return !!(await urlOrPredicate(response));
             }
             return false;
-        }, timeout, __classPrivateFieldGet(this, _Page_instances, "m", _Page_sessionClosePromise).call(this));
+        }, timeout, __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this));
     }
     /**
      * @param options - Optional waiting parameters
      * @returns Promise which resolves when network is idle
      */
     async waitForNetworkIdle(options = {}) {
-        const { idleTime = 500, timeout = __classPrivateFieldGet(this, _Page_timeoutSettings, "f").timeout() } = options;
-        const networkManager = __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager;
+        const { idleTime = 500, timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
+        const networkManager = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager;
         let idleResolveCallback;
         const idlePromise = new Promise(resolve => {
             idleResolveCallback = resolve;
@@ -57392,7 +58105,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         await Promise.race([
             idlePromise,
             ...eventPromises,
-            __classPrivateFieldGet(this, _Page_instances, "m", _Page_sessionClosePromise).call(this),
+            __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this),
         ]).then(r => {
             cleanup();
             return r;
@@ -57421,7 +58134,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   the {@link Page.setDefaultTimeout} method.
      */
     async waitForFrame(urlOrPredicate, options = {}) {
-        const { timeout = __classPrivateFieldGet(this, _Page_timeoutSettings, "f").timeout() } = options;
+        const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
         let predicate;
         if ((0, util_js_1.isString)(urlOrPredicate)) {
             predicate = (frame) => {
@@ -57438,8 +58151,8 @@ class Page extends EventEmitter_js_1.EventEmitter {
             };
         }
         const eventRace = Promise.race([
-            (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _Page_frameManager, "f"), FrameManager_js_1.FrameManagerEmittedEvents.FrameAttached, predicate, timeout, __classPrivateFieldGet(this, _Page_instances, "m", _Page_sessionClosePromise).call(this)),
-            (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _Page_frameManager, "f"), FrameManager_js_1.FrameManagerEmittedEvents.FrameNavigated, predicate, timeout, __classPrivateFieldGet(this, _Page_instances, "m", _Page_sessionClosePromise).call(this)),
+            (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f"), FrameManager_js_1.FrameManagerEmittedEvents.FrameAttached, predicate, timeout, __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this)),
+            (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f"), FrameManager_js_1.FrameManagerEmittedEvents.FrameNavigated, predicate, timeout, __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this)),
             ...this.frames().map(async (frame) => {
                 if (await predicate(frame)) {
                     return frame;
@@ -57476,7 +58189,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   more than 2 network connections for at least `500` ms.
      */
     async goBack(options = {}) {
-        return __classPrivateFieldGet(this, _Page_instances, "m", _Page_go).call(this, -1, options);
+        return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_go).call(this, -1, options);
     }
     /**
      * This method navigate to the next page in history.
@@ -57505,47 +58218,13 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   more than 2 network connections for at least `500` ms.
      */
     async goForward(options = {}) {
-        return __classPrivateFieldGet(this, _Page_instances, "m", _Page_go).call(this, +1, options);
+        return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_go).call(this, +1, options);
     }
     /**
      * Brings page to front (activates tab).
      */
     async bringToFront() {
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Page.bringToFront');
-    }
-    /**
-     * Emulates given device metrics and user agent.
-     *
-     * @remarks
-     * This method is a shortcut for calling two methods:
-     * {@link Page.setUserAgent} and {@link Page.setViewport} To aid emulation,
-     * Puppeteer provides a list of device descriptors that can be obtained via
-     * {@link devices}. `page.emulate` will resize the page. A lot of websites
-     * don't expect phones to change size, so you should emulate before navigating
-     * to the page.
-     * @example
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * const iPhone = puppeteer.devices['iPhone 6'];
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   await page.emulate(iPhone);
-     *   await page.goto('https://www.google.com');
-     *   // other actions...
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @remarks List of all available devices is available in the source code:
-     * {@link https://github.com/puppeteer/puppeteer/blob/main/src/common/DeviceDescriptors.ts | src/common/DeviceDescriptors.ts}.
-     */
-    async emulate(options) {
-        await Promise.all([
-            this.setViewport(options.viewport),
-            this.setUserAgent(options.userAgent),
-        ]);
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.bringToFront');
     }
     /**
      * @param enabled - Whether or not to enable JavaScript on the page.
@@ -57555,11 +58234,11 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * It will take full effect on the next navigation.
      */
     async setJavaScriptEnabled(enabled) {
-        if (__classPrivateFieldGet(this, _Page_javascriptEnabled, "f") === enabled) {
+        if (__classPrivateFieldGet(this, _CDPPage_javascriptEnabled, "f") === enabled) {
             return;
         }
-        __classPrivateFieldSet(this, _Page_javascriptEnabled, enabled, "f");
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setScriptExecutionDisabled', {
+        __classPrivateFieldSet(this, _CDPPage_javascriptEnabled, enabled, "f");
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setScriptExecutionDisabled', {
             value: !enabled,
         });
     }
@@ -57572,7 +58251,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * before navigating to the domain.
      */
     async setBypassCSP(enabled) {
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Page.setBypassCSP', { enabled });
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.setBypassCSP', { enabled });
     }
     /**
      * @param type - Changes the CSS media type of the page. The only allowed
@@ -57603,7 +58282,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         (0, assert_js_1.assert)(type === 'screen' ||
             type === 'print' ||
             (type !== null && type !== void 0 ? type : undefined) === undefined, 'Unsupported media type: ' + type);
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setEmulatedMedia', {
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setEmulatedMedia', {
             media: type || '',
         });
     }
@@ -57613,7 +58292,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      */
     async emulateCPUThrottling(factor) {
         (0, assert_js_1.assert)(factor === null || factor >= 1, 'Throttling rate should be greater or equal to 1');
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setCPUThrottlingRate', {
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setCPUThrottlingRate', {
             rate: factor !== null ? factor : 1,
         });
     }
@@ -57680,14 +58359,14 @@ class Page extends EventEmitter_js_1.EventEmitter {
      */
     async emulateMediaFeatures(features) {
         if (!features) {
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setEmulatedMedia', {});
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setEmulatedMedia', {});
         }
         if (Array.isArray(features)) {
             for (const mediaFeature of features) {
                 const name = mediaFeature.name;
                 (0, assert_js_1.assert)(/^(?:prefers-(?:color-scheme|reduced-motion)|color-gamut)$/.test(name), 'Unsupported media feature: ' + name);
             }
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setEmulatedMedia', {
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setEmulatedMedia', {
                 features: features,
             });
         }
@@ -57700,7 +58379,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      */
     async emulateTimezone(timezoneId) {
         try {
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setTimezoneOverride', {
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setTimezoneOverride', {
                 timezoneId: timezoneId || '',
             });
         }
@@ -57732,13 +58411,13 @@ class Page extends EventEmitter_js_1.EventEmitter {
      */
     async emulateIdleState(overrides) {
         if (overrides) {
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setIdleOverride', {
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setIdleOverride', {
                 isUserActive: overrides.isUserActive,
                 isScreenUnlocked: overrides.isScreenUnlocked,
             });
         }
         else {
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.clearIdleOverride');
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.clearIdleOverride');
         }
     }
     /**
@@ -57780,7 +58459,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         ]);
         try {
             (0, assert_js_1.assert)(!type || visionDeficiencies.has(type), `Unsupported vision deficiency: ${type}`);
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setEmulatedVisionDeficiency', {
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setEmulatedVisionDeficiency', {
                 type: type || 'none',
             });
         }
@@ -57829,8 +58508,8 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * set the isMobile or hasTouch properties.
      */
     async setViewport(viewport) {
-        const needsReload = await __classPrivateFieldGet(this, _Page_emulationManager, "f").emulateViewport(viewport);
-        __classPrivateFieldSet(this, _Page_viewport, viewport, "f");
+        const needsReload = await __classPrivateFieldGet(this, _CDPPage_emulationManager, "f").emulateViewport(viewport);
+        __classPrivateFieldSet(this, _CDPPage_viewport, viewport, "f");
         if (needsReload) {
             await this.reload();
         }
@@ -57855,7 +58534,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *   `false`.
      */
     viewport() {
-        return __classPrivateFieldGet(this, _Page_viewport, "f");
+        return __classPrivateFieldGet(this, _CDPPage_viewport, "f");
     }
     /**
      * Evaluates a function in the page's context and returns the result.
@@ -57905,7 +58584,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * @returns the return value of `pageFunction`.
      */
     async evaluate(pageFunction, ...args) {
-        return __classPrivateFieldGet(this, _Page_frameManager, "f").mainFrame().evaluate(pageFunction, ...args);
+        return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().evaluate(pageFunction, ...args);
     }
     /**
      * Adds a function which would be invoked in one of the following scenarios:
@@ -57928,20 +58607,20 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *
      * // overwrite the `languages` property to use a custom getter
      * Object.defineProperty(navigator, 'languages', {
-     * get: function () {
-     * return ['en-US', 'en', 'bn'];
-     * },
+     *   get: function () {
+     *     return ['en-US', 'en', 'bn'];
+     *   },
      * });
      *
      * // In your puppeteer script, assuming the preload.js file is
-     * in same folder of our script
+     * // in same folder of our script.
      * const preloadFile = fs.readFileSync('./preload.js', 'utf8');
      * await page.evaluateOnNewDocument(preloadFile);
      * ```
      */
     async evaluateOnNewDocument(pageFunction, ...args) {
         const source = (0, util_js_1.evaluationString)(pageFunction, ...args);
-        await __classPrivateFieldGet(this, _Page_client, "f").send('Page.addScriptToEvaluateOnNewDocument', {
+        await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.addScriptToEvaluateOnNewDocument', {
             source,
         });
     }
@@ -57951,7 +58630,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * @param enabled - sets the `enabled` state of cache
      */
     async setCacheEnabled(enabled = true) {
-        await __classPrivateFieldGet(this, _Page_frameManager, "f").networkManager.setCacheEnabled(enabled);
+        await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setCacheEnabled(enabled);
     }
     /**
      * @remarks
@@ -58055,8 +58734,8 @@ class Page extends EventEmitter_js_1.EventEmitter {
             (0, assert_js_1.assert)(options.clip.width !== 0, 'Expected options.clip.width not to be 0.');
             (0, assert_js_1.assert)(options.clip.height !== 0, 'Expected options.clip.height not to be 0.');
         }
-        return __classPrivateFieldGet(this, _Page_screenshotTaskQueue, "f").postTask(() => {
-            return __classPrivateFieldGet(this, _Page_instances, "m", _Page_screenshotTask).call(this, screenshotType, options);
+        return __classPrivateFieldGet(this, _CDPPage_screenshotTaskQueue, "f").postTask(() => {
+            return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_screenshotTask).call(this, screenshotType, options);
         });
     }
     /**
@@ -58096,9 +58775,9 @@ class Page extends EventEmitter_js_1.EventEmitter {
         const marginBottom = convertPrintParameterToInches(margin.bottom) || 0;
         const marginRight = convertPrintParameterToInches(margin.right) || 0;
         if (omitBackground) {
-            await __classPrivateFieldGet(this, _Page_instances, "m", _Page_setTransparentBackgroundColor).call(this);
+            await __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_setTransparentBackgroundColor).call(this);
         }
-        const printCommandPromise = __classPrivateFieldGet(this, _Page_client, "f").send('Page.printToPDF', {
+        const printCommandPromise = __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.printToPDF', {
             transferMode: 'ReturnAsStream',
             landscape,
             displayHeaderFooter,
@@ -58117,10 +58796,10 @@ class Page extends EventEmitter_js_1.EventEmitter {
         });
         const result = await (0, util_js_1.waitWithTimeout)(printCommandPromise, 'Page.printToPDF', timeout);
         if (omitBackground) {
-            await __classPrivateFieldGet(this, _Page_instances, "m", _Page_resetDefaultBackgroundColor).call(this);
+            await __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_resetDefaultBackgroundColor).call(this);
         }
         (0, assert_js_1.assert)(result.stream, '`stream` is missing from `Page.printToPDF');
-        return (0, util_js_1.getReadableFromProtocolStream)(__classPrivateFieldGet(this, _Page_client, "f"), result.stream);
+        return (0, util_js_1.getReadableFromProtocolStream)(__classPrivateFieldGet(this, _CDPPage_client, "f"), result.stream);
     }
     /**
      * @param options -
@@ -58142,17 +58821,17 @@ class Page extends EventEmitter_js_1.EventEmitter {
         return this.mainFrame().title();
     }
     async close(options = { runBeforeUnload: undefined }) {
-        const connection = __classPrivateFieldGet(this, _Page_client, "f").connection();
+        const connection = __classPrivateFieldGet(this, _CDPPage_client, "f").connection();
         (0, assert_js_1.assert)(connection, 'Protocol error: Connection closed. Most likely the page has been closed.');
         const runBeforeUnload = !!options.runBeforeUnload;
         if (runBeforeUnload) {
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Page.close');
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.close');
         }
         else {
             await connection.send('Target.closeTarget', {
-                targetId: __classPrivateFieldGet(this, _Page_target, "f")._targetId,
+                targetId: __classPrivateFieldGet(this, _CDPPage_target, "f")._targetId,
             });
-            await __classPrivateFieldGet(this, _Page_target, "f")._isClosedPromise;
+            await __classPrivateFieldGet(this, _CDPPage_target, "f")._isClosedPromise;
         }
     }
     /**
@@ -58160,10 +58839,10 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * @returns
      */
     isClosed() {
-        return __classPrivateFieldGet(this, _Page_closed, "f");
+        return __classPrivateFieldGet(this, _CDPPage_closed, "f");
     }
     get mouse() {
-        return __classPrivateFieldGet(this, _Page_mouse, "f");
+        return __classPrivateFieldGet(this, _CDPPage_mouse, "f");
     }
     /**
      * This method fetches an element with `selector`, scrolls it into view if
@@ -58295,7 +58974,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         return this.mainFrame().type(selector, text, options);
     }
     /**
-     * @deprecated Use `new Promise(r => setTimeout(r, milliseconds));`.
+     * @deprecated Replace with `new Promise(r => setTimeout(r, milliseconds));`.
      *
      * Causes your script to wait for the given number of milliseconds.
      *
@@ -58478,65 +59157,60 @@ class Page extends EventEmitter_js_1.EventEmitter {
      * ```
      *
      * @param pageFunction - Function to be evaluated in browser context
-     * @param options - Optional waiting parameters
-     *
-     * - `polling` - An interval at which the `pageFunction` is executed, defaults
-     *   to `raf`. If `polling` is a number, then it is treated as an interval in
-     *   milliseconds at which the function would be executed. If polling is a
-     *   string, then it can be one of the following values:
-     *   - `raf` - to constantly execute `pageFunction` in
-     *     `requestAnimationFrame` callback. This is the tightest polling mode
-     *     which is suitable to observe styling changes.
-     *   - `mutation`- to execute pageFunction on every DOM mutation.
-     * - `timeout` - maximum time to wait for in milliseconds. Defaults to `30000`
-     *   (30 seconds). Pass `0` to disable timeout. The default value can be
-     *   changed by using the {@link Page.setDefaultTimeout} method.
-     *   @param args - Arguments to pass to `pageFunction`
-     *   @returns A `Promise` which resolves to a JSHandle/ElementHandle of the the
-     *   `pageFunction`'s return value.
+     * @param options - Options for configuring waiting behavior.
      */
     waitForFunction(pageFunction, options = {}, ...args) {
         return this.mainFrame().waitForFunction(pageFunction, options, ...args);
     }
 }
-exports.Page = Page;
-_Page_closed = new WeakMap(), _Page_client = new WeakMap(), _Page_target = new WeakMap(), _Page_keyboard = new WeakMap(), _Page_mouse = new WeakMap(), _Page_timeoutSettings = new WeakMap(), _Page_touchscreen = new WeakMap(), _Page_accessibility = new WeakMap(), _Page_frameManager = new WeakMap(), _Page_emulationManager = new WeakMap(), _Page_tracing = new WeakMap(), _Page_pageBindings = new WeakMap(), _Page_coverage = new WeakMap(), _Page_javascriptEnabled = new WeakMap(), _Page_viewport = new WeakMap(), _Page_screenshotTaskQueue = new WeakMap(), _Page_workers = new WeakMap(), _Page_fileChooserPromises = new WeakMap(), _Page_disconnectPromise = new WeakMap(), _Page_userDragInterceptionEnabled = new WeakMap(), _Page_handlerMap = new WeakMap(), _Page_onDetachedFromTarget = new WeakMap(), _Page_onAttachedToTarget = new WeakMap(), _Page_instances = new WeakSet(), _Page_initialize = async function _Page_initialize() {
-    await Promise.all([
-        __classPrivateFieldGet(this, _Page_frameManager, "f").initialize(__classPrivateFieldGet(this, _Page_target, "f")._targetId),
-        __classPrivateFieldGet(this, _Page_client, "f").send('Performance.enable'),
-        __classPrivateFieldGet(this, _Page_client, "f").send('Log.enable'),
-    ]);
-}, _Page_onFileChooser = async function _Page_onFileChooser(event) {
-    if (!__classPrivateFieldGet(this, _Page_fileChooserPromises, "f").size) {
+exports.CDPPage = CDPPage;
+_CDPPage_closed = new WeakMap(), _CDPPage_client = new WeakMap(), _CDPPage_target = new WeakMap(), _CDPPage_keyboard = new WeakMap(), _CDPPage_mouse = new WeakMap(), _CDPPage_timeoutSettings = new WeakMap(), _CDPPage_touchscreen = new WeakMap(), _CDPPage_accessibility = new WeakMap(), _CDPPage_frameManager = new WeakMap(), _CDPPage_emulationManager = new WeakMap(), _CDPPage_tracing = new WeakMap(), _CDPPage_pageBindings = new WeakMap(), _CDPPage_coverage = new WeakMap(), _CDPPage_javascriptEnabled = new WeakMap(), _CDPPage_viewport = new WeakMap(), _CDPPage_screenshotTaskQueue = new WeakMap(), _CDPPage_workers = new WeakMap(), _CDPPage_fileChooserPromises = new WeakMap(), _CDPPage_disconnectPromise = new WeakMap(), _CDPPage_userDragInterceptionEnabled = new WeakMap(), _CDPPage_onDetachedFromTarget = new WeakMap(), _CDPPage_onAttachedToTarget = new WeakMap(), _CDPPage_instances = new WeakSet(), _CDPPage_initialize = async function _CDPPage_initialize() {
+    try {
+        await Promise.all([
+            __classPrivateFieldGet(this, _CDPPage_frameManager, "f").initialize(),
+            __classPrivateFieldGet(this, _CDPPage_client, "f").send('Performance.enable'),
+            __classPrivateFieldGet(this, _CDPPage_client, "f").send('Log.enable'),
+        ]);
+    }
+    catch (err) {
+        if ((0, ErrorLike_js_1.isErrorLike)(err) && (0, Connection_js_1.isTargetClosedError)(err)) {
+            (0, util_js_1.debugError)(err);
+        }
+        else {
+            throw err;
+        }
+    }
+}, _CDPPage_onFileChooser = async function _CDPPage_onFileChooser(event) {
+    if (!__classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f").size) {
         return;
     }
-    const frame = __classPrivateFieldGet(this, _Page_frameManager, "f").frame(event.frameId);
+    const frame = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").frame(event.frameId);
     (0, assert_js_1.assert)(frame, 'This should never happen.');
     // This is guaranteed to be an HTMLInputElement handle by the event.
     const handle = (await frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].adoptBackendNode(event.backendNodeId));
     const fileChooser = new FileChooser_js_1.FileChooser(handle, event);
-    for (const promise of __classPrivateFieldGet(this, _Page_fileChooserPromises, "f")) {
+    for (const promise of __classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f")) {
         promise.resolve(fileChooser);
     }
-    __classPrivateFieldGet(this, _Page_fileChooserPromises, "f").clear();
-}, _Page_onTargetCrashed = function _Page_onTargetCrashed() {
+    __classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f").clear();
+}, _CDPPage_onTargetCrashed = function _CDPPage_onTargetCrashed() {
     this.emit('error', new Error('Page crashed!'));
-}, _Page_onLogEntryAdded = function _Page_onLogEntryAdded(event) {
+}, _CDPPage_onLogEntryAdded = function _CDPPage_onLogEntryAdded(event) {
     const { level, text, args, source, url, lineNumber } = event.entry;
     if (args) {
         args.map(arg => {
-            return (0, util_js_1.releaseObject)(__classPrivateFieldGet(this, _Page_client, "f"), arg);
+            return (0, util_js_1.releaseObject)(__classPrivateFieldGet(this, _CDPPage_client, "f"), arg);
         });
     }
     if (source !== 'worker') {
         this.emit("console" /* PageEmittedEvents.Console */, new ConsoleMessage_js_1.ConsoleMessage(level, text, [], [{ url, lineNumber }]));
     }
-}, _Page_emitMetrics = function _Page_emitMetrics(event) {
+}, _CDPPage_emitMetrics = function _CDPPage_emitMetrics(event) {
     this.emit("metrics" /* PageEmittedEvents.Metrics */, {
         title: event.title,
-        metrics: __classPrivateFieldGet(this, _Page_instances, "m", _Page_buildMetricsObject).call(this, event.metrics),
+        metrics: __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_buildMetricsObject).call(this, event.metrics),
     });
-}, _Page_buildMetricsObject = function _Page_buildMetricsObject(metrics) {
+}, _CDPPage_buildMetricsObject = function _CDPPage_buildMetricsObject(metrics) {
     const result = {};
     for (const metric of metrics || []) {
         if (supportedMetrics.has(metric.name)) {
@@ -58544,12 +59218,12 @@ _Page_closed = new WeakMap(), _Page_client = new WeakMap(), _Page_target = new W
         }
     }
     return result;
-}, _Page_handleException = function _Page_handleException(exceptionDetails) {
+}, _CDPPage_handleException = function _CDPPage_handleException(exceptionDetails) {
     const message = (0, util_js_1.getExceptionMessage)(exceptionDetails);
     const err = new Error(message);
     err.stack = ''; // Don't report clientside error with a node stack attached
     this.emit("pageerror" /* PageEmittedEvents.PageError */, err);
-}, _Page_onConsoleAPI = async function _Page_onConsoleAPI(event) {
+}, _CDPPage_onConsoleAPI = async function _CDPPage_onConsoleAPI(event) {
     if (event.executionContextId === 0) {
         // DevTools protocol stores the last 1000 console messages. These
         // messages are always reported even for removed execution contexts. In
@@ -58566,12 +59240,12 @@ _Page_closed = new WeakMap(), _Page_client = new WeakMap(), _Page_target = new W
         // @see https://github.com/puppeteer/puppeteer/issues/3865
         return;
     }
-    const context = __classPrivateFieldGet(this, _Page_frameManager, "f").executionContextById(event.executionContextId, __classPrivateFieldGet(this, _Page_client, "f"));
+    const context = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").executionContextById(event.executionContextId, __classPrivateFieldGet(this, _CDPPage_client, "f"));
     const values = event.args.map(arg => {
         return (0, util_js_1.createJSHandle)(context, arg);
     });
-    __classPrivateFieldGet(this, _Page_instances, "m", _Page_addConsoleMessage).call(this, event.type, values, event.stackTrace);
-}, _Page_onBindingCalled = async function _Page_onBindingCalled(event) {
+    __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_addConsoleMessage).call(this, event.type, values, event.stackTrace);
+}, _CDPPage_onBindingCalled = async function _CDPPage_onBindingCalled(event) {
     let payload;
     try {
         payload = JSON.parse(event.payload);
@@ -58582,12 +59256,12 @@ _Page_closed = new WeakMap(), _Page_client = new WeakMap(), _Page_target = new W
         return;
     }
     const { type, name, seq, args } = payload;
-    if (type !== 'exposedFun' || !__classPrivateFieldGet(this, _Page_pageBindings, "f").has(name)) {
+    if (type !== 'exposedFun' || !__classPrivateFieldGet(this, _CDPPage_pageBindings, "f").has(name)) {
         return;
     }
     let expression = null;
     try {
-        const pageBinding = __classPrivateFieldGet(this, _Page_pageBindings, "f").get(name);
+        const pageBinding = __classPrivateFieldGet(this, _CDPPage_pageBindings, "f").get(name);
         (0, assert_js_1.assert)(pageBinding);
         const result = await pageBinding(...args);
         expression = (0, util_js_1.pageBindingDeliverResultString)(name, seq, result);
@@ -58600,13 +59274,13 @@ _Page_closed = new WeakMap(), _Page_client = new WeakMap(), _Page_target = new W
             expression = (0, util_js_1.pageBindingDeliverErrorValueString)(name, seq, error);
         }
     }
-    __classPrivateFieldGet(this, _Page_client, "f")
+    __classPrivateFieldGet(this, _CDPPage_client, "f")
         .send('Runtime.evaluate', {
         expression,
         contextId: event.executionContextId,
     })
         .catch(util_js_1.debugError);
-}, _Page_addConsoleMessage = function _Page_addConsoleMessage(eventType, args, stackTrace) {
+}, _CDPPage_addConsoleMessage = function _CDPPage_addConsoleMessage(eventType, args, stackTrace) {
     if (!this.listenerCount("console" /* PageEmittedEvents.Console */)) {
         args.forEach(arg => {
             return arg.dispose();
@@ -58635,7 +59309,7 @@ _Page_closed = new WeakMap(), _Page_client = new WeakMap(), _Page_target = new W
     }
     const message = new ConsoleMessage_js_1.ConsoleMessage(eventType, textTokens.join(' '), args, stackTraceLocations);
     this.emit("console" /* PageEmittedEvents.Console */, message);
-}, _Page_onDialog = function _Page_onDialog(event) {
+}, _CDPPage_onDialog = function _CDPPage_onDialog(event) {
     let dialogType = null;
     const validDialogTypes = new Set([
         'alert',
@@ -58647,45 +59321,45 @@ _Page_closed = new WeakMap(), _Page_client = new WeakMap(), _Page_target = new W
         dialogType = event.type;
     }
     (0, assert_js_1.assert)(dialogType, 'Unknown javascript dialog type: ' + event.type);
-    const dialog = new Dialog_js_1.Dialog(__classPrivateFieldGet(this, _Page_client, "f"), dialogType, event.message, event.defaultPrompt);
+    const dialog = new Dialog_js_1.Dialog(__classPrivateFieldGet(this, _CDPPage_client, "f"), dialogType, event.message, event.defaultPrompt);
     this.emit("dialog" /* PageEmittedEvents.Dialog */, dialog);
-}, _Page_resetDefaultBackgroundColor = 
+}, _CDPPage_resetDefaultBackgroundColor = 
 /**
  * Resets default white background
  */
-async function _Page_resetDefaultBackgroundColor() {
-    await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setDefaultBackgroundColorOverride');
-}, _Page_setTransparentBackgroundColor = 
+async function _CDPPage_resetDefaultBackgroundColor() {
+    await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setDefaultBackgroundColorOverride');
+}, _CDPPage_setTransparentBackgroundColor = 
 /**
  * Hides default white background
  */
-async function _Page_setTransparentBackgroundColor() {
-    await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setDefaultBackgroundColorOverride', {
+async function _CDPPage_setTransparentBackgroundColor() {
+    await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setDefaultBackgroundColorOverride', {
         color: { r: 0, g: 0, b: 0, a: 0 },
     });
-}, _Page_sessionClosePromise = function _Page_sessionClosePromise() {
-    if (!__classPrivateFieldGet(this, _Page_disconnectPromise, "f")) {
-        __classPrivateFieldSet(this, _Page_disconnectPromise, new Promise(fulfill => {
-            return __classPrivateFieldGet(this, _Page_client, "f").once(Connection_js_1.CDPSessionEmittedEvents.Disconnected, () => {
+}, _CDPPage_sessionClosePromise = function _CDPPage_sessionClosePromise() {
+    if (!__classPrivateFieldGet(this, _CDPPage_disconnectPromise, "f")) {
+        __classPrivateFieldSet(this, _CDPPage_disconnectPromise, new Promise(fulfill => {
+            return __classPrivateFieldGet(this, _CDPPage_client, "f").once(Connection_js_1.CDPSessionEmittedEvents.Disconnected, () => {
                 return fulfill(new Error('Target closed'));
             });
         }), "f");
     }
-    return __classPrivateFieldGet(this, _Page_disconnectPromise, "f");
-}, _Page_go = async function _Page_go(delta, options) {
-    const history = await __classPrivateFieldGet(this, _Page_client, "f").send('Page.getNavigationHistory');
+    return __classPrivateFieldGet(this, _CDPPage_disconnectPromise, "f");
+}, _CDPPage_go = async function _CDPPage_go(delta, options) {
+    const history = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.getNavigationHistory');
     const entry = history.entries[history.currentIndex + delta];
     if (!entry) {
         return null;
     }
     const result = await Promise.all([
         this.waitForNavigation(options),
-        __classPrivateFieldGet(this, _Page_client, "f").send('Page.navigateToHistoryEntry', { entryId: entry.id }),
+        __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.navigateToHistoryEntry', { entryId: entry.id }),
     ]);
     return result[0];
-}, _Page_screenshotTask = async function _Page_screenshotTask(format, options = {}) {
-    await __classPrivateFieldGet(this, _Page_client, "f").send('Target.activateTarget', {
-        targetId: __classPrivateFieldGet(this, _Page_target, "f")._targetId,
+}, _CDPPage_screenshotTask = async function _CDPPage_screenshotTask(format, options = {}) {
+    await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Target.activateTarget', {
+        targetId: __classPrivateFieldGet(this, _CDPPage_target, "f")._targetId,
     });
     let clip = options.clip ? processClip(options.clip) : undefined;
     const captureBeyondViewport = typeof options.captureBeyondViewport === 'boolean'
@@ -58695,17 +59369,17 @@ async function _Page_setTransparentBackgroundColor() {
         ? options.fromSurface
         : undefined;
     if (options.fullPage) {
-        const metrics = await __classPrivateFieldGet(this, _Page_client, "f").send('Page.getLayoutMetrics');
+        const metrics = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.getLayoutMetrics');
         // Fallback to `contentSize` in case of using Firefox.
         const { width, height } = metrics.cssContentSize || metrics.contentSize;
         // Overwrite clip for full page.
         clip = { x: 0, y: 0, width, height, scale: 1 };
         if (!captureBeyondViewport) {
-            const { isMobile = false, deviceScaleFactor = 1, isLandscape = false, } = __classPrivateFieldGet(this, _Page_viewport, "f") || {};
+            const { isMobile = false, deviceScaleFactor = 1, isLandscape = false, } = __classPrivateFieldGet(this, _CDPPage_viewport, "f") || {};
             const screenOrientation = isLandscape
                 ? { angle: 90, type: 'landscapePrimary' }
                 : { angle: 0, type: 'portraitPrimary' };
-            await __classPrivateFieldGet(this, _Page_client, "f").send('Emulation.setDeviceMetricsOverride', {
+            await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setDeviceMetricsOverride', {
                 mobile: isMobile,
                 width,
                 height,
@@ -58716,20 +59390,25 @@ async function _Page_setTransparentBackgroundColor() {
     }
     const shouldSetDefaultBackground = options.omitBackground && (format === 'png' || format === 'webp');
     if (shouldSetDefaultBackground) {
-        await __classPrivateFieldGet(this, _Page_instances, "m", _Page_setTransparentBackgroundColor).call(this);
+        await __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_setTransparentBackgroundColor).call(this);
     }
-    const result = await __classPrivateFieldGet(this, _Page_client, "f").send('Page.captureScreenshot', {
+    const result = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.captureScreenshot', {
         format,
         quality: options.quality,
-        clip,
+        clip: clip
+            ? {
+                ...clip,
+                scale: clip.scale === undefined ? 1 : clip.scale,
+            }
+            : undefined,
         captureBeyondViewport,
         fromSurface,
     });
     if (shouldSetDefaultBackground) {
-        await __classPrivateFieldGet(this, _Page_instances, "m", _Page_resetDefaultBackgroundColor).call(this);
+        await __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_resetDefaultBackgroundColor).call(this);
     }
-    if (options.fullPage && __classPrivateFieldGet(this, _Page_viewport, "f")) {
-        await this.setViewport(__classPrivateFieldGet(this, _Page_viewport, "f"));
+    if (options.fullPage && __classPrivateFieldGet(this, _CDPPage_viewport, "f")) {
+        await this.setViewport(__classPrivateFieldGet(this, _CDPPage_viewport, "f"));
     }
     const buffer = options.encoding === 'base64'
         ? result.data
@@ -58752,7 +59431,7 @@ async function _Page_setTransparentBackgroundColor() {
         const y = Math.round(clip.y);
         const width = Math.round(clip.width + clip.x - x);
         const height = Math.round(clip.height + clip.y - y);
-        return { x, y, width, height, scale: 1 };
+        return { x, y, width, height, scale: clip.scale };
     }
 };
 const supportedMetrics = new Set([
@@ -58811,6 +59490,72 @@ function convertPrintParameterToInches(parameter) {
 
 /***/ }),
 
+/***/ 3768:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2021 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.networkConditions = exports.PredefinedNetworkConditions = void 0;
+/**
+ * A list of network conditions to be used with
+ * {@link Page.emulateNetworkConditions}.
+ *
+ * @example
+ *
+ * ```ts
+ * import {PredefinedNetworkConditions} from 'puppeteer';
+ * const slow3G = PredefinedNetworkConditions['Slow 3G'];
+ *
+ * (async () => {
+ *   const browser = await puppeteer.launch();
+ *   const page = await browser.newPage();
+ *   await page.emulateNetworkConditions(slow3G);
+ *   await page.goto('https://www.google.com');
+ *   // other actions...
+ *   await browser.close();
+ * })();
+ * ```
+ *
+ * @public
+ */
+exports.PredefinedNetworkConditions = Object.freeze({
+    'Slow 3G': {
+        download: ((500 * 1000) / 8) * 0.8,
+        upload: ((500 * 1000) / 8) * 0.8,
+        latency: 400 * 5,
+    },
+    'Fast 3G': {
+        download: ((1.6 * 1000 * 1000) / 8) * 0.9,
+        upload: ((750 * 1000) / 8) * 0.9,
+        latency: 150 * 3.75,
+    },
+});
+/**
+ * @deprecated Import {@link PredefinedNetworkConditions}.
+ *
+ * @public
+ */
+exports.networkConditions = exports.PredefinedNetworkConditions;
+//# sourceMappingURL=PredefinedNetworkConditions.js.map
+
+/***/ }),
+
 /***/ 8435:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -58819,9 +59564,6 @@ function convertPrintParameterToInches(parameter) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Puppeteer = void 0;
 const BrowserConnector_js_1 = __nccwpck_require__(1365);
-const DeviceDescriptors_js_1 = __nccwpck_require__(3902);
-const Errors_js_1 = __nccwpck_require__(6315);
-const NetworkConditions_js_1 = __nccwpck_require__(6414);
 const QueryHandler_js_1 = __nccwpck_require__(3200);
 /**
  * The main Puppeteer class.
@@ -58837,9 +59579,55 @@ class Puppeteer {
      * @internal
      */
     constructor(settings) {
+        /**
+         * @internal
+         */
         this._changedProduct = false;
         this._isPuppeteerCore = settings.isPuppeteerCore;
         this.connect = this.connect.bind(this);
+    }
+    /**
+     * Registers a {@link CustomQueryHandler | custom query handler}.
+     *
+     * @remarks
+     * After registration, the handler can be used everywhere where a selector is
+     * expected by prepending the selection string with `<name>/`. The name is only
+     * allowed to consist of lower- and upper case latin letters.
+     *
+     * @example
+     *
+     * ```
+     * puppeteer.registerCustomQueryHandler('text', { … });
+     * const aHandle = await page.$('text/…');
+     * ```
+     *
+     * @param name - The name that the custom query handler will be registered
+     * under.
+     * @param queryHandler - The {@link CustomQueryHandler | custom query handler}
+     * to register.
+     *
+     * @public
+     */
+    static registerCustomQueryHandler(name, queryHandler) {
+        return (0, QueryHandler_js_1.registerCustomQueryHandler)(name, queryHandler);
+    }
+    /**
+     * Unregisters a custom query handler for a given name.
+     */
+    static unregisterCustomQueryHandler(name) {
+        return (0, QueryHandler_js_1.unregisterCustomQueryHandler)(name);
+    }
+    /**
+     * Gets the names of all custom query handlers.
+     */
+    static customQueryHandlerNames() {
+        return (0, QueryHandler_js_1.customQueryHandlerNames)();
+    }
+    /**
+     * Unregisters all custom query handlers.
+     */
+    static clearCustomQueryHandlers() {
+        return (0, QueryHandler_js_1.clearCustomQueryHandlers)();
     }
     /**
      * This method attaches Puppeteer to an existing browser instance.
@@ -58850,84 +59638,7 @@ class Puppeteer {
      * @returns Promise which resolves to browser instance.
      */
     connect(options) {
-        return (0, BrowserConnector_js_1._connectToBrowser)(options);
-    }
-    /**
-     * @deprecated Import directly puppeteer.
-     * @example
-     *
-     * ```ts
-     * import {devices} from 'puppeteer';
-     * ```
-     */
-    get devices() {
-        return DeviceDescriptors_js_1.devices;
-    }
-    /**
-     * @deprecated Import directly puppeteer.
-     * @example
-     *
-     * ```ts
-     * import {errors} from 'puppeteer';
-     * ```
-     */
-    get errors() {
-        return Errors_js_1.errors;
-    }
-    /**
-     * @deprecated Import directly puppeteer.
-     * @example
-     *
-     * ```ts
-     * import {networkConditions} from 'puppeteer';
-     * ```
-     */
-    get networkConditions() {
-        return NetworkConditions_js_1.networkConditions;
-    }
-    /**
-     * @deprecated Import directly puppeteer.
-     * @example
-     *
-     * ```ts
-     * import {registerCustomQueryHandler} from 'puppeteer';
-     * ```
-     */
-    registerCustomQueryHandler(name, queryHandler) {
-        return (0, QueryHandler_js_1.registerCustomQueryHandler)(name, queryHandler);
-    }
-    /**
-     * @deprecated Import directly puppeteer.
-     * @example
-     *
-     * ```ts
-     * import {unregisterCustomQueryHandler} from 'puppeteer';
-     * ```
-     */
-    unregisterCustomQueryHandler(name) {
-        return (0, QueryHandler_js_1.unregisterCustomQueryHandler)(name);
-    }
-    /**
-     * @deprecated Import directly puppeteer.
-     * @example
-     *
-     * ```ts
-     * import {customQueryHandlerNames} from 'puppeteer';
-     * ```
-     */
-    customQueryHandlerNames() {
-        return (0, QueryHandler_js_1.customQueryHandlerNames)();
-    }
-    /**
-     * @deprecated Import directly puppeteer.
-     * @example
-     *
-     * ```ts
-     * import {clearCustomQueryHandlers} from 'puppeteer';
-     * ```
-     */
-    clearCustomQueryHandlers() {
-        return (0, QueryHandler_js_1.clearCustomQueryHandlers)();
+        return (0, BrowserConnector_js_1._connectToCDPBrowser)(options);
     }
 }
 exports.Puppeteer = Puppeteer;
@@ -58958,12 +59669,15 @@ exports.Puppeteer = Puppeteer;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getQueryHandlerAndSelector = exports.clearCustomQueryHandlers = exports.customQueryHandlerNames = exports.unregisterCustomQueryHandler = exports.registerCustomQueryHandler = void 0;
 const AriaQueryHandler_js_1 = __nccwpck_require__(3082);
-function internalizeCustomQueryHandler(handler) {
+const ElementHandle_js_1 = __nccwpck_require__(865);
+const Frame_js_1 = __nccwpck_require__(1106);
+const IsolatedWorld_js_1 = __nccwpck_require__(5651);
+function createPuppeteerQueryHandler(handler) {
     const internalHandler = {};
     if (handler.queryOne) {
         const queryOne = handler.queryOne;
         internalHandler.queryOne = async (element, selector) => {
-            const jsHandle = await element.evaluateHandle(queryOne, selector);
+            const jsHandle = await element.evaluateHandle(queryOne, selector, await element.executionContext()._world.puppeteerUtil);
             const elementHandle = jsHandle.asElement();
             if (elementHandle) {
                 return elementHandle;
@@ -58971,14 +59685,34 @@ function internalizeCustomQueryHandler(handler) {
             await jsHandle.dispose();
             return null;
         };
-        internalHandler.waitFor = (domWorld, selector, options) => {
-            return domWorld._waitForSelectorInPage(queryOne, selector, options);
+        internalHandler.waitFor = async (elementOrFrame, selector, options) => {
+            let frame;
+            let element;
+            if (elementOrFrame instanceof Frame_js_1.Frame) {
+                frame = elementOrFrame;
+            }
+            else {
+                frame = elementOrFrame.frame;
+                element = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].adoptHandle(elementOrFrame);
+            }
+            const result = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD]._waitForSelectorInPage(queryOne, element, selector, options);
+            if (element) {
+                await element.dispose();
+            }
+            if (!result) {
+                return null;
+            }
+            if (!(result instanceof ElementHandle_js_1.ElementHandle)) {
+                await result.dispose();
+                return null;
+            }
+            return frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(result);
         };
     }
     if (handler.queryAll) {
         const queryAll = handler.queryAll;
         internalHandler.queryAll = async (element, selector) => {
-            const jsHandle = await element.evaluateHandle(queryAll, selector);
+            const jsHandle = await element.evaluateHandle(queryAll, selector, await element.executionContext()._world.puppeteerUtil);
             const properties = await jsHandle.getProperties();
             await jsHandle.dispose();
             const result = [];
@@ -58990,17 +59724,10 @@ function internalizeCustomQueryHandler(handler) {
             }
             return result;
         };
-        internalHandler.queryAllArray = async (element, selector) => {
-            const resultHandle = (await element.evaluateHandle(queryAll, selector));
-            const arrayHandle = await resultHandle.evaluateHandle(res => {
-                return Array.from(res);
-            });
-            return arrayHandle;
-        };
     }
     return internalHandler;
 }
-const defaultHandler = internalizeCustomQueryHandler({
+const defaultHandler = createPuppeteerQueryHandler({
     queryOne: (element, selector) => {
         if (!('querySelector' in element)) {
             throw new Error(`Could not invoke \`querySelector\` on node of type ${element.nodeName}.`);
@@ -59016,96 +59743,40 @@ const defaultHandler = internalizeCustomQueryHandler({
         ];
     },
 });
-const pierceHandler = internalizeCustomQueryHandler({
-    queryOne: (element, selector) => {
-        let found = null;
-        const search = (root) => {
-            const iter = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-            do {
-                const currentNode = iter.currentNode;
-                if (currentNode.shadowRoot) {
-                    search(currentNode.shadowRoot);
-                }
-                if (currentNode instanceof ShadowRoot) {
-                    continue;
-                }
-                if (currentNode !== root && !found && currentNode.matches(selector)) {
-                    found = currentNode;
-                }
-            } while (!found && iter.nextNode());
-        };
-        if (element instanceof Document) {
-            element = element.documentElement;
-        }
-        search(element);
-        return found;
+const pierceHandler = createPuppeteerQueryHandler({
+    queryOne: (element, selector, { pierceQuerySelector }) => {
+        return pierceQuerySelector(element, selector);
     },
-    queryAll: (element, selector) => {
-        const result = [];
-        const collect = (root) => {
-            const iter = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-            do {
-                const currentNode = iter.currentNode;
-                if (currentNode.shadowRoot) {
-                    collect(currentNode.shadowRoot);
-                }
-                if (currentNode instanceof ShadowRoot) {
-                    continue;
-                }
-                if (currentNode !== root && currentNode.matches(selector)) {
-                    result.push(currentNode);
-                }
-            } while (iter.nextNode());
-        };
-        if (element instanceof Document) {
-            element = element.documentElement;
-        }
-        collect(element);
-        return result;
+    queryAll: (element, selector, { pierceQuerySelectorAll }) => {
+        return pierceQuerySelectorAll(element, selector);
     },
 });
-const xpathHandler = internalizeCustomQueryHandler({
-    queryOne: (element, selector) => {
-        const doc = element.ownerDocument || document;
-        const result = doc.evaluate(selector, element, null, XPathResult.FIRST_ORDERED_NODE_TYPE);
-        return result.singleNodeValue;
+const xpathHandler = createPuppeteerQueryHandler({
+    queryOne: (element, selector, { xpathQuerySelector }) => {
+        return xpathQuerySelector(element, selector);
     },
-    queryAll: (element, selector) => {
-        const doc = element.ownerDocument || document;
-        const iterator = doc.evaluate(selector, element, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE);
-        const array = [];
-        let item;
-        while ((item = iterator.iterateNext())) {
-            array.push(item);
-        }
-        return array;
+    queryAll: (element, selector, { xpathQuerySelectorAll }) => {
+        return xpathQuerySelectorAll(element, selector);
+    },
+});
+const textQueryHandler = createPuppeteerQueryHandler({
+    queryOne: (element, selector, { textQuerySelector }) => {
+        return textQuerySelector(element, selector);
+    },
+    queryAll: (element, selector, { textQuerySelectorAll }) => {
+        return textQuerySelectorAll(element, selector);
     },
 });
 const INTERNAL_QUERY_HANDLERS = new Map([
     ['aria', { handler: AriaQueryHandler_js_1.ariaHandler }],
     ['pierce', { handler: pierceHandler }],
     ['xpath', { handler: xpathHandler }],
+    ['text', { handler: textQueryHandler }],
 ]);
 const QUERY_HANDLERS = new Map();
 /**
- * Registers a {@link CustomQueryHandler | custom query handler}.
- *
- * @remarks
- * After registration, the handler can be used everywhere where a selector is
- * expected by prepending the selection string with `<name>/`. The name is only
- * allowed to consist of lower- and upper case latin letters.
- *
- * @example
- *
- * ```
- * puppeteer.registerCustomQueryHandler('text', { … });
- * const aHandle = await page.$('text/…');
- * ```
- *
- * @param name - The name that the custom query handler will be registered
- * under.
- * @param queryHandler - The {@link CustomQueryHandler | custom query handler}
- * to register.
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.registerCustomQueryHandler}
  *
  * @public
  */
@@ -59120,11 +59791,12 @@ function registerCustomQueryHandler(name, handler) {
     if (!isValidName) {
         throw new Error(`Custom query handler names may only contain [a-zA-Z]`);
     }
-    QUERY_HANDLERS.set(name, { handler: internalizeCustomQueryHandler(handler) });
+    QUERY_HANDLERS.set(name, { handler: createPuppeteerQueryHandler(handler) });
 }
 exports.registerCustomQueryHandler = registerCustomQueryHandler;
 /**
- * @param name - The name of the query handler to unregistered.
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.unregisterCustomQueryHandler}
  *
  * @public
  */
@@ -59133,7 +59805,8 @@ function unregisterCustomQueryHandler(name) {
 }
 exports.unregisterCustomQueryHandler = unregisterCustomQueryHandler;
 /**
- * @returns a list with the names of all registered custom query handlers.
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.customQueryHandlerNames}
  *
  * @public
  */
@@ -59142,7 +59815,8 @@ function customQueryHandlerNames() {
 }
 exports.customQueryHandlerNames = customQueryHandlerNames;
 /**
- * Clears all registered handlers.
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.clearCustomQueryHandlers}
  *
  * @public
  */
@@ -59313,8 +59987,8 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _Target_browserContext, _Target_session, _Target_targetInfo, _Target_sessionFactory, _Target_ignoreHTTPSErrors, _Target_defaultViewport, _Target_pagePromise, _Target_workerPromise, _Target_screenshotTaskQueue, _Target_targetManager;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Target = void 0;
-const Page_js_1 = __nccwpck_require__(8763);
 const WebWorker_js_1 = __nccwpck_require__(4878);
+const Page_js_1 = __nccwpck_require__(8763);
 /**
  * @public
  */
@@ -59405,7 +60079,7 @@ class Target {
                 ? Promise.resolve(__classPrivateFieldGet(this, _Target_session, "f"))
                 : __classPrivateFieldGet(this, _Target_sessionFactory, "f").call(this, true)).then(client => {
                 var _a;
-                return Page_js_1.Page._create(client, this, __classPrivateFieldGet(this, _Target_ignoreHTTPSErrors, "f"), (_a = __classPrivateFieldGet(this, _Target_defaultViewport, "f")) !== null && _a !== void 0 ? _a : null, __classPrivateFieldGet(this, _Target_screenshotTaskQueue, "f"));
+                return Page_js_1.CDPPage._create(client, this, __classPrivateFieldGet(this, _Target_ignoreHTTPSErrors, "f"), (_a = __classPrivateFieldGet(this, _Target_defaultViewport, "f")) !== null && _a !== void 0 ? _a : null, __classPrivateFieldGet(this, _Target_screenshotTaskQueue, "f"));
             }), "f");
         }
         return (_a = (await __classPrivateFieldGet(this, _Target_pagePromise, "f"))) !== null && _a !== void 0 ? _a : null;
@@ -60183,6 +60857,217 @@ exports._keyDefinitions = {
 
 /***/ }),
 
+/***/ 806:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _WaitTask_world, _WaitTask_bindings, _WaitTask_polling, _WaitTask_root, _WaitTask_fn, _WaitTask_args, _WaitTask_timeout, _WaitTask_result, _WaitTask_poller, _TaskManager_tasks;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TaskManager = exports.WaitTask = void 0;
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
+const Errors_js_1 = __nccwpck_require__(6315);
+/**
+ * @internal
+ */
+class WaitTask {
+    constructor(world, options, fn, ...args) {
+        var _a;
+        _WaitTask_world.set(this, void 0);
+        _WaitTask_bindings.set(this, void 0);
+        _WaitTask_polling.set(this, void 0);
+        _WaitTask_root.set(this, void 0);
+        _WaitTask_fn.set(this, void 0);
+        _WaitTask_args.set(this, void 0);
+        _WaitTask_timeout.set(this, void 0);
+        _WaitTask_result.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
+        _WaitTask_poller.set(this, void 0);
+        __classPrivateFieldSet(this, _WaitTask_world, world, "f");
+        __classPrivateFieldSet(this, _WaitTask_bindings, (_a = options.bindings) !== null && _a !== void 0 ? _a : new Map(), "f");
+        __classPrivateFieldSet(this, _WaitTask_polling, options.polling, "f");
+        __classPrivateFieldSet(this, _WaitTask_root, options.root, "f");
+        switch (typeof fn) {
+            case 'string':
+                __classPrivateFieldSet(this, _WaitTask_fn, `() => {return (${fn});}`, "f");
+                break;
+            default:
+                __classPrivateFieldSet(this, _WaitTask_fn, fn.toString(), "f");
+                break;
+        }
+        __classPrivateFieldSet(this, _WaitTask_args, args, "f");
+        __classPrivateFieldGet(this, _WaitTask_world, "f").taskManager.add(this);
+        if (options.timeout) {
+            __classPrivateFieldSet(this, _WaitTask_timeout, setTimeout(() => {
+                this.terminate(new Errors_js_1.TimeoutError(`Waiting failed: ${options.timeout}ms exceeded`));
+            }, options.timeout), "f");
+        }
+        if (__classPrivateFieldGet(this, _WaitTask_bindings, "f").size !== 0) {
+            for (const [name, fn] of __classPrivateFieldGet(this, _WaitTask_bindings, "f")) {
+                __classPrivateFieldGet(this, _WaitTask_world, "f")._boundFunctions.set(name, fn);
+            }
+        }
+        this.rerun();
+    }
+    get result() {
+        return __classPrivateFieldGet(this, _WaitTask_result, "f");
+    }
+    async rerun() {
+        try {
+            if (__classPrivateFieldGet(this, _WaitTask_bindings, "f").size !== 0) {
+                const context = await __classPrivateFieldGet(this, _WaitTask_world, "f").executionContext();
+                await Promise.all([...__classPrivateFieldGet(this, _WaitTask_bindings, "f")].map(async ([name]) => {
+                    return await __classPrivateFieldGet(this, _WaitTask_world, "f")._addBindingToContext(context, name);
+                }));
+            }
+            switch (__classPrivateFieldGet(this, _WaitTask_polling, "f")) {
+                case 'raf':
+                    __classPrivateFieldSet(this, _WaitTask_poller, await __classPrivateFieldGet(this, _WaitTask_world, "f").evaluateHandle(({ RAFPoller, createFunction }, fn, ...args) => {
+                        const fun = createFunction(fn);
+                        return new RAFPoller(() => {
+                            return fun(...args);
+                        });
+                    }, await __classPrivateFieldGet(this, _WaitTask_world, "f").puppeteerUtil, __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
+                    break;
+                case 'mutation':
+                    __classPrivateFieldSet(this, _WaitTask_poller, await __classPrivateFieldGet(this, _WaitTask_world, "f").evaluateHandle(({ MutationPoller, createFunction }, root, fn, ...args) => {
+                        const fun = createFunction(fn);
+                        return new MutationPoller(() => {
+                            return fun(...args);
+                        }, root || document);
+                    }, await __classPrivateFieldGet(this, _WaitTask_world, "f").puppeteerUtil, __classPrivateFieldGet(this, _WaitTask_root, "f"), __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
+                    break;
+                default:
+                    __classPrivateFieldSet(this, _WaitTask_poller, await __classPrivateFieldGet(this, _WaitTask_world, "f").evaluateHandle(({ IntervalPoller, createFunction }, ms, fn, ...args) => {
+                        const fun = createFunction(fn);
+                        return new IntervalPoller(() => {
+                            return fun(...args);
+                        }, ms);
+                    }, await __classPrivateFieldGet(this, _WaitTask_world, "f").puppeteerUtil, __classPrivateFieldGet(this, _WaitTask_polling, "f"), __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
+                    break;
+            }
+            await __classPrivateFieldGet(this, _WaitTask_poller, "f").evaluate(poller => {
+                poller.start();
+            });
+            const result = await __classPrivateFieldGet(this, _WaitTask_poller, "f").evaluateHandle(poller => {
+                return poller.result();
+            });
+            __classPrivateFieldGet(this, _WaitTask_result, "f").resolve(result);
+            await this.terminate();
+        }
+        catch (error) {
+            const badError = this.getBadError(error);
+            if (badError) {
+                await this.terminate(badError);
+            }
+        }
+    }
+    async terminate(error) {
+        __classPrivateFieldGet(this, _WaitTask_world, "f").taskManager.delete(this);
+        if (__classPrivateFieldGet(this, _WaitTask_timeout, "f")) {
+            clearTimeout(__classPrivateFieldGet(this, _WaitTask_timeout, "f"));
+        }
+        if (error && !__classPrivateFieldGet(this, _WaitTask_result, "f").finished()) {
+            __classPrivateFieldGet(this, _WaitTask_result, "f").reject(error);
+        }
+        if (__classPrivateFieldGet(this, _WaitTask_poller, "f")) {
+            try {
+                await __classPrivateFieldGet(this, _WaitTask_poller, "f").evaluateHandle(async (poller) => {
+                    await poller.stop();
+                });
+                if (__classPrivateFieldGet(this, _WaitTask_poller, "f")) {
+                    await __classPrivateFieldGet(this, _WaitTask_poller, "f").dispose();
+                    __classPrivateFieldSet(this, _WaitTask_poller, undefined, "f");
+                }
+            }
+            catch {
+                // Ignore errors since they most likely come from low-level cleanup.
+            }
+        }
+    }
+    /**
+     * Not all errors lead to termination. They usually imply we need to rerun the task.
+     */
+    getBadError(error) {
+        if (error instanceof Error) {
+            // When frame is detached the task should have been terminated by the IsolatedWorld.
+            // This can fail if we were adding this task while the frame was detached,
+            // so we terminate here instead.
+            if (error.message.includes('Execution context is not available in detached frame')) {
+                return new Error('Waiting failed: Frame detached');
+            }
+            // When the page is navigated, the promise is rejected.
+            // We will try again in the new execution context.
+            if (error.message.includes('Execution context was destroyed')) {
+                return;
+            }
+            // We could have tried to evaluate in a context which was already
+            // destroyed.
+            if (error.message.includes('Cannot find context with specified id')) {
+                return;
+            }
+        }
+        return error;
+    }
+}
+exports.WaitTask = WaitTask;
+_WaitTask_world = new WeakMap(), _WaitTask_bindings = new WeakMap(), _WaitTask_polling = new WeakMap(), _WaitTask_root = new WeakMap(), _WaitTask_fn = new WeakMap(), _WaitTask_args = new WeakMap(), _WaitTask_timeout = new WeakMap(), _WaitTask_result = new WeakMap(), _WaitTask_poller = new WeakMap();
+/**
+ * @internal
+ */
+class TaskManager {
+    constructor() {
+        _TaskManager_tasks.set(this, new Set());
+    }
+    add(task) {
+        __classPrivateFieldGet(this, _TaskManager_tasks, "f").add(task);
+    }
+    delete(task) {
+        __classPrivateFieldGet(this, _TaskManager_tasks, "f").delete(task);
+    }
+    terminateAll(error) {
+        for (const task of __classPrivateFieldGet(this, _TaskManager_tasks, "f")) {
+            task.terminate(error);
+        }
+        __classPrivateFieldGet(this, _TaskManager_tasks, "f").clear();
+    }
+    async rerunAll() {
+        await Promise.all([...__classPrivateFieldGet(this, _TaskManager_tasks, "f")].map(task => {
+            return task.rerun();
+        }));
+    }
+}
+exports.TaskManager = TaskManager;
+_TaskManager_tasks = new WeakMap();
+//# sourceMappingURL=WaitTask.js.map
+
+/***/ }),
+
 /***/ 4878:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -60199,13 +61084,14 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _WebWorker_client, _WebWorker_url, _WebWorker_executionContextPromise, _WebWorker_executionContextCallback;
+var _WebWorker_executionContext, _WebWorker_client, _WebWorker_url;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.WebWorker = void 0;
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 const ExecutionContext_js_1 = __nccwpck_require__(8272);
 const JSHandle_js_1 = __nccwpck_require__(2045);
 const util_js_1 = __nccwpck_require__(8274);
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
 /**
  * This class represents a
  * {@link https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API | WebWorker}.
@@ -60238,45 +61124,38 @@ class WebWorker extends EventEmitter_js_1.EventEmitter {
      */
     constructor(client, url, consoleAPICalled, exceptionThrown) {
         super();
+        _WebWorker_executionContext.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _WebWorker_client.set(this, void 0);
         _WebWorker_url.set(this, void 0);
-        _WebWorker_executionContextPromise.set(this, void 0);
-        _WebWorker_executionContextCallback.set(this, void 0);
         __classPrivateFieldSet(this, _WebWorker_client, client, "f");
         __classPrivateFieldSet(this, _WebWorker_url, url, "f");
-        __classPrivateFieldSet(this, _WebWorker_executionContextPromise, new Promise(x => {
-            return (__classPrivateFieldSet(this, _WebWorker_executionContextCallback, x, "f"));
-        }), "f");
-        let jsHandleFactory;
         __classPrivateFieldGet(this, _WebWorker_client, "f").once('Runtime.executionContextCreated', async (event) => {
-            // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-            jsHandleFactory = remoteObject => {
-                return new JSHandle_js_1.JSHandle(executionContext, client, remoteObject);
-            };
-            const executionContext = new ExecutionContext_js_1.ExecutionContext(client, event.context);
-            __classPrivateFieldGet(this, _WebWorker_executionContextCallback, "f").call(this, executionContext);
+            const context = new ExecutionContext_js_1.ExecutionContext(client, event.context);
+            __classPrivateFieldGet(this, _WebWorker_executionContext, "f").resolve(context);
         });
-        // This might fail if the target is closed before we receive all execution contexts.
-        __classPrivateFieldGet(this, _WebWorker_client, "f").send('Runtime.enable').catch(util_js_1.debugError);
-        __classPrivateFieldGet(this, _WebWorker_client, "f").on('Runtime.consoleAPICalled', event => {
-            return consoleAPICalled(event.type, event.args.map(jsHandleFactory), event.stackTrace);
+        __classPrivateFieldGet(this, _WebWorker_client, "f").on('Runtime.consoleAPICalled', async (event) => {
+            const context = await __classPrivateFieldGet(this, _WebWorker_executionContext, "f");
+            return consoleAPICalled(event.type, event.args.map((object) => {
+                return new JSHandle_js_1.JSHandle(context, object);
+            }), event.stackTrace);
         });
         __classPrivateFieldGet(this, _WebWorker_client, "f").on('Runtime.exceptionThrown', exception => {
             return exceptionThrown(exception.exceptionDetails);
         });
+        // This might fail if the target is closed before we receive all execution contexts.
+        __classPrivateFieldGet(this, _WebWorker_client, "f").send('Runtime.enable').catch(util_js_1.debugError);
+    }
+    /**
+     * @internal
+     */
+    async executionContext() {
+        return __classPrivateFieldGet(this, _WebWorker_executionContext, "f");
     }
     /**
      * @returns The URL of this web worker.
      */
     url() {
         return __classPrivateFieldGet(this, _WebWorker_url, "f");
-    }
-    /**
-     * Returns the ExecutionContext the WebWorker runs in
-     * @returns The ExecutionContext the web worker runs in.
-     */
-    async executionContext() {
-        return __classPrivateFieldGet(this, _WebWorker_executionContextPromise, "f");
     }
     /**
      * If the function passed to the `worker.evaluate` returns a Promise, then
@@ -60293,7 +61172,8 @@ class WebWorker extends EventEmitter_js_1.EventEmitter {
      * @returns Promise which resolves to the return value of `pageFunction`.
      */
     async evaluate(pageFunction, ...args) {
-        return (await __classPrivateFieldGet(this, _WebWorker_executionContextPromise, "f")).evaluate(pageFunction, ...args);
+        const context = await __classPrivateFieldGet(this, _WebWorker_executionContext, "f");
+        return context.evaluate(pageFunction, ...args);
     }
     /**
      * The only difference between `worker.evaluate` and `worker.evaluateHandle`
@@ -60308,12 +61188,362 @@ class WebWorker extends EventEmitter_js_1.EventEmitter {
      * @returns Promise which resolves to the return value of `pageFunction`.
      */
     async evaluateHandle(pageFunction, ...args) {
-        return (await __classPrivateFieldGet(this, _WebWorker_executionContextPromise, "f")).evaluateHandle(pageFunction, ...args);
+        const context = await __classPrivateFieldGet(this, _WebWorker_executionContext, "f");
+        return context.evaluateHandle(pageFunction, ...args);
     }
 }
 exports.WebWorker = WebWorker;
-_WebWorker_client = new WeakMap(), _WebWorker_url = new WeakMap(), _WebWorker_executionContextPromise = new WeakMap(), _WebWorker_executionContextCallback = new WeakMap();
+_WebWorker_executionContext = new WeakMap(), _WebWorker_client = new WeakMap(), _WebWorker_url = new WeakMap();
 //# sourceMappingURL=WebWorker.js.map
+
+/***/ }),
+
+/***/ 6070:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Browser_process, _Browser_closeCallback, _Browser_connection;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Browser = void 0;
+const Browser_js_1 = __nccwpck_require__(3469);
+const BrowserContext_js_1 = __nccwpck_require__(5135);
+/**
+ * @internal
+ */
+class Browser extends Browser_js_1.Browser {
+    /**
+     * @internal
+     */
+    constructor(opts) {
+        super();
+        _Browser_process.set(this, void 0);
+        _Browser_closeCallback.set(this, void 0);
+        _Browser_connection.set(this, void 0);
+        __classPrivateFieldSet(this, _Browser_process, opts.process, "f");
+        __classPrivateFieldSet(this, _Browser_closeCallback, opts.closeCallback, "f");
+        __classPrivateFieldSet(this, _Browser_connection, opts.connection, "f");
+    }
+    /**
+     * @internal
+     */
+    static async create(opts) {
+        // TODO: await until the connection is established.
+        (await opts.connection.send('session.new', {}));
+        return new Browser(opts);
+    }
+    async close() {
+        var _a;
+        await ((_a = __classPrivateFieldGet(this, _Browser_closeCallback, "f")) === null || _a === void 0 ? void 0 : _a.call(null));
+        __classPrivateFieldGet(this, _Browser_connection, "f").dispose();
+    }
+    isConnected() {
+        return !__classPrivateFieldGet(this, _Browser_connection, "f").closed;
+    }
+    process() {
+        var _a;
+        return (_a = __classPrivateFieldGet(this, _Browser_process, "f")) !== null && _a !== void 0 ? _a : null;
+    }
+    async createIncognitoBrowserContext(_options) {
+        return new BrowserContext_js_1.BrowserContext(__classPrivateFieldGet(this, _Browser_connection, "f"));
+    }
+}
+exports.Browser = Browser;
+_Browser_process = new WeakMap(), _Browser_closeCallback = new WeakMap(), _Browser_connection = new WeakMap();
+//# sourceMappingURL=Browser.js.map
+
+/***/ }),
+
+/***/ 5135:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _BrowserContext_connection;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BrowserContext = void 0;
+const Browser_js_1 = __nccwpck_require__(3469);
+const Page_js_1 = __nccwpck_require__(2951);
+/**
+ * @internal
+ */
+class BrowserContext extends Browser_js_1.BrowserContext {
+    constructor(connection) {
+        super();
+        _BrowserContext_connection.set(this, void 0);
+        __classPrivateFieldSet(this, _BrowserContext_connection, connection, "f");
+    }
+    async newPage() {
+        const result = (await __classPrivateFieldGet(this, _BrowserContext_connection, "f").send('browsingContext.create', {
+            type: 'tab',
+        }));
+        return new Page_js_1.Page(__classPrivateFieldGet(this, _BrowserContext_connection, "f"), result.context);
+    }
+    async close() { }
+}
+exports.BrowserContext = BrowserContext;
+_BrowserContext_connection = new WeakMap();
+//# sourceMappingURL=BrowserContext.js.map
+
+/***/ }),
+
+/***/ 5916:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2017 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Connection_instances, _Connection_transport, _Connection_delay, _Connection_lastId, _Connection_closed, _Connection_callbacks, _Connection_onClose;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Connection = void 0;
+const Debug_js_1 = __nccwpck_require__(4090);
+const debugProtocolSend = (0, Debug_js_1.debug)('puppeteer:webDriverBiDi:SEND ►');
+const debugProtocolReceive = (0, Debug_js_1.debug)('puppeteer:webDriverBiDi:RECV ◀');
+const EventEmitter_js_1 = __nccwpck_require__(7692);
+const Errors_js_1 = __nccwpck_require__(6315);
+/**
+ * @internal
+ */
+class Connection extends EventEmitter_js_1.EventEmitter {
+    constructor(transport, delay = 0) {
+        super();
+        _Connection_instances.add(this);
+        _Connection_transport.set(this, void 0);
+        _Connection_delay.set(this, void 0);
+        _Connection_lastId.set(this, 0);
+        _Connection_closed.set(this, false);
+        _Connection_callbacks.set(this, new Map());
+        __classPrivateFieldSet(this, _Connection_delay, delay, "f");
+        __classPrivateFieldSet(this, _Connection_transport, transport, "f");
+        __classPrivateFieldGet(this, _Connection_transport, "f").onmessage = this.onMessage.bind(this);
+        __classPrivateFieldGet(this, _Connection_transport, "f").onclose = __classPrivateFieldGet(this, _Connection_instances, "m", _Connection_onClose).bind(this);
+    }
+    get closed() {
+        return __classPrivateFieldGet(this, _Connection_closed, "f");
+    }
+    send(method, params) {
+        var _a;
+        const id = __classPrivateFieldSet(this, _Connection_lastId, (_a = __classPrivateFieldGet(this, _Connection_lastId, "f"), ++_a), "f");
+        const stringifiedMessage = JSON.stringify({
+            id,
+            method,
+            params,
+        });
+        debugProtocolSend(stringifiedMessage);
+        __classPrivateFieldGet(this, _Connection_transport, "f").send(stringifiedMessage);
+        return new Promise((resolve, reject) => {
+            __classPrivateFieldGet(this, _Connection_callbacks, "f").set(id, {
+                resolve,
+                reject,
+                error: new Errors_js_1.ProtocolError(),
+                method,
+            });
+        });
+    }
+    /**
+     * @internal
+     */
+    async onMessage(message) {
+        if (__classPrivateFieldGet(this, _Connection_delay, "f")) {
+            await new Promise(f => {
+                return setTimeout(f, __classPrivateFieldGet(this, _Connection_delay, "f"));
+            });
+        }
+        debugProtocolReceive(message);
+        const object = JSON.parse(message);
+        if ('id' in object) {
+            const callback = __classPrivateFieldGet(this, _Connection_callbacks, "f").get(object.id);
+            // Callbacks could be all rejected if someone has called `.dispose()`.
+            if (callback) {
+                __classPrivateFieldGet(this, _Connection_callbacks, "f").delete(object.id);
+                if ('error' in object) {
+                    callback.reject(createProtocolError(callback.error, callback.method, object));
+                }
+                else {
+                    callback.resolve(object.result);
+                }
+            }
+        }
+        else {
+            this.emit(object.method, object.params);
+        }
+    }
+    dispose() {
+        __classPrivateFieldGet(this, _Connection_instances, "m", _Connection_onClose).call(this);
+        __classPrivateFieldGet(this, _Connection_transport, "f").close();
+    }
+}
+exports.Connection = Connection;
+_Connection_transport = new WeakMap(), _Connection_delay = new WeakMap(), _Connection_lastId = new WeakMap(), _Connection_closed = new WeakMap(), _Connection_callbacks = new WeakMap(), _Connection_instances = new WeakSet(), _Connection_onClose = function _Connection_onClose() {
+    if (__classPrivateFieldGet(this, _Connection_closed, "f")) {
+        return;
+    }
+    __classPrivateFieldSet(this, _Connection_closed, true, "f");
+    __classPrivateFieldGet(this, _Connection_transport, "f").onmessage = undefined;
+    __classPrivateFieldGet(this, _Connection_transport, "f").onclose = undefined;
+    for (const callback of __classPrivateFieldGet(this, _Connection_callbacks, "f").values()) {
+        callback.reject(rewriteError(callback.error, `Protocol error (${callback.method}): Connection closed.`));
+    }
+    __classPrivateFieldGet(this, _Connection_callbacks, "f").clear();
+};
+function rewriteError(error, message, originalMessage) {
+    error.message = message;
+    error.originalMessage = originalMessage !== null && originalMessage !== void 0 ? originalMessage : error.originalMessage;
+    return error;
+}
+function createProtocolError(error, method, object) {
+    let message = `Protocol error (${method}): ${object.error} ${object.message}`;
+    if (object.stacktrace) {
+        message += ` ${object.stacktrace}`;
+    }
+    return rewriteError(error, message, object.message);
+}
+//# sourceMappingURL=Connection.js.map
+
+/***/ }),
+
+/***/ 2951:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Page_connection, _Page_contextId;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Page = void 0;
+const Page_js_1 = __nccwpck_require__(2194);
+/**
+ * @internal
+ */
+class Page extends Page_js_1.Page {
+    constructor(connection, contextId) {
+        super();
+        _Page_connection.set(this, void 0);
+        _Page_contextId.set(this, void 0);
+        __classPrivateFieldSet(this, _Page_connection, connection, "f");
+        __classPrivateFieldSet(this, _Page_contextId, contextId, "f");
+    }
+    async close() {
+        await __classPrivateFieldGet(this, _Page_connection, "f").send('browsingContext.close', {
+            context: __classPrivateFieldGet(this, _Page_contextId, "f"),
+        });
+    }
+    async evaluate(pageFunction, ..._args) {
+        // TODO: re-use evaluate logic from Execution context.
+        const str = `(${pageFunction.toString()})()`;
+        const result = (await __classPrivateFieldGet(this, _Page_connection, "f").send('script.evaluate', {
+            expression: str,
+            target: { context: __classPrivateFieldGet(this, _Page_contextId, "f") },
+            awaitPromise: true,
+        }));
+        return result.result.value;
+    }
+}
+exports.Page = Page;
+_Page_connection = new WeakMap(), _Page_contextId = new WeakMap();
+//# sourceMappingURL=Page.js.map
 
 /***/ }),
 
@@ -60419,12 +61649,12 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getReadableFromProtocolStream = exports.getReadableAsBuffer = exports.importFS = exports.waitWithTimeout = exports.makePredicateString = exports.pageBindingDeliverErrorValueString = exports.pageBindingDeliverErrorString = exports.pageBindingDeliverResultString = exports.pageBindingInitString = exports.evaluationString = exports.createJSHandle = exports.waitForEvent = exports.isNumber = exports.isString = exports.removeEventListeners = exports.addEventListener = exports.releaseObject = exports.valueFromRemoteObject = exports.getExceptionMessage = exports.debugError = void 0;
+exports.getReadableFromProtocolStream = exports.getReadableAsBuffer = exports.importFS = exports.waitWithTimeout = exports.pageBindingDeliverErrorValueString = exports.pageBindingDeliverErrorString = exports.pageBindingDeliverResultString = exports.pageBindingInitString = exports.evaluationString = exports.createJSHandle = exports.waitForEvent = exports.isNumber = exports.isString = exports.removeEventListeners = exports.addEventListener = exports.releaseObject = exports.valueFromRemoteObject = exports.getExceptionMessage = exports.debugError = void 0;
 const environment_js_1 = __nccwpck_require__(1577);
 const assert_js_1 = __nccwpck_require__(7729);
+const ErrorLike_js_1 = __nccwpck_require__(2937);
 const Debug_js_1 = __nccwpck_require__(4090);
 const ElementHandle_js_1 = __nccwpck_require__(865);
-const ErrorLike_js_1 = __nccwpck_require__(2937);
 const Errors_js_1 = __nccwpck_require__(6315);
 const JSHandle_js_1 = __nccwpck_require__(2045);
 /**
@@ -60570,12 +61800,10 @@ exports.waitForEvent = waitForEvent;
  * @internal
  */
 function createJSHandle(context, remoteObject) {
-    const frame = context.frame();
-    if (remoteObject.subtype === 'node' && frame) {
-        const frameManager = frame._frameManager;
-        return new ElementHandle_js_1.ElementHandle(context, context._client, remoteObject, frame, frameManager.page(), frameManager);
+    if (remoteObject.subtype === 'node' && context._world) {
+        return new ElementHandle_js_1.ElementHandle(context, remoteObject, context._world.frame());
     }
-    return new JSHandle_js_1.JSHandle(context, context._client, remoteObject);
+    return new JSHandle_js_1.JSHandle(context, remoteObject);
 }
 exports.createJSHandle = createJSHandle;
 /**
@@ -60599,27 +61827,26 @@ exports.evaluationString = evaluationString;
  * @internal
  */
 function pageBindingInitString(type, name) {
-    function addPageBinding(type, bindingName) {
-        /* Cast window to any here as we're about to add properties to it
-         * via win[bindingName] which TypeScript doesn't like.
-         */
-        const win = window;
-        const binding = win[bindingName];
-        win[bindingName] = (...args) => {
-            const me = window[bindingName];
-            let callbacks = me.callbacks;
-            if (!callbacks) {
-                callbacks = new Map();
-                me.callbacks = callbacks;
-            }
-            const seq = (me.lastSeq || 0) + 1;
-            me.lastSeq = seq;
-            const promise = new Promise((resolve, reject) => {
-                return callbacks.set(seq, { resolve, reject });
-            });
-            binding(JSON.stringify({ type, name: bindingName, seq, args }));
-            return promise;
-        };
+    function addPageBinding(type, name) {
+        // This is the CDP binding.
+        // @ts-expect-error: In a different context.
+        const callCDP = self[name];
+        // We replace the CDP binding with a Puppeteer binding.
+        Object.assign(self, {
+            [name](...args) {
+                var _a, _b;
+                // This is the Puppeteer binding.
+                // @ts-expect-error: In a different context.
+                const callPuppeteer = self[name];
+                (_a = callPuppeteer.callbacks) !== null && _a !== void 0 ? _a : (callPuppeteer.callbacks = new Map());
+                const seq = ((_b = callPuppeteer.lastSeq) !== null && _b !== void 0 ? _b : 0) + 1;
+                callPuppeteer.lastSeq = seq;
+                callCDP(JSON.stringify({ type, name, seq, args }));
+                return new Promise((resolve, reject) => {
+                    callPuppeteer.callbacks.set(seq, { resolve, reject });
+                });
+            },
+        });
     }
     return evaluationString(addPageBinding, type, name);
 }
@@ -60659,37 +61886,6 @@ function pageBindingDeliverErrorValueString(name, seq, value) {
     return evaluationString(deliverErrorValue, name, seq, value);
 }
 exports.pageBindingDeliverErrorValueString = pageBindingDeliverErrorValueString;
-/**
- * @internal
- */
-function makePredicateString(predicate, predicateQueryHandler) {
-    function checkWaitForOptions(node, waitForVisible, waitForHidden) {
-        if (!node) {
-            return waitForHidden;
-        }
-        if (!waitForVisible && !waitForHidden) {
-            return node;
-        }
-        const element = node.nodeType === Node.TEXT_NODE
-            ? node.parentElement
-            : node;
-        const style = window.getComputedStyle(element);
-        const isVisible = style && style.visibility !== 'hidden' && hasVisibleBoundingBox();
-        const success = waitForVisible === isVisible || waitForHidden === !isVisible;
-        return success ? node : null;
-        function hasVisibleBoundingBox() {
-            const rect = element.getBoundingClientRect();
-            return !!(rect.top || rect.bottom || rect.width || rect.height);
-        }
-    }
-    return `
-    (() => {
-      const predicateQueryHandler = ${predicateQueryHandler};
-      const checkWaitForOptions = ${checkWaitForOptions};
-      return (${predicate})(...args)
-    })() `;
-}
-exports.makePredicateString = makePredicateString;
 /**
  * @internal
  */
@@ -60796,47 +61992,35 @@ exports.getReadableFromProtocolStream = getReadableFromProtocolStream;
 
 /***/ }),
 
-/***/ 418:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.puppeteerDirname = void 0;
-const path_1 = __nccwpck_require__(1017);
-/**
- * @internal
- */
-let puppeteerDirname;
-exports.puppeteerDirname = puppeteerDirname;
-try {
-    // In some environments, like esbuild, this will throw an error.
-    // We suppress the error since the bundled binary is not expected
-    // to be used or installed in this case and, therefore, the
-    // root directory does not have to be known.
-    exports.puppeteerDirname = puppeteerDirname = (0, path_1.dirname)(/*require.resolve*/(418));
-}
-catch (error) {
-    // Fallback to __dirname.
-    exports.puppeteerDirname = puppeteerDirname = __dirname;
-}
-//# sourceMappingURL=compat.js.map
-
-/***/ }),
-
 /***/ 442:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var _a;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rootDirname = void 0;
+exports.PUPPETEER_CACHE_DIR = void 0;
+const os_1 = __nccwpck_require__(2037);
 const path_1 = __nccwpck_require__(1017);
-const compat_js_1 = __nccwpck_require__(418);
 /**
  * @internal
  */
-exports.rootDirname = (0, path_1.dirname)((0, path_1.dirname)((0, path_1.dirname)(compat_js_1.puppeteerDirname)));
+exports.PUPPETEER_CACHE_DIR = (_a = process.env['PUPPETEER_CACHE_DIR']) !== null && _a !== void 0 ? _a : (0, path_1.join)((0, os_1.homedir)(), '.cache', 'puppeteer');
 //# sourceMappingURL=constants.js.map
 
 /***/ }),
@@ -60862,12 +62046,38 @@ exports.rootDirname = (0, path_1.dirname)((0, path_1.dirname)((0, path_1.dirname
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isNode = void 0;
+exports.DEFERRED_PROMISE_DEBUG_TIMEOUT = exports.isNode = void 0;
 /**
  * @internal
  */
 exports.isNode = !!(typeof process !== 'undefined' && process.version);
+/**
+ * @internal
+ */
+exports.DEFERRED_PROMISE_DEBUG_TIMEOUT = typeof process !== 'undefined' &&
+    typeof process.env['PUPPETEER_DEFERRED_PROMISE_DEBUG_TIMEOUT'] !== 'undefined'
+    ? Number(process.env['PUPPETEER_DEFERRED_PROMISE_DEBUG_TIMEOUT'])
+    : -1;
 //# sourceMappingURL=environment.js.map
+
+/***/ }),
+
+/***/ 8153:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.source = void 0;
+/**
+ * CommonJS JavaScript code that provides the puppeteer utilities. See the
+ * [README](https://github.com/puppeteer/puppeteer/blob/main/src/injected/README.md)
+ * for injection for more information.
+ *
+ * @internal
+ */
+exports.source = "\"use strict\";\nvar __defProp = Object.defineProperty;\nvar __getOwnPropDesc = Object.getOwnPropertyDescriptor;\nvar __getOwnPropNames = Object.getOwnPropertyNames;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __export = (target, all) => {\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\nvar __copyProps = (to, from, except, desc) => {\n  if (from && typeof from === \"object\" || typeof from === \"function\") {\n    for (let key of __getOwnPropNames(from))\n      if (!__hasOwnProp.call(to, key) && key !== except)\n        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n  }\n  return to;\n};\nvar __toCommonJS = (mod) => __copyProps(__defProp({}, \"__esModule\", { value: true }), mod);\n\n// src/injected/injected.ts\nvar injected_exports = {};\n__export(injected_exports, {\n  default: () => injected_default\n});\nmodule.exports = __toCommonJS(injected_exports);\n\n// src/common/Errors.ts\nvar CustomError = class extends Error {\n  constructor(message) {\n    super(message);\n    this.name = this.constructor.name;\n    Error.captureStackTrace(this, this.constructor);\n  }\n};\nvar TimeoutError = class extends CustomError {\n};\nvar ProtocolError = class extends CustomError {\n  #code;\n  #originalMessage = \"\";\n  set code(code) {\n    this.#code = code;\n  }\n  get code() {\n    return this.#code;\n  }\n  set originalMessage(originalMessage) {\n    this.#originalMessage = originalMessage;\n  }\n  get originalMessage() {\n    return this.#originalMessage;\n  }\n};\nvar errors = Object.freeze({\n  TimeoutError,\n  ProtocolError\n});\n\n// src/util/DeferredPromise.ts\nfunction createDeferredPromise(opts) {\n  let isResolved = false;\n  let isRejected = false;\n  let resolver;\n  let rejector;\n  const taskPromise = new Promise((resolve, reject) => {\n    resolver = resolve;\n    rejector = reject;\n  });\n  const timeoutId = opts && opts.timeout > 0 ? setTimeout(() => {\n    isRejected = true;\n    rejector(new TimeoutError(opts.message));\n  }, opts.timeout) : void 0;\n  return Object.assign(taskPromise, {\n    resolved: () => {\n      return isResolved;\n    },\n    finished: () => {\n      return isResolved || isRejected;\n    },\n    resolve: (value) => {\n      if (timeoutId) {\n        clearTimeout(timeoutId);\n      }\n      isResolved = true;\n      resolver(value);\n    },\n    reject: (err) => {\n      clearTimeout(timeoutId);\n      isRejected = true;\n      rejector(err);\n    }\n  });\n}\n\n// src/util/assert.ts\nvar assert = (value, message) => {\n  if (!value) {\n    throw new Error(message);\n  }\n};\n\n// src/injected/Poller.ts\nvar MutationPoller = class {\n  #fn;\n  #root;\n  #observer;\n  #promise;\n  constructor(fn, root) {\n    this.#fn = fn;\n    this.#root = root;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    this.#observer = new MutationObserver(async () => {\n      const result2 = await this.#fn();\n      if (!result2) {\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    });\n    this.#observer.observe(this.#root, {\n      childList: true,\n      subtree: true,\n      attributes: true\n    });\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n    if (this.#observer) {\n      this.#observer.disconnect();\n      this.#observer = void 0;\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\nvar RAFPoller = class {\n  #fn;\n  #promise;\n  constructor(fn) {\n    this.#fn = fn;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    const poll = async () => {\n      if (promise.finished()) {\n        return;\n      }\n      const result2 = await this.#fn();\n      if (!result2) {\n        window.requestAnimationFrame(poll);\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    };\n    window.requestAnimationFrame(poll);\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\nvar IntervalPoller = class {\n  #fn;\n  #ms;\n  #interval;\n  #promise;\n  constructor(fn, ms) {\n    this.#fn = fn;\n    this.#ms = ms;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    this.#interval = setInterval(async () => {\n      const result2 = await this.#fn();\n      if (!result2) {\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    }, this.#ms);\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n    if (this.#interval) {\n      clearInterval(this.#interval);\n      this.#interval = void 0;\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\n\n// src/injected/TextContent.ts\nvar TRIVIAL_VALUE_INPUT_TYPES = /* @__PURE__ */ new Set([\"checkbox\", \"image\", \"radio\"]);\nvar isNonTrivialValueNode = (node) => {\n  if (node instanceof HTMLSelectElement) {\n    return true;\n  }\n  if (node instanceof HTMLTextAreaElement) {\n    return true;\n  }\n  if (node instanceof HTMLInputElement && !TRIVIAL_VALUE_INPUT_TYPES.has(node.type)) {\n    return true;\n  }\n  return false;\n};\nvar UNSUITABLE_NODE_NAMES = /* @__PURE__ */ new Set([\"SCRIPT\", \"STYLE\"]);\nvar isSuitableNodeForTextMatching = (node) => {\n  return !UNSUITABLE_NODE_NAMES.has(node.nodeName) && !document.head?.contains(node);\n};\nvar textContentCache = /* @__PURE__ */ new WeakMap();\nvar eraseFromCache = (node) => {\n  while (node) {\n    textContentCache.delete(node);\n    if (node instanceof ShadowRoot) {\n      node = node.host;\n    } else {\n      node = node.parentNode;\n    }\n  }\n};\nvar observedNodes = /* @__PURE__ */ new WeakSet();\nvar textChangeObserver = new MutationObserver((mutations) => {\n  for (const mutation of mutations) {\n    eraseFromCache(mutation.target);\n  }\n});\nvar createTextContent = (root) => {\n  let value = textContentCache.get(root);\n  if (value) {\n    return value;\n  }\n  value = { full: \"\", immediate: [] };\n  if (!isSuitableNodeForTextMatching(root)) {\n    return value;\n  }\n  let currentImmediate = \"\";\n  if (isNonTrivialValueNode(root)) {\n    value.full = root.value;\n    value.immediate.push(root.value);\n    root.addEventListener(\n      \"input\",\n      (event) => {\n        eraseFromCache(event.target);\n      },\n      { once: true, capture: true }\n    );\n  } else {\n    for (let child = root.firstChild; child; child = child.nextSibling) {\n      if (child.nodeType === Node.TEXT_NODE) {\n        value.full += child.nodeValue ?? \"\";\n        currentImmediate += child.nodeValue ?? \"\";\n        continue;\n      }\n      if (currentImmediate) {\n        value.immediate.push(currentImmediate);\n      }\n      currentImmediate = \"\";\n      if (child.nodeType === Node.ELEMENT_NODE) {\n        value.full += createTextContent(child).full;\n      }\n    }\n    if (currentImmediate) {\n      value.immediate.push(currentImmediate);\n    }\n    if (root instanceof Element && root.shadowRoot) {\n      value.full += createTextContent(root.shadowRoot).full;\n    }\n    if (!observedNodes.has(root)) {\n      textChangeObserver.observe(root, {\n        childList: true,\n        characterData: true\n      });\n      observedNodes.add(root);\n    }\n  }\n  textContentCache.set(root, value);\n  return value;\n};\n\n// src/injected/TextQuerySelector.ts\nvar TextQuerySelector_exports = {};\n__export(TextQuerySelector_exports, {\n  textQuerySelector: () => textQuerySelector,\n  textQuerySelectorAll: () => textQuerySelectorAll\n});\nvar textQuerySelector = (root, selector) => {\n  for (const node of root.childNodes) {\n    if (node instanceof Element && isSuitableNodeForTextMatching(node)) {\n      let matchedNode;\n      if (node.shadowRoot) {\n        matchedNode = textQuerySelector(node.shadowRoot, selector);\n      } else {\n        matchedNode = textQuerySelector(node, selector);\n      }\n      if (matchedNode) {\n        return matchedNode;\n      }\n    }\n  }\n  if (root instanceof Element) {\n    const textContent = createTextContent(root);\n    if (textContent.full.includes(selector)) {\n      return root;\n    }\n  }\n  return null;\n};\nvar textQuerySelectorAll = (root, selector) => {\n  let results = [];\n  for (const node of root.childNodes) {\n    if (node instanceof Element) {\n      let matchedNodes;\n      if (node.shadowRoot) {\n        matchedNodes = textQuerySelectorAll(node.shadowRoot, selector);\n      } else {\n        matchedNodes = textQuerySelectorAll(node, selector);\n      }\n      results = results.concat(matchedNodes);\n    }\n  }\n  if (results.length > 0) {\n    return results;\n  }\n  if (root instanceof Element) {\n    const textContent = createTextContent(root);\n    if (textContent.full.includes(selector)) {\n      return [root];\n    }\n  }\n  return [];\n};\n\n// src/injected/XPathQuerySelector.ts\nvar XPathQuerySelector_exports = {};\n__export(XPathQuerySelector_exports, {\n  xpathQuerySelector: () => xpathQuerySelector,\n  xpathQuerySelectorAll: () => xpathQuerySelectorAll\n});\nvar xpathQuerySelector = (root, selector) => {\n  const doc = root.ownerDocument || document;\n  const result = doc.evaluate(\n    selector,\n    root,\n    null,\n    XPathResult.FIRST_ORDERED_NODE_TYPE\n  );\n  return result.singleNodeValue;\n};\nvar xpathQuerySelectorAll = (root, selector) => {\n  const doc = root.ownerDocument || document;\n  const iterator = doc.evaluate(\n    selector,\n    root,\n    null,\n    XPathResult.ORDERED_NODE_ITERATOR_TYPE\n  );\n  const array = [];\n  let item;\n  while (item = iterator.iterateNext()) {\n    array.push(item);\n  }\n  return array;\n};\n\n// src/injected/PierceQuerySelector.ts\nvar PierceQuerySelector_exports = {};\n__export(PierceQuerySelector_exports, {\n  pierceQuerySelector: () => pierceQuerySelector,\n  pierceQuerySelectorAll: () => pierceQuerySelectorAll\n});\nvar pierceQuerySelector = (root, selector) => {\n  let found = null;\n  const search = (root2) => {\n    const iter = document.createTreeWalker(root2, NodeFilter.SHOW_ELEMENT);\n    do {\n      const currentNode = iter.currentNode;\n      if (currentNode.shadowRoot) {\n        search(currentNode.shadowRoot);\n      }\n      if (currentNode instanceof ShadowRoot) {\n        continue;\n      }\n      if (currentNode !== root2 && !found && currentNode.matches(selector)) {\n        found = currentNode;\n      }\n    } while (!found && iter.nextNode());\n  };\n  if (root instanceof Document) {\n    root = root.documentElement;\n  }\n  search(root);\n  return found;\n};\nvar pierceQuerySelectorAll = (element, selector) => {\n  const result = [];\n  const collect = (root) => {\n    const iter = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);\n    do {\n      const currentNode = iter.currentNode;\n      if (currentNode.shadowRoot) {\n        collect(currentNode.shadowRoot);\n      }\n      if (currentNode instanceof ShadowRoot) {\n        continue;\n      }\n      if (currentNode !== root && currentNode.matches(selector)) {\n        result.push(currentNode);\n      }\n    } while (iter.nextNode());\n  };\n  if (element instanceof Document) {\n    element = element.documentElement;\n  }\n  collect(element);\n  return result;\n};\n\n// src/injected/util.ts\nvar util_exports = {};\n__export(util_exports, {\n  checkVisibility: () => checkVisibility,\n  createFunction: () => createFunction\n});\nvar createdFunctions = /* @__PURE__ */ new Map();\nvar createFunction = (functionValue) => {\n  let fn = createdFunctions.get(functionValue);\n  if (fn) {\n    return fn;\n  }\n  fn = new Function(`return ${functionValue}`)();\n  createdFunctions.set(functionValue, fn);\n  return fn;\n};\nvar HIDDEN_VISIBILITY_VALUES = [\"hidden\", \"collapse\"];\nvar checkVisibility = (node, visible) => {\n  if (!node) {\n    return visible === false;\n  }\n  if (visible === void 0) {\n    return node;\n  }\n  const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;\n  const style = window.getComputedStyle(element);\n  const isVisible = style && !HIDDEN_VISIBILITY_VALUES.includes(style.visibility) && isBoundingBoxVisible(element);\n  return visible === isVisible ? node : false;\n};\nfunction isBoundingBoxVisible(element) {\n  const rect = element.getBoundingClientRect();\n  return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0;\n}\n\n// src/injected/injected.ts\nvar PuppeteerUtil = Object.freeze({\n  ...util_exports,\n  ...TextQuerySelector_exports,\n  ...XPathQuerySelector_exports,\n  ...PierceQuerySelector_exports,\n  createDeferredPromise,\n  createTextContent,\n  IntervalPoller,\n  isSuitableNodeForTextMatching,\n  MutationPoller,\n  RAFPoller\n});\nvar injected_default = PuppeteerUtil;\n";
+//# sourceMappingURL=injected.js.map
 
 /***/ }),
 
@@ -60881,62 +62091,8 @@ exports.packageVersion = void 0;
 /**
  * @internal
  */
-exports.packageVersion = '16.2.0';
+exports.packageVersion = '19.0.0';
 //# sourceMappingURL=version.js.map
-
-/***/ }),
-
-/***/ 8345:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-/**
- * Copyright 2020 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.initializePuppeteer = void 0;
-const constants_js_1 = __nccwpck_require__(442);
-const Puppeteer_js_1 = __nccwpck_require__(4860);
-const revisions_js_1 = __nccwpck_require__(2580);
-const getPackageDirectory_js_1 = __nccwpck_require__(2225);
-/**
- * @internal
- */
-const initializePuppeteer = (packageName) => {
-    const isPuppeteerCore = packageName === 'puppeteer-core';
-    const puppeteerRootDirectory = (0, getPackageDirectory_js_1.getPackageDirectory)(constants_js_1.rootDirname);
-    let preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
-    // puppeteer-core ignores environment variables
-    const productName = !isPuppeteerCore
-        ? (process.env['PUPPETEER_PRODUCT'] ||
-            process.env['npm_config_puppeteer_product'] ||
-            process.env['npm_package_config_puppeteer_product'])
-        : undefined;
-    if (!isPuppeteerCore && productName === 'firefox') {
-        preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.firefox;
-    }
-    return new Puppeteer_js_1.PuppeteerNode({
-        projectRoot: puppeteerRootDirectory,
-        preferredRevision,
-        isPuppeteerCore,
-        productName,
-    });
-};
-exports.initializePuppeteer = initializePuppeteer;
-//# sourceMappingURL=initializePuppeteer.js.map
 
 /***/ }),
 
@@ -60997,27 +62153,30 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-var _BrowserFetcher_instances, _BrowserFetcher_product, _BrowserFetcher_downloadsFolder, _BrowserFetcher_downloadHost, _BrowserFetcher_platform, _BrowserFetcher_getFolderPath;
+var _BrowserFetcher_instances, _BrowserFetcher_product, _BrowserFetcher_downloadFolder, _BrowserFetcher_downloadHost, _BrowserFetcher_platform, _BrowserFetcher_getFolderPath;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BrowserFetcher = void 0;
-const os = __importStar(__nccwpck_require__(2037));
-const fs = __importStar(__nccwpck_require__(7147));
-const path = __importStar(__nccwpck_require__(1017));
-const util = __importStar(__nccwpck_require__(3837));
-const childProcess = __importStar(__nccwpck_require__(2081));
-const https = __importStar(__nccwpck_require__(5687));
-const http = __importStar(__nccwpck_require__(3685));
+const child_process_1 = __nccwpck_require__(2081);
 const extract_zip_1 = __importDefault(__nccwpck_require__(460));
-const Debug_js_1 = __nccwpck_require__(4090);
-const util_1 = __nccwpck_require__(3837);
-const rimraf_1 = __importDefault(__nccwpck_require__(4959));
-const URL = __importStar(__nccwpck_require__(7310));
+const fs_1 = __nccwpck_require__(7147);
+const promises_1 = __nccwpck_require__(3292);
+const http = __importStar(__nccwpck_require__(3685));
+const https = __importStar(__nccwpck_require__(5687));
 const https_proxy_agent_1 = __importDefault(__nccwpck_require__(7219));
+const os = __importStar(__nccwpck_require__(2037));
+const path = __importStar(__nccwpck_require__(1017));
 const proxy_from_env_1 = __nccwpck_require__(3329);
-const assert_js_1 = __nccwpck_require__(7729);
+const rimraf_1 = __importDefault(__nccwpck_require__(4959));
 const tar_fs_1 = __importDefault(__nccwpck_require__(366));
 const unbzip2_stream_1 = __importDefault(__nccwpck_require__(3467));
-const { PUPPETEER_EXPERIMENTAL_CHROMIUM_MAC_ARM } = process.env;
+const URL = __importStar(__nccwpck_require__(7310));
+const util = __importStar(__nccwpck_require__(3837));
+const util_1 = __nccwpck_require__(3837);
+const Debug_js_1 = __nccwpck_require__(4090);
+const constants_js_1 = __nccwpck_require__(442);
+const assert_js_1 = __nccwpck_require__(7729);
+const experimentalChromiumMacArm = process.env['PUPPETEER_EXPERIMENTAL_CHROMIUM_MAC_ARM'] ||
+    process.env['npm_config_puppeteer_experimental_chromium_mac_arm'];
 const debugFetcher = (0, Debug_js_1.debug)('puppeteer:fetcher');
 const downloadURLs = {
     chrome: {
@@ -61037,13 +62196,12 @@ const downloadURLs = {
 const browserConfig = {
     chrome: {
         host: 'https://storage.googleapis.com',
-        destination: '.local-chromium',
     },
     firefox: {
         host: 'https://archive.mozilla.org/pub/firefox/nightly/latest-mozilla-central',
-        destination: '.local-firefox',
     },
 };
+const exec = (0, util_1.promisify)(child_process_1.exec);
 function archiveName(product, platform, revision) {
     switch (product) {
         case 'chrome':
@@ -61069,11 +62227,11 @@ function downloadURL(product, platform, host, revision) {
     return url;
 }
 function handleArm64() {
-    let exists = fs.existsSync('/usr/bin/chromium-browser');
+    let exists = (0, fs_1.existsSync)('/usr/bin/chromium-browser');
     if (exists) {
         return;
     }
-    exists = fs.existsSync('/usr/bin/chromium');
+    exists = (0, fs_1.existsSync)('/usr/bin/chromium');
     if (exists) {
         return;
     }
@@ -61083,56 +62241,52 @@ function handleArm64() {
         '\n\n sudo apt install chromium-browser\n');
     throw new Error();
 }
-const readdirAsync = (0, util_1.promisify)(fs.readdir.bind(fs));
-const mkdirAsync = (0, util_1.promisify)(fs.mkdir.bind(fs));
-const unlinkAsync = (0, util_1.promisify)(fs.unlink.bind(fs));
-const chmodAsync = (0, util_1.promisify)(fs.chmod.bind(fs));
-function existsAsync(filePath) {
-    return new Promise(resolve => {
-        fs.access(filePath, err => {
-            return resolve(!err);
-        });
-    });
-}
 /**
- * BrowserFetcher can download and manage different versions of Chromium and Firefox.
+ * BrowserFetcher can download and manage different versions of Chromium and
+ * Firefox.
  *
  * @remarks
- * BrowserFetcher operates on revision strings that specify a precise version of Chromium, e.g. `"533271"`. Revision strings can be obtained from {@link http://omahaproxy.appspot.com/ | omahaproxy.appspot.com}.
- * In the Firefox case, BrowserFetcher downloads Firefox Nightly and
- * operates on version numbers such as `"75"`.
+ * BrowserFetcher operates on revision strings that specify a precise version of
+ * Chromium, e.g. `"533271"`. Revision strings can be obtained from
+ * {@link http://omahaproxy.appspot.com/ | omahaproxy.appspot.com}. For Firefox,
+ * BrowserFetcher downloads Firefox Nightly and operates on version numbers such
+ * as `"75"`.
+ *
+ * @remarks
+ * The default constructed fetcher will always be for Chromium unless otherwise
+ * specified.
+ *
+ * @remarks
+ * BrowserFetcher is not designed to work concurrently with other instances of
+ * BrowserFetcher that share the same downloads directory.
  *
  * @example
  * An example of using BrowserFetcher to download a specific version of Chromium
  * and running Puppeteer against it:
  *
  * ```ts
- * const browserFetcher = puppeteer.createBrowserFetcher();
+ * const browserFetcher = new BrowserFetcher();
  * const revisionInfo = await browserFetcher.download('533271');
  * const browser = await puppeteer.launch({
  *   executablePath: revisionInfo.executablePath,
  * });
  * ```
  *
- * **NOTE** BrowserFetcher is not designed to work concurrently with other
- * instances of BrowserFetcher that share the same downloads directory.
- *
  * @public
  */
 class BrowserFetcher {
     /**
-     * @internal
+     * Constructs a browser fetcher for the given options.
      */
-    constructor(projectRoot, options = {}) {
+    constructor(options = {}) {
         _BrowserFetcher_instances.add(this);
         _BrowserFetcher_product.set(this, void 0);
-        _BrowserFetcher_downloadsFolder.set(this, void 0);
+        _BrowserFetcher_downloadFolder.set(this, void 0);
         _BrowserFetcher_downloadHost.set(this, void 0);
         _BrowserFetcher_platform.set(this, void 0);
         __classPrivateFieldSet(this, _BrowserFetcher_product, (options.product || 'chrome').toLowerCase(), "f");
         (0, assert_js_1.assert)(__classPrivateFieldGet(this, _BrowserFetcher_product, "f") === 'chrome' || __classPrivateFieldGet(this, _BrowserFetcher_product, "f") === 'firefox', `Unknown product: "${options.product}"`);
-        __classPrivateFieldSet(this, _BrowserFetcher_downloadsFolder, options.path ||
-            path.join(projectRoot, browserConfig[__classPrivateFieldGet(this, _BrowserFetcher_product, "f")].destination), "f");
+        __classPrivateFieldSet(this, _BrowserFetcher_downloadFolder, options.path || path.join(constants_js_1.PUPPETEER_CACHE_DIR, __classPrivateFieldGet(this, _BrowserFetcher_product, "f")), "f");
         __classPrivateFieldSet(this, _BrowserFetcher_downloadHost, options.host || browserConfig[__classPrivateFieldGet(this, _BrowserFetcher_product, "f")].host, "f");
         if (options.platform) {
             __classPrivateFieldSet(this, _BrowserFetcher_platform, options.platform, "f");
@@ -61143,7 +62297,7 @@ class BrowserFetcher {
                 case 'darwin':
                     switch (__classPrivateFieldGet(this, _BrowserFetcher_product, "f")) {
                         case 'chrome':
-                            __classPrivateFieldSet(this, _BrowserFetcher_platform, os.arch() === 'arm64' && PUPPETEER_EXPERIMENTAL_CHROMIUM_MAC_ARM
+                            __classPrivateFieldSet(this, _BrowserFetcher_platform, os.arch() === 'arm64' && experimentalChromiumMacArm
                                 ? 'mac_arm'
                                 : 'mac', "f");
                             break;
@@ -61156,7 +62310,11 @@ class BrowserFetcher {
                     __classPrivateFieldSet(this, _BrowserFetcher_platform, 'linux', "f");
                     break;
                 case 'win32':
-                    __classPrivateFieldSet(this, _BrowserFetcher_platform, os.arch() === 'x64' ? 'win64' : 'win32', "f");
+                    __classPrivateFieldSet(this, _BrowserFetcher_platform, os.arch() === 'x64' ||
+                        // Windows 11 for ARM supports x64 emulation
+                        (os.arch() === 'arm64' && isWindows11(os.release()))
+                        ? 'win64'
+                        : 'win32', "f");
                     return;
                 default:
                     (0, assert_js_1.assert)(false, 'Unsupported platform: ' + platform);
@@ -61218,16 +62376,16 @@ class BrowserFetcher {
         const url = downloadURL(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), __classPrivateFieldGet(this, _BrowserFetcher_downloadHost, "f"), revision);
         const fileName = url.split('/').pop();
         (0, assert_js_1.assert)(fileName, `A malformed download URL was found: ${url}.`);
-        const archivePath = path.join(__classPrivateFieldGet(this, _BrowserFetcher_downloadsFolder, "f"), fileName);
+        const archivePath = path.join(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"), fileName);
         const outputPath = __classPrivateFieldGet(this, _BrowserFetcher_instances, "m", _BrowserFetcher_getFolderPath).call(this, revision);
-        if (await existsAsync(outputPath)) {
+        if ((0, fs_1.existsSync)(outputPath)) {
             return this.revisionInfo(revision);
         }
-        if (!(await existsAsync(__classPrivateFieldGet(this, _BrowserFetcher_downloadsFolder, "f")))) {
-            await mkdirAsync(__classPrivateFieldGet(this, _BrowserFetcher_downloadsFolder, "f"));
+        if (!(0, fs_1.existsSync)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"))) {
+            await (0, promises_1.mkdir)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"), { recursive: true });
         }
         // Use system Chromium builds on Linux ARM devices
-        if (os.platform() !== 'darwin' && os.arch() === 'arm64') {
+        if (os.platform() === 'linux' && os.arch() === 'arm64') {
             handleArm64();
             return;
         }
@@ -61236,13 +62394,13 @@ class BrowserFetcher {
             await install(archivePath, outputPath);
         }
         finally {
-            if (await existsAsync(archivePath)) {
-                await unlinkAsync(archivePath);
+            if ((0, fs_1.existsSync)(archivePath)) {
+                await (0, promises_1.unlink)(archivePath);
             }
         }
         const revisionInfo = this.revisionInfo(revision);
         if (revisionInfo) {
-            await chmodAsync(revisionInfo.executablePath, 0o755);
+            await (0, promises_1.chmod)(revisionInfo.executablePath, 0o755);
         }
         return revisionInfo;
     }
@@ -61253,10 +62411,10 @@ class BrowserFetcher {
      * available locally on disk.
      */
     async localRevisions() {
-        if (!(await existsAsync(__classPrivateFieldGet(this, _BrowserFetcher_downloadsFolder, "f")))) {
+        if (!(0, fs_1.existsSync)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"))) {
             return [];
         }
-        const fileNames = await readdirAsync(__classPrivateFieldGet(this, _BrowserFetcher_downloadsFolder, "f"));
+        const fileNames = await (0, promises_1.readdir)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"));
         return fileNames
             .map(fileName => {
             return parseFolderPath(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), fileName);
@@ -61278,7 +62436,7 @@ class BrowserFetcher {
      */
     async remove(revision) {
         const folderPath = __classPrivateFieldGet(this, _BrowserFetcher_instances, "m", _BrowserFetcher_getFolderPath).call(this, revision);
-        (0, assert_js_1.assert)(await existsAsync(folderPath), `Failed to remove: revision ${revision} is not downloaded`);
+        (0, assert_js_1.assert)((0, fs_1.existsSync)(folderPath), `Failed to remove: revision ${revision} is not downloaded`);
         await new Promise(fulfill => {
             return (0, rimraf_1.default)(folderPath, fulfill);
         });
@@ -61290,39 +62448,39 @@ class BrowserFetcher {
     revisionInfo(revision) {
         const folderPath = __classPrivateFieldGet(this, _BrowserFetcher_instances, "m", _BrowserFetcher_getFolderPath).call(this, revision);
         let executablePath = '';
-        if (__classPrivateFieldGet(this, _BrowserFetcher_product, "f") === 'chrome') {
-            if (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'mac' || __classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'mac_arm') {
-                executablePath = path.join(folderPath, archiveName(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), revision), 'Chromium.app', 'Contents', 'MacOS', 'Chromium');
-            }
-            else if (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'linux') {
-                executablePath = path.join(folderPath, archiveName(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), revision), 'chrome');
-            }
-            else if (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'win32' || __classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'win64') {
-                executablePath = path.join(folderPath, archiveName(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), revision), 'chrome.exe');
-            }
-            else {
-                throw new Error('Unsupported platform: ' + __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"));
-            }
-        }
-        else if (__classPrivateFieldGet(this, _BrowserFetcher_product, "f") === 'firefox') {
-            if (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'mac' || __classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'mac_arm') {
-                executablePath = path.join(folderPath, 'Firefox Nightly.app', 'Contents', 'MacOS', 'firefox');
-            }
-            else if (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'linux') {
-                executablePath = path.join(folderPath, 'firefox', 'firefox');
-            }
-            else if (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'win32' || __classPrivateFieldGet(this, _BrowserFetcher_platform, "f") === 'win64') {
-                executablePath = path.join(folderPath, 'firefox', 'firefox.exe');
-            }
-            else {
-                throw new Error('Unsupported platform: ' + __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"));
-            }
-        }
-        else {
-            throw new Error('Unsupported product: ' + __classPrivateFieldGet(this, _BrowserFetcher_product, "f"));
+        switch (__classPrivateFieldGet(this, _BrowserFetcher_product, "f")) {
+            case 'chrome':
+                switch (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f")) {
+                    case 'mac':
+                    case 'mac_arm':
+                        executablePath = path.join(folderPath, archiveName(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), revision), 'Chromium.app', 'Contents', 'MacOS', 'Chromium');
+                        break;
+                    case 'linux':
+                        executablePath = path.join(folderPath, archiveName(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), revision), 'chrome');
+                        break;
+                    case 'win32':
+                    case 'win64':
+                        executablePath = path.join(folderPath, archiveName(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), revision), 'chrome.exe');
+                        break;
+                }
+                break;
+            case 'firefox':
+                switch (__classPrivateFieldGet(this, _BrowserFetcher_platform, "f")) {
+                    case 'mac':
+                    case 'mac_arm':
+                        executablePath = path.join(folderPath, 'Firefox Nightly.app', 'Contents', 'MacOS', 'firefox');
+                        break;
+                    case 'linux':
+                        executablePath = path.join(folderPath, 'firefox', 'firefox');
+                        break;
+                    case 'win32':
+                    case 'win64':
+                        executablePath = path.join(folderPath, 'firefox', 'firefox.exe');
+                        break;
+                }
         }
         const url = downloadURL(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), __classPrivateFieldGet(this, _BrowserFetcher_downloadHost, "f"), revision);
-        const local = fs.existsSync(folderPath);
+        const local = (0, fs_1.existsSync)(folderPath);
         debugFetcher({
             revision,
             executablePath,
@@ -61342,8 +62500,8 @@ class BrowserFetcher {
     }
 }
 exports.BrowserFetcher = BrowserFetcher;
-_BrowserFetcher_product = new WeakMap(), _BrowserFetcher_downloadsFolder = new WeakMap(), _BrowserFetcher_downloadHost = new WeakMap(), _BrowserFetcher_platform = new WeakMap(), _BrowserFetcher_instances = new WeakSet(), _BrowserFetcher_getFolderPath = function _BrowserFetcher_getFolderPath(revision) {
-    return path.resolve(__classPrivateFieldGet(this, _BrowserFetcher_downloadsFolder, "f"), `${__classPrivateFieldGet(this, _BrowserFetcher_platform, "f")}-${revision}`);
+_BrowserFetcher_product = new WeakMap(), _BrowserFetcher_downloadFolder = new WeakMap(), _BrowserFetcher_downloadHost = new WeakMap(), _BrowserFetcher_platform = new WeakMap(), _BrowserFetcher_instances = new WeakSet(), _BrowserFetcher_getFolderPath = function _BrowserFetcher_getFolderPath(revision) {
+    return path.resolve(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"), `${__classPrivateFieldGet(this, _BrowserFetcher_platform, "f")}-${revision}`);
 };
 function parseFolderPath(product, folderPath) {
     const name = path.basename(folderPath);
@@ -61356,6 +62514,22 @@ function parseFolderPath(product, folderPath) {
         return;
     }
     return { product, platform, revision };
+}
+/**
+ * Windows 11 is identified by 10.0.22000 or greater
+ * @internal
+ */
+function isWindows11(version) {
+    const parts = version.split('.');
+    if (parts.length > 2) {
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        const patch = parseInt(parts[2], 10);
+        return (major > 10 ||
+            (major === 10 && minor > 0) ||
+            (major === 10 && minor === 0 && patch >= 22000));
+    }
+    return false;
 }
 /**
  * @internal
@@ -61378,7 +62552,7 @@ function _downloadFile(url, destinationPath, progressCallback) {
             reject(error);
             return;
         }
-        const file = fs.createWriteStream(destinationPath);
+        const file = (0, fs_1.createWriteStream)(destinationPath);
         file.on('finish', () => {
             return fulfill();
         });
@@ -61400,18 +62574,17 @@ function _downloadFile(url, destinationPath, progressCallback) {
         progressCallback(downloadedBytes, totalBytes);
     }
 }
-function install(archivePath, folderPath) {
+async function install(archivePath, folderPath) {
     debugFetcher(`Installing ${archivePath} to ${folderPath}`);
     if (archivePath.endsWith('.zip')) {
-        return (0, extract_zip_1.default)(archivePath, { dir: folderPath });
+        await (0, extract_zip_1.default)(archivePath, { dir: folderPath });
     }
     else if (archivePath.endsWith('.tar.bz2')) {
-        return _extractTar(archivePath, folderPath);
+        await extractTar(archivePath, folderPath);
     }
     else if (archivePath.endsWith('.dmg')) {
-        return mkdirAsync(folderPath).then(() => {
-            return _installDMG(archivePath, folderPath);
-        });
+        await (0, promises_1.mkdir)(folderPath);
+        await installDMG(archivePath, folderPath);
     }
     else {
         throw new Error(`Unsupported archive format: ${archivePath}`);
@@ -61420,79 +62593,48 @@ function install(archivePath, folderPath) {
 /**
  * @internal
  */
-function _extractTar(tarPath, folderPath) {
+function extractTar(tarPath, folderPath) {
     return new Promise((fulfill, reject) => {
         const tarStream = tar_fs_1.default.extract(folderPath);
         tarStream.on('error', reject);
         tarStream.on('finish', fulfill);
-        const readStream = fs.createReadStream(tarPath);
+        const readStream = (0, fs_1.createReadStream)(tarPath);
         readStream.pipe((0, unbzip2_stream_1.default)()).pipe(tarStream);
     });
 }
 /**
  * @internal
  */
-function _installDMG(dmgPath, folderPath) {
-    let mountPath;
-    return new Promise((fulfill, reject) => {
-        const mountCommand = `hdiutil attach -nobrowse -noautoopen "${dmgPath}"`;
-        childProcess.exec(mountCommand, (err, stdout) => {
-            if (err) {
-                return reject(err);
-            }
-            const volumes = stdout.match(/\/Volumes\/(.*)/m);
-            if (!volumes) {
-                return reject(new Error(`Could not find volume path in ${stdout}`));
-            }
-            mountPath = volumes[0];
-            readdirAsync(mountPath)
-                .then(fileNames => {
-                const appName = fileNames.find(item => {
-                    return typeof item === 'string' && item.endsWith('.app');
-                });
-                if (!appName) {
-                    return reject(new Error(`Cannot find app in ${mountPath}`));
-                }
-                const copyPath = path.join(mountPath, appName);
-                debugFetcher(`Copying ${copyPath} to ${folderPath}`);
-                childProcess.exec(`cp -R "${copyPath}" "${folderPath}"`, err => {
-                    if (err) {
-                        reject(err);
-                    }
-                    else {
-                        fulfill();
-                    }
-                });
-            })
-                .catch(reject);
+async function installDMG(dmgPath, folderPath) {
+    const { stdout } = await exec(`hdiutil attach -nobrowse -noautoopen "${dmgPath}"`);
+    const volumes = stdout.match(/\/Volumes\/(.*)/m);
+    if (!volumes) {
+        throw new Error(`Could not find volume path in ${stdout}`);
+    }
+    const mountPath = volumes[0];
+    try {
+        const fileNames = await (0, promises_1.readdir)(mountPath);
+        const appName = fileNames.find(item => {
+            return typeof item === 'string' && item.endsWith('.app');
         });
-    })
-        .catch(error => {
-        console.error(error);
-    })
-        .finally(() => {
-        if (!mountPath) {
-            return;
+        if (!appName) {
+            throw new Error(`Cannot find app in ${mountPath}`);
         }
-        const unmountCommand = `hdiutil detach "${mountPath}" -quiet`;
+        const mountedPath = path.join(mountPath, appName);
+        debugFetcher(`Copying ${mountedPath} to ${folderPath}`);
+        await exec(`cp -R "${mountedPath}" "${folderPath}"`);
+    }
+    finally {
         debugFetcher(`Unmounting ${mountPath}`);
-        childProcess.exec(unmountCommand, err => {
-            if (err) {
-                console.error(`Error unmounting dmg: ${err}`);
-            }
-        });
-    });
+        await exec(`hdiutil detach "${mountPath}" -quiet`);
+    }
 }
 function httpRequest(url, method, response, keepAlive = true) {
     const urlParsed = URL.parse(url);
     let options = {
         ...urlParsed,
         method,
-        headers: keepAlive
-            ? {
-                Connection: 'keep-alive',
-            }
-            : undefined,
+        headers: keepAlive ? { Connection: 'keep-alive' } : undefined,
     };
     const proxyURL = (0, proxy_from_env_1.getProxyForUrl)(url);
     if (proxyURL) {
@@ -61601,13 +62743,14 @@ const path = __importStar(__nccwpck_require__(1017));
 const readline = __importStar(__nccwpck_require__(4521));
 const rimraf_1 = __importDefault(__nccwpck_require__(4959));
 const util_1 = __nccwpck_require__(3837);
-const assert_js_1 = __nccwpck_require__(7729);
-const Connection_js_1 = __nccwpck_require__(370);
+const Connection_js_1 = __nccwpck_require__(5916);
+const Connection_js_2 = __nccwpck_require__(370);
 const Debug_js_1 = __nccwpck_require__(4090);
 const Errors_js_1 = __nccwpck_require__(6315);
+const NodeWebSocketTransport_js_1 = __nccwpck_require__(4098);
 const util_js_1 = __nccwpck_require__(8274);
+const assert_js_1 = __nccwpck_require__(7729);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
-const NodeWebSocketTransport_js_1 = __nccwpck_require__(7174);
 const PipeTransport_js_1 = __nccwpck_require__(9238);
 const removeFolderAsync = (0, util_1.promisify)(rimraf_1.default);
 const renameAsync = (0, util_1.promisify)(fs.rename);
@@ -61788,27 +62931,35 @@ class BrowserRunner {
         // perform this earlier, then the previous function calls would not happen.
         (0, util_js_1.removeEventListeners)(__classPrivateFieldGet(this, _BrowserRunner_listeners, "f"));
     }
+    async setupWebDriverBiDiConnection(options) {
+        (0, assert_js_1.assert)(this.proc, 'BrowserRunner not started.');
+        const { timeout, slowMo, preferredRevision } = options;
+        let browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision, /^WebDriver BiDi listening on (ws:\/\/.*)$/);
+        browserWSEndpoint += '/session';
+        const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
+        return new Connection_js_1.Connection(transport, slowMo);
+    }
     async setupConnection(options) {
         (0, assert_js_1.assert)(this.proc, 'BrowserRunner not started.');
         const { usePipe, timeout, slowMo, preferredRevision } = options;
         if (!usePipe) {
             const browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision);
             const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
-            this.connection = new Connection_js_1.Connection(browserWSEndpoint, transport, slowMo);
+            this.connection = new Connection_js_2.Connection(browserWSEndpoint, transport, slowMo);
         }
         else {
             // stdio was assigned during start(), and the 'pipe' option there adds the
             // 4th and 5th items to stdio array
             const { 3: pipeWrite, 4: pipeRead } = this.proc.stdio;
             const transport = new PipeTransport_js_1.PipeTransport(pipeWrite, pipeRead);
-            this.connection = new Connection_js_1.Connection('', transport, slowMo);
+            this.connection = new Connection_js_2.Connection('', transport, slowMo);
         }
         return this.connection;
     }
 }
 exports.BrowserRunner = BrowserRunner;
 _BrowserRunner_product = new WeakMap(), _BrowserRunner_executablePath = new WeakMap(), _BrowserRunner_processArguments = new WeakMap(), _BrowserRunner_userDataDir = new WeakMap(), _BrowserRunner_isTempUserDataDir = new WeakMap(), _BrowserRunner_closed = new WeakMap(), _BrowserRunner_listeners = new WeakMap(), _BrowserRunner_processClosing = new WeakMap();
-function waitForWSEndpoint(browserProcess, timeout, preferredRevision) {
+function waitForWSEndpoint(browserProcess, timeout, preferredRevision, regex = /^DevTools listening on (ws:\/\/.*)$/) {
     (0, assert_js_1.assert)(browserProcess.stderr, '`browserProcess` does not have stderr.');
     const rl = readline.createInterface(browserProcess.stderr);
     let stderr = '';
@@ -61843,7 +62994,7 @@ function waitForWSEndpoint(browserProcess, timeout, preferredRevision) {
         }
         function onLine(line) {
             stderr += line + '\n';
-            const match = line.match(/^DevTools listening on (ws:\/\/.*)$/);
+            const match = line.match(regex);
             if (!match) {
                 return;
             }
@@ -61888,8 +63039,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ChromeLauncher = void 0;
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 const path_1 = __importDefault(__nccwpck_require__(1017));
-const assert_js_1 = __nccwpck_require__(7729);
 const Browser_js_1 = __nccwpck_require__(2087);
+const assert_js_1 = __nccwpck_require__(7729);
 const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
 const util_js_1 = __nccwpck_require__(7632);
@@ -61897,8 +63048,7 @@ const util_js_1 = __nccwpck_require__(7632);
  * @internal
  */
 class ChromeLauncher {
-    constructor(projectRoot, preferredRevision, isPuppeteerCore) {
-        this._projectRoot = projectRoot;
+    constructor(preferredRevision, isPuppeteerCore) {
         this._preferredRevision = preferredRevision;
         this._isPuppeteerCore = isPuppeteerCore;
     }
@@ -61971,7 +63121,7 @@ class ChromeLauncher {
                 slowMo,
                 preferredRevision: this._preferredRevision,
             });
-            browser = await Browser_js_1.Browser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
+            browser = await Browser_js_1.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
         }
         catch (error) {
             runner.kill();
@@ -62073,8 +63223,9 @@ exports.FirefoxLauncher = void 0;
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const path_1 = __importDefault(__nccwpck_require__(1017));
+const Browser_js_1 = __nccwpck_require__(6070);
+const Browser_js_2 = __nccwpck_require__(2087);
 const assert_js_1 = __nccwpck_require__(7729);
-const Browser_js_1 = __nccwpck_require__(2087);
 const BrowserFetcher_js_1 = __nccwpck_require__(6573);
 const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
@@ -62083,13 +63234,12 @@ const util_js_1 = __nccwpck_require__(7632);
  * @internal
  */
 class FirefoxLauncher {
-    constructor(projectRoot, preferredRevision, isPuppeteerCore) {
-        this._projectRoot = projectRoot;
+    constructor(preferredRevision, isPuppeteerCore) {
         this._preferredRevision = preferredRevision;
         this._isPuppeteerCore = isPuppeteerCore;
     }
     async launch(options = {}) {
-        const { ignoreDefaultArgs = false, args = [], dumpio = false, executablePath = null, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, extraPrefsFirefox = {}, waitForInitialPage = true, debuggingPort = null, } = options;
+        const { ignoreDefaultArgs = false, args = [], dumpio = false, executablePath = null, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, extraPrefsFirefox = {}, waitForInitialPage = true, debuggingPort = null, protocol = 'cdp', } = options;
         const firefoxArguments = [];
         if (!ignoreDefaultArgs) {
             firefoxArguments.push(...this.defaultArgs(options));
@@ -62133,7 +63283,9 @@ class FirefoxLauncher {
             firefoxArguments.push('--profile');
             firefoxArguments.push(userDataDir);
         }
-        await this._updateRevision();
+        if (!this._isPuppeteerCore) {
+            await this._updateRevision();
+        }
         let firefoxExecutable = executablePath;
         if (!executablePath) {
             const { missingText, executablePath } = (0, ProductLauncher_js_1.resolveExecutablePath)(this);
@@ -62154,6 +63306,26 @@ class FirefoxLauncher {
             env,
             pipe,
         });
+        if (protocol === 'webDriverBiDi') {
+            let browser;
+            try {
+                const connection = await runner.setupWebDriverBiDiConnection({
+                    timeout,
+                    slowMo,
+                    preferredRevision: this._preferredRevision,
+                });
+                browser = await Browser_js_1.Browser.create({
+                    connection,
+                    closeCallback: runner.close.bind(runner),
+                    process: runner.proc,
+                });
+            }
+            catch (error) {
+                runner.kill();
+                throw error;
+            }
+            return browser;
+        }
         let browser;
         try {
             const connection = await runner.setupConnection({
@@ -62162,7 +63334,7 @@ class FirefoxLauncher {
                 slowMo,
                 preferredRevision: this._preferredRevision,
             });
-            browser = await Browser_js_1.Browser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
+            browser = await Browser_js_2.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
         }
         catch (error) {
             runner.kill();
@@ -62187,10 +63359,7 @@ class FirefoxLauncher {
     async _updateRevision() {
         // replace 'latest' placeholder with actual downloaded revision
         if (this._preferredRevision === 'latest') {
-            if (!this._projectRoot) {
-                throw new Error('_projectRoot is undefined. Unable to create a BrowserFetcher.');
-            }
-            const browserFetcher = new BrowserFetcher_js_1.BrowserFetcher(this._projectRoot, {
+            const browserFetcher = new BrowserFetcher_js_1.BrowserFetcher({
                 product: this.product,
             });
             const localRevisions = await browserFetcher.localRevisions();
@@ -62428,108 +63597,6 @@ exports.FirefoxLauncher = FirefoxLauncher;
 
 /***/ }),
 
-/***/ 7174:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-var _NodeWebSocketTransport_ws;
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.NodeWebSocketTransport = void 0;
-/**
- * Copyright 2018 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-const ws_1 = __importDefault(__nccwpck_require__(8867));
-const version_js_1 = __nccwpck_require__(6210);
-const dns_1 = __nccwpck_require__(9523);
-const url_1 = __nccwpck_require__(7310);
-/**
- * @internal
- */
-class NodeWebSocketTransport {
-    constructor(ws) {
-        _NodeWebSocketTransport_ws.set(this, void 0);
-        __classPrivateFieldSet(this, _NodeWebSocketTransport_ws, ws, "f");
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('message', event => {
-            if (this.onmessage) {
-                this.onmessage.call(null, event.data);
-            }
-        });
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('close', () => {
-            if (this.onclose) {
-                this.onclose.call(null);
-            }
-        });
-        // Silently ignore all errors - we don't know what to do with them.
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('error', () => { });
-    }
-    static async create(urlString) {
-        // TODO(jrandolf): Starting in Node 17, IPv6 is favoured over IPv4 due to a change
-        // in a default option:
-        // - https://github.com/nodejs/node/issues/40537,
-        // Due to this, for Firefox, we must parse and resolve the `localhost` hostname
-        // manually with the previous behavior according to:
-        // - https://nodejs.org/api/dns.html#dnslookuphostname-options-callback
-        // because of https://bugzilla.mozilla.org/show_bug.cgi?id=1769994.
-        const url = new url_1.URL(urlString);
-        if (url.hostname === 'localhost') {
-            const { address } = await dns_1.promises.lookup(url.hostname, { verbatim: false });
-            url.hostname = address;
-        }
-        return new Promise((resolve, reject) => {
-            const ws = new ws_1.default(url, [], {
-                followRedirects: true,
-                perMessageDeflate: false,
-                maxPayload: 256 * 1024 * 1024,
-                headers: {
-                    'User-Agent': `Puppeteer ${version_js_1.packageVersion}`,
-                },
-            });
-            ws.addEventListener('open', () => {
-                return resolve(new NodeWebSocketTransport(ws));
-            });
-            ws.addEventListener('error', reject);
-        });
-    }
-    send(message) {
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").send(message);
-    }
-    close() {
-        __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").close();
-    }
-}
-exports.NodeWebSocketTransport = NodeWebSocketTransport;
-_NodeWebSocketTransport_ws = new WeakMap();
-//# sourceMappingURL=NodeWebSocketTransport.js.map
-
-/***/ }),
-
 /***/ 9238:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -62549,23 +63616,8 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _PipeTransport_instances, _PipeTransport_pipeWrite, _PipeTransport_eventListeners, _PipeTransport_isClosed, _PipeTransport_pendingMessage, _PipeTransport_dispatch;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PipeTransport = void 0;
-/**
- * Copyright 2018 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-const assert_js_1 = __nccwpck_require__(7729);
 const util_js_1 = __nccwpck_require__(8274);
+const assert_js_1 = __nccwpck_require__(7729);
 /**
  * @internal
  */
@@ -62652,11 +63704,11 @@ exports.createLauncher = exports.resolveExecutablePath = exports.executablePathF
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+const fs_1 = __nccwpck_require__(7147);
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const BrowserFetcher_js_1 = __nccwpck_require__(6573);
 const ChromeLauncher_js_1 = __nccwpck_require__(5524);
 const FirefoxLauncher_js_1 = __nccwpck_require__(9585);
-const fs_1 = __nccwpck_require__(7147);
 /**
  * @internal
  */
@@ -62731,7 +63783,7 @@ exports.executablePathForChannel = executablePathForChannel;
  * @internal
  */
 function resolveExecutablePath(launcher) {
-    const { product, _isPuppeteerCore, _projectRoot, _preferredRevision } = launcher;
+    const { product, _isPuppeteerCore, _preferredRevision } = launcher;
     let downloadPath;
     // puppeteer-core doesn't take into account PUPPETEER_* env variables.
     if (!_isPuppeteerCore) {
@@ -62757,15 +63809,15 @@ function resolveExecutablePath(launcher) {
                 process.env['npm_config_puppeteer_download_path'] ||
                 process.env['npm_package_config_puppeteer_download_path'];
     }
-    if (!_projectRoot) {
-        throw new Error('_projectRoot is undefined. Unable to create a BrowserFetcher.');
-    }
-    const browserFetcher = new BrowserFetcher_js_1.BrowserFetcher(_projectRoot, {
+    const browserFetcher = new BrowserFetcher_js_1.BrowserFetcher({
         product: product,
         path: downloadPath,
     });
-    if (!_isPuppeteerCore && product === 'chrome') {
-        const revision = process.env['PUPPETEER_CHROMIUM_REVISION'];
+    if (!_isPuppeteerCore) {
+        let revision = process.env['PUPPETEER_BROWSER_REVISION'];
+        if (product === 'chrome') {
+            revision !== null && revision !== void 0 ? revision : (revision = process.env['PUPPETEER_CHROMIUM_REVISION']);
+        }
         if (revision) {
             const revisionInfo = browserFetcher.revisionInfo(revision);
             const missingText = !revisionInfo.local
@@ -62787,12 +63839,14 @@ exports.resolveExecutablePath = resolveExecutablePath;
 /**
  * @internal
  */
-function createLauncher(projectRoot, preferredRevision, isPuppeteerCore, product = 'chrome') {
+function createLauncher(preferredRevision, isPuppeteerCore, product = 'chrome') {
     switch (product) {
         case 'firefox':
-            return new FirefoxLauncher_js_1.FirefoxLauncher(projectRoot, preferredRevision, isPuppeteerCore);
+            return new FirefoxLauncher_js_1.FirefoxLauncher(preferredRevision, isPuppeteerCore);
         case 'chrome':
-            return new ChromeLauncher_js_1.ChromeLauncher(projectRoot, preferredRevision, isPuppeteerCore);
+            return new ChromeLauncher_js_1.ChromeLauncher(preferredRevision, isPuppeteerCore);
+        default:
+            throw new Error(`Unknown product: ${product}`);
     }
 }
 exports.createLauncher = createLauncher;
@@ -62800,7 +63854,7 @@ exports.createLauncher = createLauncher;
 
 /***/ }),
 
-/***/ 4860:
+/***/ 4140:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -62831,13 +63885,13 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _PuppeteerNode_launcher, _PuppeteerNode_projectRoot, _PuppeteerNode_productName;
+var _PuppeteerNode_launcher, _PuppeteerNode_productName;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PuppeteerNode = void 0;
 const Puppeteer_js_1 = __nccwpck_require__(8435);
+const revisions_js_1 = __nccwpck_require__(2580);
 const BrowserFetcher_js_1 = __nccwpck_require__(6573);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
-const revisions_js_1 = __nccwpck_require__(2580);
 /**
  * Extends the main {@link Puppeteer} class with Node specific behaviour for
  * fetching and downloading browsers.
@@ -62878,14 +63932,18 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      * @internal
      */
     constructor(settings) {
-        const { projectRoot, preferredRevision, productName, ...commonSettings } = settings;
+        const { preferredRevision, productName, ...commonSettings } = settings;
         super(commonSettings);
         _PuppeteerNode_launcher.set(this, void 0);
-        _PuppeteerNode_projectRoot.set(this, void 0);
         _PuppeteerNode_productName.set(this, void 0);
-        __classPrivateFieldSet(this, _PuppeteerNode_projectRoot, projectRoot, "f");
+        /**
+         * @internal
+         */
+        this._preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
         __classPrivateFieldSet(this, _PuppeteerNode_productName, productName, "f");
-        this._preferredRevision = preferredRevision;
+        if (preferredRevision) {
+            this._preferredRevision = preferredRevision;
+        }
         this.connect = this.connect.bind(this);
         this.launch = this.launch.bind(this);
         this.executablePath = this.executablePath.bind(this);
@@ -62979,7 +64037,7 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
                     this._preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
             }
             this._changedProduct = false;
-            __classPrivateFieldSet(this, _PuppeteerNode_launcher, (0, ProductLauncher_js_1.createLauncher)(__classPrivateFieldGet(this, _PuppeteerNode_projectRoot, "f"), this._preferredRevision, this._isPuppeteerCore, this._productName), "f");
+            __classPrivateFieldSet(this, _PuppeteerNode_launcher, (0, ProductLauncher_js_1.createLauncher)(this._preferredRevision, this._isPuppeteerCore, this._productName), "f");
         }
         return __classPrivateFieldGet(this, _PuppeteerNode_launcher, "f");
     }
@@ -63003,54 +64061,30 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
         return this._launcher.defaultArgs(options);
     }
     /**
+     * @deprecated Import {@link BrowserFetcher} directly and use the constructor.
+     *
      * @param options - Set of configurable options to specify the settings of the
      * BrowserFetcher.
      * @returns A new BrowserFetcher instance.
      */
     createBrowserFetcher(options) {
-        if (!__classPrivateFieldGet(this, _PuppeteerNode_projectRoot, "f")) {
-            throw new Error('_projectRoot is undefined. Unable to create a BrowserFetcher.');
-        }
-        return new BrowserFetcher_js_1.BrowserFetcher(__classPrivateFieldGet(this, _PuppeteerNode_projectRoot, "f"), options);
+        return new BrowserFetcher_js_1.BrowserFetcher(options);
     }
 }
 exports.PuppeteerNode = PuppeteerNode;
-_PuppeteerNode_launcher = new WeakMap(), _PuppeteerNode_projectRoot = new WeakMap(), _PuppeteerNode_productName = new WeakMap();
-//# sourceMappingURL=Puppeteer.js.map
+_PuppeteerNode_launcher = new WeakMap(), _PuppeteerNode_productName = new WeakMap();
+//# sourceMappingURL=PuppeteerNode.js.map
 
 /***/ }),
 
 /***/ 7632:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.tmpdir = void 0;
-const os = __importStar(__nccwpck_require__(2037));
+const os_1 = __nccwpck_require__(2037);
 /**
  * Gets the temporary directory, either from the environmental variable
  * `PUPPETEER_TMP_DIR` or the `os.tmpdir`.
@@ -63060,7 +64094,7 @@ const os = __importStar(__nccwpck_require__(2037));
  * @internal
  */
 const tmpdir = () => {
-    return process.env['PUPPETEER_TMP_DIR'] || os.tmpdir();
+    return process.env['PUPPETEER_TMP_DIR'] || (0, os_1.tmpdir)();
 };
 exports.tmpdir = tmpdir;
 //# sourceMappingURL=util.js.map
@@ -63103,13 +64137,25 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.launch = exports.executablePath = exports.defaultArgs = exports.createBrowserFetcher = exports.connect = void 0;
-const initializePuppeteer_js_1 = __nccwpck_require__(8345);
-__exportStar(__nccwpck_require__(6414), exports);
-__exportStar(__nccwpck_require__(3200), exports);
-__exportStar(__nccwpck_require__(3902), exports);
+__exportStar(__nccwpck_require__(1626), exports);
 __exportStar(__nccwpck_require__(6315), exports);
-const puppeteer = (0, initializePuppeteer_js_1.initializePuppeteer)('puppeteer-core');
-exports.connect = puppeteer.connect, exports.createBrowserFetcher = puppeteer.createBrowserFetcher, exports.defaultArgs = puppeteer.defaultArgs, exports.executablePath = puppeteer.executablePath, exports.launch = puppeteer.launch;
+__exportStar(__nccwpck_require__(3768), exports);
+__exportStar(__nccwpck_require__(8435), exports);
+/**
+ * @deprecated Use the query handler API defined on {@link Puppeteer}
+ */
+__exportStar(__nccwpck_require__(3200), exports);
+__exportStar(__nccwpck_require__(6573), exports);
+const PuppeteerNode_js_1 = __nccwpck_require__(4140);
+/**
+ * @public
+ */
+const puppeteer = new PuppeteerNode_js_1.PuppeteerNode({
+    isPuppeteerCore: true,
+});
+exports.connect = puppeteer.connect, 
+/** @deprecated Import {@link BrowserFetcher} directly and use the constructor. */
+exports.createBrowserFetcher = puppeteer.createBrowserFetcher, exports.defaultArgs = puppeteer.defaultArgs, exports.executablePath = puppeteer.executablePath, exports.launch = puppeteer.launch;
 exports["default"] = puppeteer;
 //# sourceMappingURL=puppeteer-core.js.map
 
@@ -63141,10 +64187,39 @@ exports.PUPPETEER_REVISIONS = void 0;
  * @internal
  */
 exports.PUPPETEER_REVISIONS = Object.freeze({
-    chromium: '1022525',
+    chromium: '1045629',
     firefox: 'latest',
 });
 //# sourceMappingURL=revisions.js.map
+
+/***/ }),
+
+/***/ 7454:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createDebuggableDeferredPromise = void 0;
+const environment_js_1 = __nccwpck_require__(1577);
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
+/**
+ * Creates and returns a deferred promise using DEFERRED_PROMISE_DEBUG_TIMEOUT
+ * if it's specified or a normal deferred promise otherwise.
+ *
+ * @internal
+ */
+function createDebuggableDeferredPromise(message) {
+    if (environment_js_1.DEFERRED_PROMISE_DEBUG_TIMEOUT > 0) {
+        return (0, DeferredPromise_js_1.createDeferredPromise)({
+            message,
+            timeout: environment_js_1.DEFERRED_PROMISE_DEBUG_TIMEOUT,
+        });
+    }
+    return (0, DeferredPromise_js_1.createDeferredPromise)();
+}
+exports.createDebuggableDeferredPromise = createDebuggableDeferredPromise;
+//# sourceMappingURL=DebuggableDeferredPromise.js.map
 
 /***/ }),
 
@@ -63154,63 +64229,32 @@ exports.PUPPETEER_REVISIONS = Object.freeze({
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createDeferredPromise = exports.createDeferredPromiseWithTimer = void 0;
+exports.createDeferredPromise = void 0;
 const Errors_js_1 = __nccwpck_require__(6315);
 /**
- * Creates an returns a promise along with the resolve/reject functions.
+ * Creates and returns a promise along with the resolve/reject functions.
  *
- * If the promise has not been resolved/rejected withing the `timeout` period,
- * the promise gets rejected with a timeout error.
+ * If the promise has not been resolved/rejected within the `timeout` period,
+ * the promise gets rejected with a timeout error. `timeout` has to be greater than 0 or
+ * it is ignored.
  *
  * @internal
  */
-function createDeferredPromiseWithTimer(timeoutMessage, timeout = 5000) {
+function createDeferredPromise(opts) {
     let isResolved = false;
     let isRejected = false;
-    let resolver = (_) => { };
-    let rejector = (_) => { };
+    let resolver;
+    let rejector;
     const taskPromise = new Promise((resolve, reject) => {
         resolver = resolve;
         rejector = reject;
     });
-    const timeoutId = setTimeout(() => {
-        isRejected = true;
-        rejector(new Errors_js_1.TimeoutError(timeoutMessage));
-    }, timeout);
-    return Object.assign(taskPromise, {
-        resolved: () => {
-            return isResolved;
-        },
-        finished: () => {
-            return isResolved || isRejected;
-        },
-        resolve: (value) => {
-            clearTimeout(timeoutId);
-            isResolved = true;
-            resolver(value);
-        },
-        reject: (err) => {
-            clearTimeout(timeoutId);
+    const timeoutId = opts && opts.timeout > 0
+        ? setTimeout(() => {
             isRejected = true;
-            rejector(err);
-        },
-    });
-}
-exports.createDeferredPromiseWithTimer = createDeferredPromiseWithTimer;
-/**
- * Creates an returns a promise along with the resolve/reject functions.
- *
- * @internal
- */
-function createDeferredPromise() {
-    let isResolved = false;
-    let isRejected = false;
-    let resolver = (_) => { };
-    let rejector = (_) => { };
-    const taskPromise = new Promise((resolve, reject) => {
-        resolver = resolve;
-        rejector = reject;
-    });
+            rejector(new Errors_js_1.TimeoutError(opts.message));
+        }, opts.timeout)
+        : undefined;
     return Object.assign(taskPromise, {
         resolved: () => {
             return isResolved;
@@ -63219,10 +64263,14 @@ function createDeferredPromise() {
             return isResolved || isRejected;
         },
         resolve: (value) => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
             isResolved = true;
             resolver(value);
         },
         reject: (err) => {
+            clearTimeout(timeoutId);
             isRejected = true;
             rejector(err);
         },
@@ -63301,92 +64349,15 @@ exports.assert = assert;
 
 /***/ }),
 
-/***/ 2225:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ 3733:
+/***/ ((module) => {
 
 "use strict";
 
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getPackageDirectory = void 0;
-const fs_1 = __nccwpck_require__(7147);
-const path_1 = __nccwpck_require__(1017);
-const getPackageDirectory = (from) => {
-    let found = (0, fs_1.existsSync)((0, path_1.join)(from, 'package.json'));
-    const root = (0, path_1.parse)(from).root;
-    while (!found) {
-        if (from === root) {
-            throw new Error('Cannot find package directory');
-        }
-        from = (0, path_1.dirname)(from);
-        found = (0, fs_1.existsSync)((0, path_1.join)(from, 'package.json'));
-    }
-    return from;
-};
-exports.getPackageDirectory = getPackageDirectory;
-//# sourceMappingURL=getPackageDirectory.js.map
 
-/***/ }),
+function mitt_es(n){return {all:n=n||new Map,on:function(t,e){var i=n.get(t);i&&i.push(e)||n.set(t,[e]);},off:function(t,e){var i=n.get(t);i&&i.splice(i.indexOf(e)>>>0,1);},emit:function(t,e){(n.get(t)||[]).slice().map(function(n){n(e);}),(n.get("*")||[]).slice().map(function(n){n(t,e);});}}}
 
-/***/ 6887:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-exports.__esModule = true;
-/**
- * Mitt: Tiny (~200b) functional event emitter / pubsub.
- * @name mitt
- * @returns {Mitt}
- */
-function mitt(all) {
-    all = all || new Map();
-    return {
-        /**
-         * A Map of event names to registered handler functions.
-         */
-        all: all,
-        /**
-         * Register an event handler for the given type.
-         * @param {string|symbol} type Type of event to listen for, or `"*"` for all events
-         * @param {Function} handler Function to call in response to given event
-         * @memberOf mitt
-         */
-        on: function (type, handler) {
-            var handlers = all.get(type);
-            var added = handlers && handlers.push(handler);
-            if (!added) {
-                all.set(type, [handler]);
-            }
-        },
-        /**
-         * Remove an event handler for the given type.
-         * @param {string|symbol} type Type of event to unregister `handler` from, or `"*"`
-         * @param {Function} handler Handler function to remove
-         * @memberOf mitt
-         */
-        off: function (type, handler) {
-            var handlers = all.get(type);
-            if (handlers) {
-                handlers.splice(handlers.indexOf(handler) >>> 0, 1);
-            }
-        },
-        /**
-         * Invoke all handlers for the given type.
-         * If present, `"*"` handlers are invoked after type-matched handlers.
-         *
-         * Note: Manually firing "*" handlers is not supported.
-         *
-         * @param {string|symbol} type The event type to invoke
-         * @param {Any} [evt] Any value (object is recommended and powerful), passed to each handler
-         * @memberOf mitt
-         */
-        emit: function (type, evt) {
-            (all.get(type) || []).slice().map(function (handler) { handler(evt); });
-            (all.get('*') || []).slice().map(function (handler) { handler(type, evt); });
-        }
-    };
-}
-exports["default"] = mitt;
+module.exports = mitt_es;
 
 
 /***/ }),
@@ -63463,6 +64434,8 @@ async function main() {
   } catch (error) {
     core.setFailed(error.message);
   }
+
+  await browser.close();
 }
 
 async function findOrDownloadChromium() {
@@ -63482,13 +64455,15 @@ async function findOrDownloadChromium() {
   } else {
     core.info(`Chromium cache not found; Downloading`);
     const downloadPath = path.resolve(__dirname, "tmp");
-    const revisionInfo = await puppeteer
-      .createBrowserFetcher({
-        path: downloadPath,
-      })
-      .download(latestRevision, (x, y) => {
+    const browserFetcher = new puppeteer.BrowserFetcher({
+      path: downloadPath,
+    });
+    const revisionInfo = await browserFetcher.download(
+      latestRevision,
+      (x, y) => {
         core.debug(`Download progress: ${x}/${y}`);
-      });
+      }
+    );
     core.info("Download finished!");
 
     core.debug("Revision info: ", revisionInfo);
