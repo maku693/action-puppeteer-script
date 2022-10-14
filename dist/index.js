@@ -47702,7 +47702,8 @@ async function findOrDownloadChromium() {
   core.info(`Target Chromium revision: ${CHROMIUM_REVISION}`);
 
   // Download and create cache if cache is not found
-  let cachedPath = tc.find("chromium", CHROMIUM_REVISION);
+  const cacheVersion = `0.0.${CHROMIUM_REVISION}`;
+  let cachedPath = tc.find("chromium", cacheVersion);
   if (cachedPath) {
     core.info("Using cached Chromium");
   } else {
@@ -47730,7 +47731,7 @@ async function findOrDownloadChromium() {
     cachedPath = await tc.cacheDir(
       revisionInfo.folderPath,
       "chromium",
-      CHROMIUM_REVISION
+      cacheVersion
     );
   }
 
