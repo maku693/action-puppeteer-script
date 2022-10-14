@@ -47677,20 +47677,25 @@ async function main() {
   const script = core.getInput("script", { required: true });
 
   const chromiumPath = await findOrDownloadChromium();
+
+  core.info("Launching browser");
   const browser = await puppeteer.launch({
     executablePath: chromiumPath,
   });
 
-  const args = { browser };
-
   try {
-    const result = callAsyncFunction(args, script);
-    core.setOutput(JSON.stringify(result));
+    core.info("Script running");
+    const result = JSON.stringify(callAsyncFunction({ browser }, script));
+    core.debug(`result: ${result}`);
+    core.setOutput(result);
+    core.info("Script finished!");
   } catch (error) {
+    core.error("Error during running script");
     core.setFailed(error.message);
   }
 
   await browser.close();
+  core.info("Browser closed");
 }
 
 async function findOrDownloadChromium() {
