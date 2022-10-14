@@ -1,1 +1,1 @@
-export const CHROMIUM_REVISION = "1045629";
+module.exports.CHROMIUM_REVISION = "1045629";

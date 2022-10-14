@@ -14,5 +14,5 @@ const chromiumRevision = revisonFileContents.match(/chromium: '(\d*)'/)[1];
 
 fs.writeFileSync(
   path.resolve(__dirname, "../src/chromium-revision.js"),
-  `export const CHROMIUM_REVISION = "${chromiumRevision}";\n`
+  `module.exports.CHROMIUM_REVISION = "${chromiumRevision}";\n`
 );

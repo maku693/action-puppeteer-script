@@ -24470,6 +24470,14 @@ function defaultCallback(err) {
 
 /***/ }),
 
+/***/ 4200:
+/***/ ((module) => {
+
+module.exports = eval("require")("./chromium-revision");
+
+
+/***/ }),
+
 /***/ 1269:
 /***/ ((module) => {
 
@@ -42816,9 +42824,8 @@ const { connect,
 createBrowserFetcher, defaultArgs, executablePath, launch, } = puppeteer;
 /* harmony default export */ const puppeteer_core = (puppeteer);
 //# sourceMappingURL=puppeteer-core.js.map
-;// CONCATENATED MODULE: ./src/chromium-revision.js
-const CHROMIUM_REVISION = "1045629";
-
+// EXTERNAL MODULE: ./node_modules/@vercel/ncc/dist/ncc/@@notfound.js?./chromium-revision
+var _notfoundchromium_revision = __nccwpck_require__(4200);
 ;// CONCATENATED MODULE: ./src/index.js
 
 
@@ -42856,10 +42863,10 @@ async function main() {
 }
 
 async function findOrDownloadChromium() {
-  core.info(`Target Chromium revision: ${CHROMIUM_REVISION}`);
+  core.info(`Target Chromium revision: ${_notfoundchromium_revision.CHROMIUM_REVISION}`);
 
   // Download and create cache if cache is not found
-  let cachedPath = tool_cache.find("chromium", CHROMIUM_REVISION);
+  let cachedPath = tool_cache.find("chromium", _notfoundchromium_revision.CHROMIUM_REVISION);
   if (cachedPath) {
     core.info("Using cached Chromium");
   } else {
@@ -42869,7 +42876,7 @@ async function findOrDownloadChromium() {
       path: downloadPath,
     });
     const revisionInfo = await browserFetcher.download(
-      CHROMIUM_REVISION,
+      _notfoundchromium_revision.CHROMIUM_REVISION,
       (x, y) => {
         core.debug(`Download progress: ${x}/${y}`);
       }
@@ -42887,7 +42894,7 @@ async function findOrDownloadChromium() {
     cachedPath = await tool_cache.cacheDir(
       revisionInfo.folderPath,
       "chromium",
-      CHROMIUM_REVISION
+      _notfoundchromium_revision.CHROMIUM_REVISION
     );
   }
 
