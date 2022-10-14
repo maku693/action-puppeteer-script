@@ -1,8 +1,5 @@
-import fs from "fs";
-import path from "path";
-import url from "url";
-
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+const fs = require("fs");
+const path = require("path");
 
 const revisionFilePath = path.resolve(
   __dirname,

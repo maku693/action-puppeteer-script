@@ -2,7 +2,6 @@
   "name": "actions-puppeteer-script",
   "version": "0.1.0",
   "description": "An action to write Puppeteer scripts as workflows",
-  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "prebuild": "node script/extract-recommended-chromium-version.js",

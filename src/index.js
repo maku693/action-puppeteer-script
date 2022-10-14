@@ -1,12 +1,9 @@
-import fs from "fs/promises";
-import path from "path";
-import url from "url";
-import core from "@actions/core";
-import tc from "@actions/tool-cache";
-import puppeteer from "puppeteer-core";
-import { CHROMIUM_REVISION } from "./chromium-revision";
-
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+const fs = require("fs/promises");
+const path = require("path");
+const core = require("@actions/core");
+const tc = require("@actions/tool-cache");
+const puppeteer = require("puppeteer-core");
+const { CHROMIUM_REVISION } = require("./chromium-revision");
 
 async function main() {
   const script = core.getInput("script", { required: true });
