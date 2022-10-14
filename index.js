@@ -40,13 +40,15 @@ async function findOrDownloadChromium() {
   } else {
     core.info(`Chromium cache not found; Downloading`);
     const downloadPath = path.resolve(__dirname, "tmp");
-    const revisionInfo = await puppeteer
-      .createBrowserFetcher({
+    const browserFetcher = new puppeteer.BrowserFetcher({
         path: downloadPath,
-      })
-      .download(latestRevision, (x, y) => {
+    });
+    const revisionInfo = await browserFetcher.download(
+      latestRevision,
+      (x, y) => {
         core.debug(`Download progress: ${x}/${y}`);
-      });
+      }
+    );
     core.info("Download finished!");
 
     core.debug("Revision info: ", revisionInfo);
