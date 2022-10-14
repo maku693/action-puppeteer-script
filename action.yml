@@ -1,5 +1,8 @@
 name: Puppeteer Script
 description: An action to write Puppeteer scripts as workflows
+branding:
+  color: blue
+  icon: globe
 inputs:
   script:
     description: The script to run
