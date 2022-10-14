@@ -3,7 +3,7 @@ const path = require("path");
 const core = require("@actions/core");
 const tc = require("@actions/tool-cache");
 const puppeteer = require("puppeteer-core");
-const { fetch } = require("undici");
+const { CHROMIUM_REVISION } = require("./chromium-revision");
 
 async function main() {
   const script = core.getInput("script", { required: true });
@@ -26,17 +26,10 @@ async function main() {
 }
 
 async function findOrDownloadChromium() {
-  core.info("Fetching latest chrome revison");
-  const latestRevision = await (async () => {
-    const res = await fetch(
-      "https://www.googleapis.com/download/storage/v1/b/chromium-browser-snapshots/o/Mac%2FLAST_CHANGE?alt=media"
-    );
-    return res.text();
-  })();
-  core.info(`Latest Chromium revision: ${latestRevision}`);
+  core.info(`Target Chromium revision: ${CHROMIUM_REVISION}`);
 
   // Download and create cache if cache is not found
-  let cachedPath = tc.find("chromium", latestRevision);
+  let cachedPath = tc.find("chromium", CHROMIUM_REVISION);
   if (cachedPath) {
     core.info("Using cached Chromium");
   } else {
@@ -46,7 +39,7 @@ async function findOrDownloadChromium() {
       path: downloadPath,
     });
     const revisionInfo = await browserFetcher.download(
-      latestRevision,
+      CHROMIUM_REVISION,
       (x, y) => {
         core.debug(`Download progress: ${x}/${y}`);
       }
@@ -64,7 +57,7 @@ async function findOrDownloadChromium() {
     cachedPath = await tc.cacheDir(
       revisionInfo.folderPath,
       "chromium",
-      latestRevision
+      CHROMIUM_REVISION
     );
   }
 

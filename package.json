@@ -4,6 +4,7 @@
   "description": "An action to write Puppeteer scripts as workflows",
   "main": "dist/index.js",
   "scripts": {
+    "prebuild": "node script/extract-recommended-chromium-version.js",
     "build": "ncc build index.js --license licenses.txt"
   },
   "author": "Shota Hamada",
@@ -12,8 +13,7 @@
     "@actions/core": "^1.10.0",
     "@actions/io": "^1.1.2",
     "@actions/tool-cache": "^2.0.1",
-    "puppeteer-core": "^19.0.0",
-    "undici": "^5.11.0"
+    "puppeteer-core": "^19.0.0"
   },
   "devDependencies": {
     "@vercel/ncc": "^0.34.0",
