@@ -4,7 +4,7 @@ import url from "url";
 import core from "@actions/core";
 import tc from "@actions/tool-cache";
 import puppeteer from "puppeteer-core";
-import { CHROMIUM_REVISION } from "./chromium-revision";
+import { CHROMIUM_REVISION } from "./chromium-revision.js";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
