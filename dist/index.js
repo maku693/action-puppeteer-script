@@ -47687,7 +47687,7 @@ async function main() {
     core.info("Script running");
     const result = JSON.stringify(await callAsyncFunction({ browser }, script));
     core.debug(`result: ${result}`);
-    core.setOutput(result);
+    core.setOutput("result", result);
     core.info("Script finished!");
   } catch (error) {
     core.error("Error during running script");
