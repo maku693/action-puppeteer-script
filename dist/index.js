@@ -1,14 +1,6 @@
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 161:
-/***/ ((module) => {
-
-module.exports.CHROMIUM_REVISION = "1045629";
-
-
-/***/ }),
-
 /***/ 7351:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -28468,6 +28460,14 @@ function defaultCallback(err) {
 
 /***/ }),
 
+/***/ 1942:
+/***/ ((module) => {
+
+module.exports.CHROMIUM_REVISION = "1045629";
+
+
+/***/ }),
+
 /***/ 1269:
 /***/ ((module) => {
 
@@ -47671,7 +47671,7 @@ const path = __nccwpck_require__(1017);
 const core = __nccwpck_require__(2186);
 const tc = __nccwpck_require__(7784);
 const puppeteer = __nccwpck_require__(4807);
-const { CHROMIUM_REVISION } = __nccwpck_require__(161);
+const { CHROMIUM_REVISION } = __nccwpck_require__(1942);
 
 async function main() {
   const script = core.getInput("script", { required: true });
