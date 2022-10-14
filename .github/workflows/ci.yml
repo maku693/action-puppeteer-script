@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - id: return-result
+      - id: get-title
         uses: ./
         with:
           script: |
@@ -26,4 +26,13 @@ jobs:
             await page.goto('https://example.com');
             const title = await page.$eval('title', el => el.textContent);
             return { title };
-      - run: test '${{ steps.return-result.outputs.result }}' = '{"title":"Example Domain"}'
+      - run: test '${{ steps.get-title.outputs.result }}' = '{"title":"Example Domain"}'
+      - id: get-body
+        uses: ./
+        with:
+          script: |
+            const page = await browser.newPage();
+            await page.goto('https://example.com');
+            const body = await page.$eval('body', el => el.textContent.trim());
+            return body;
+      - run: echo '${{ steps.get-body.outputs.result }}' | tr -d '"'
