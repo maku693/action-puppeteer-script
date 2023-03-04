@@ -5312,6 +5312,2720 @@ chownr.sync = chownrSync
 
 /***/ }),
 
+/***/ 985:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2021 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BidiServer = void 0;
+const CommandProcessor_js_1 = __nccwpck_require__(7002);
+const browsingContextStorage_js_1 = __nccwpck_require__(7652);
+const EventEmitter_js_1 = __nccwpck_require__(6111);
+const EventManager_js_1 = __nccwpck_require__(8701);
+const processingQueue_js_1 = __nccwpck_require__(9300);
+const realmStorage_js_1 = __nccwpck_require__(4716);
+class BidiServer extends EventEmitter_js_1.EventEmitter {
+    #messageQueue;
+    #transport;
+    #commandProcessor;
+    #browsingContextStorage;
+    #realmStorage;
+    #logger;
+    constructor(bidiTransport, cdpConnection, selfTargetId, parser, logger) {
+        super();
+        this.#logger = logger;
+        this.#browsingContextStorage = new browsingContextStorage_js_1.BrowsingContextStorage();
+        this.#realmStorage = new realmStorage_js_1.RealmStorage();
+        this.#messageQueue = new processingQueue_js_1.ProcessingQueue(this.#processOutgoingMessage, undefined, this.#logger);
+        this.#transport = bidiTransport;
+        this.#transport.setOnMessage(this.#handleIncomingMessage);
+        this.#commandProcessor = new CommandProcessor_js_1.CommandProcessor(this.#realmStorage, cdpConnection, new EventManager_js_1.EventManager(this), selfTargetId, parser, this.#browsingContextStorage, this.#logger);
+        this.#commandProcessor.on('response', (response) => {
+            this.emitOutgoingMessage(response);
+        });
+    }
+    static async createAndStart(bidiTransport, cdpConnection, selfTargetId, parser, logger) {
+        const server = new BidiServer(bidiTransport, cdpConnection, selfTargetId, parser, logger);
+        const cdpClient = cdpConnection.browserClient();
+        // Needed to get events about new targets.
+        await cdpClient.sendCommand('Target.setDiscoverTargets', { discover: true });
+        // Needed to automatically attach to new targets.
+        await cdpClient.sendCommand('Target.setAutoAttach', {
+            autoAttach: true,
+            waitForDebuggerOnStart: true,
+            flatten: true,
+        });
+        await server.topLevelContextsLoaded();
+        return server;
+    }
+    async topLevelContextsLoaded() {
+        await Promise.all(this.#browsingContextStorage
+            .getTopLevelContexts()
+            .map((c) => c.awaitLoaded()));
+    }
+    #processOutgoingMessage = async (messageEntry) => {
+        const message = messageEntry.message;
+        if (messageEntry.channel !== null) {
+            message['channel'] = messageEntry.channel;
+        }
+        await this.#transport.sendMessage(message);
+    };
+    /**
+     * Sends BiDi message.
+     */
+    emitOutgoingMessage(messageEntry) {
+        this.#messageQueue.add(messageEntry);
+    }
+    close() {
+        this.#transport.close();
+    }
+    #handleIncomingMessage = async (message) => {
+        this.#commandProcessor.processCommand(message);
+    };
+    getBrowsingContextStorage() {
+        return this.#browsingContextStorage;
+    }
+}
+exports.BidiServer = BidiServer;
+//# sourceMappingURL=BidiServer.js.map
+
+/***/ }),
+
+/***/ 7002:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2021 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CommandProcessor = void 0;
+const protocol_js_1 = __nccwpck_require__(315);
+const browsingContextProcessor_js_1 = __nccwpck_require__(1538);
+const EventEmitter_js_1 = __nccwpck_require__(6111);
+const OutgoingBidiMessage_js_1 = __nccwpck_require__(8596);
+class BidiNoOpParser {
+    parseGetRealmsParams(params) {
+        return params;
+    }
+    parseCallFunctionParams(params) {
+        return params;
+    }
+    parseEvaluateParams(params) {
+        return params;
+    }
+    parseDisownParams(params) {
+        return params;
+    }
+    parseSendCommandParams(params) {
+        return params;
+    }
+    parseGetSessionParams(params) {
+        return params;
+    }
+    parseNavigateParams(params) {
+        return params;
+    }
+    parseGetTreeParams(params) {
+        return params;
+    }
+    parseSubscribeParams(params) {
+        return params;
+    }
+    parseCreateParams(params) {
+        return params;
+    }
+    parseCloseParams(params) {
+        return params;
+    }
+}
+class CommandProcessor extends EventEmitter_js_1.EventEmitter {
+    #contextProcessor;
+    #eventManager;
+    #parser;
+    constructor(realmStorage, cdpConnection, eventManager, selfTargetId, parser = new BidiNoOpParser(), browsingContextStorage, logger) {
+        super();
+        this.#eventManager = eventManager;
+        this.#contextProcessor = new browsingContextProcessor_js_1.BrowsingContextProcessor(realmStorage, cdpConnection, selfTargetId, eventManager, browsingContextStorage, logger);
+        this.#parser = parser;
+    }
+    // noinspection JSMethodCanBeStatic,JSUnusedLocalSymbols
+    async #process_session_status() {
+        return { result: { ready: false, message: 'already connected' } };
+    }
+    async #process_session_subscribe(params, channel) {
+        await this.#eventManager.subscribe(params.events, params.contexts ?? [null], channel);
+        return { result: {} };
+    }
+    async #process_session_unsubscribe(params, channel) {
+        await this.#eventManager.unsubscribe(params.events, params.contexts ?? [null], channel);
+        return { result: {} };
+    }
+    async #processCommand(commandData) {
+        switch (commandData.method) {
+            case 'session.status':
+                return await this.#process_session_status();
+            case 'session.subscribe':
+                return await this.#process_session_subscribe(this.#parser.parseSubscribeParams(commandData.params), commandData.channel ?? null);
+            case 'session.unsubscribe':
+                return await this.#process_session_unsubscribe(this.#parser.parseSubscribeParams(commandData.params), commandData.channel ?? null);
+            case 'browsingContext.create':
+                return await this.#contextProcessor.process_browsingContext_create(this.#parser.parseCreateParams(commandData.params));
+            case 'browsingContext.close':
+                return await this.#contextProcessor.process_browsingContext_close(this.#parser.parseCloseParams(commandData.params));
+            case 'browsingContext.getTree':
+                return await this.#contextProcessor.process_browsingContext_getTree(this.#parser.parseGetTreeParams(commandData.params));
+            case 'browsingContext.navigate':
+                return await this.#contextProcessor.process_browsingContext_navigate(this.#parser.parseNavigateParams(commandData.params));
+            case 'script.getRealms':
+                return this.#contextProcessor.process_script_getRealms(this.#parser.parseGetRealmsParams(commandData.params));
+            case 'script.callFunction':
+                return await this.#contextProcessor.process_script_callFunction(this.#parser.parseCallFunctionParams(commandData.params));
+            case 'script.evaluate':
+                return await this.#contextProcessor.process_script_evaluate(this.#parser.parseEvaluateParams(commandData.params));
+            case 'script.disown':
+                return await this.#contextProcessor.process_script_disown(this.#parser.parseDisownParams(commandData.params));
+            case 'cdp.sendCommand':
+                return await this.#contextProcessor.process_cdp_sendCommand(this.#parser.parseSendCommandParams(commandData.params));
+            case 'cdp.getSession':
+                return await this.#contextProcessor.process_cdp_getSession(this.#parser.parseGetSessionParams(commandData.params));
+            default:
+                throw new protocol_js_1.Message.UnknownCommandException(`Unknown command '${commandData.method}'.`);
+        }
+    }
+    processCommand = async (command) => {
+        try {
+            const result = await this.#processCommand(command);
+            const response = {
+                id: command.id,
+                ...result,
+            };
+            this.emit('response', OutgoingBidiMessage_js_1.OutgoingBidiMessage.createResolved(response, command.channel ?? null));
+        }
+        catch (e) {
+            if (e instanceof protocol_js_1.Message.ErrorResponseClass) {
+                const errorResponse = e;
+                this.emit('response', OutgoingBidiMessage_js_1.OutgoingBidiMessage.createResolved(errorResponse.toErrorResponse(command.id), command.channel ?? null));
+            }
+            else {
+                const error = e;
+                console.error(error);
+                this.emit('response', OutgoingBidiMessage_js_1.OutgoingBidiMessage.createResolved(new protocol_js_1.Message.UnknownException(error.message).toErrorResponse(command.id), command.channel ?? null));
+            }
+        }
+    };
+}
+exports.CommandProcessor = CommandProcessor;
+//# sourceMappingURL=CommandProcessor.js.map
+
+/***/ }),
+
+/***/ 8596:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2021 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OutgoingBidiMessage = void 0;
+class OutgoingBidiMessage {
+    #message;
+    #channel;
+    constructor(message, channel) {
+        this.#message = message;
+        this.#channel = channel;
+    }
+    static async createFromPromise(messagePromise, channel) {
+        const message = await messagePromise;
+        return new OutgoingBidiMessage(message, channel);
+    }
+    static createResolved(message, channel) {
+        return Promise.resolve(new OutgoingBidiMessage(message, channel));
+    }
+    get message() {
+        return this.#message;
+    }
+    get channel() {
+        return this.#channel;
+    }
+}
+exports.OutgoingBidiMessage = OutgoingBidiMessage;
+//# sourceMappingURL=OutgoingBidiMessage.js.map
+
+/***/ }),
+
+/***/ 1796:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.EventEmitter = exports.BidiServer = void 0;
+var BidiServer_js_1 = __nccwpck_require__(985);
+Object.defineProperty(exports, "BidiServer", ({ enumerable: true, get: function () { return BidiServer_js_1.BidiServer; } }));
+var EventEmitter_js_1 = __nccwpck_require__(6111);
+Object.defineProperty(exports, "EventEmitter", ({ enumerable: true, get: function () { return EventEmitter_js_1.EventEmitter; } }));
+//# sourceMappingURL=bidiMapper.js.map
+
+/***/ }),
+
+/***/ 177:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BrowsingContextImpl = void 0;
+const protocol_js_1 = __nccwpck_require__(315);
+const deferred_js_1 = __nccwpck_require__(3343);
+const logManager_js_1 = __nccwpck_require__(3805);
+const realm_js_1 = __nccwpck_require__(3874);
+class BrowsingContextImpl {
+    #targetDefers = {
+        documentInitialized: new deferred_js_1.Deferred(),
+        targetUnblocked: new deferred_js_1.Deferred(),
+        Page: {
+            navigatedWithinDocument: new deferred_js_1.Deferred(),
+            lifecycleEvent: {
+                DOMContentLoaded: new deferred_js_1.Deferred(),
+                load: new deferred_js_1.Deferred(),
+            },
+        },
+    };
+    #contextId;
+    #parentId;
+    #cdpBrowserContextId;
+    #eventManager;
+    #children = new Map();
+    #realmStorage;
+    #url = 'about:blank';
+    #loaderId = null;
+    #cdpSessionId;
+    #cdpClient;
+    #maybeDefaultRealm;
+    #browsingContextStorage;
+    get #defaultRealm() {
+        if (this.#maybeDefaultRealm === undefined) {
+            throw new Error(`No default realm for browsing context ${this.#contextId}`);
+        }
+        return this.#maybeDefaultRealm;
+    }
+    constructor(realmStorage, contextId, parentId, cdpClient, cdpSessionId, cdpBrowserContextId, eventManager, browsingContextStorage) {
+        this.#realmStorage = realmStorage;
+        this.#contextId = contextId;
+        this.#parentId = parentId;
+        this.#cdpClient = cdpClient;
+        this.#cdpBrowserContextId = cdpBrowserContextId;
+        this.#eventManager = eventManager;
+        this.#cdpSessionId = cdpSessionId;
+        this.#browsingContextStorage = browsingContextStorage;
+        this.#initListeners();
+        this.#browsingContextStorage.addContext(this);
+    }
+    static async createFrameContext(realmStorage, contextId, parentId, cdpClient, cdpSessionId, eventManager, browsingContextStorage) {
+        const context = new BrowsingContextImpl(realmStorage, contextId, parentId, cdpClient, cdpSessionId, null, eventManager, browsingContextStorage);
+        context.#targetDefers.targetUnblocked.resolve();
+        await eventManager.registerEvent({
+            method: protocol_js_1.BrowsingContext.EventNames.ContextCreatedEvent,
+            params: context.serializeToBidiValue(),
+        }, context.contextId);
+    }
+    static async createTargetContext(realmStorage, contextId, parentId, cdpClient, cdpSessionId, cdpBrowserContextId, eventManager, browsingContextStorage) {
+        const context = new BrowsingContextImpl(realmStorage, contextId, parentId, cdpClient, cdpSessionId, cdpBrowserContextId, eventManager, browsingContextStorage);
+        // No need in waiting for target to be unblocked.
+        // noinspection ES6MissingAwait
+        context.#unblockAttachedTarget();
+        await eventManager.registerEvent({
+            method: protocol_js_1.BrowsingContext.EventNames.ContextCreatedEvent,
+            params: context.serializeToBidiValue(),
+        }, context.contextId);
+    }
+    get cdpBrowserContextId() {
+        return this.#cdpBrowserContextId;
+    }
+    // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable
+    get navigableId() {
+        return this.#loaderId;
+    }
+    convertFrameToTargetContext(cdpClient, cdpSessionId) {
+        this.#updateConnection(cdpClient, cdpSessionId);
+        // No need in waiting for target to be unblocked.
+        // noinspection JSIgnoredPromiseFromCall
+        this.#unblockAttachedTarget();
+    }
+    async delete() {
+        await this.#removeChildContexts();
+        this.#realmStorage.deleteRealms({
+            browsingContextId: this.contextId,
+        });
+        // Remove context from the parent.
+        if (this.parentId !== null) {
+            const parent = this.#browsingContextStorage.getKnownContext(this.parentId);
+            parent.#children.delete(this.contextId);
+        }
+        await this.#eventManager.registerEvent({
+            method: protocol_js_1.BrowsingContext.EventNames.ContextDestroyedEvent,
+            params: this.serializeToBidiValue(),
+        }, this.contextId);
+        this.#browsingContextStorage.removeContext(this.contextId);
+    }
+    async #removeChildContexts() {
+        await Promise.all(this.children.map((child) => child.delete()));
+    }
+    #updateConnection(cdpClient, cdpSessionId) {
+        if (!this.#targetDefers.targetUnblocked.isFinished) {
+            this.#targetDefers.targetUnblocked.reject('OOPiF');
+        }
+        this.#targetDefers.targetUnblocked = new deferred_js_1.Deferred();
+        this.#cdpClient = cdpClient;
+        this.#cdpSessionId = cdpSessionId;
+        this.#initListeners();
+    }
+    async #unblockAttachedTarget() {
+        logManager_js_1.LogManager.create(this.#realmStorage, this.#cdpClient, this.#cdpSessionId, this.#eventManager);
+        await this.#cdpClient.sendCommand('Runtime.enable');
+        await this.#cdpClient.sendCommand('Page.enable');
+        await this.#cdpClient.sendCommand('Page.setLifecycleEventsEnabled', {
+            enabled: true,
+        });
+        await this.#cdpClient.sendCommand('Target.setAutoAttach', {
+            autoAttach: true,
+            waitForDebuggerOnStart: true,
+            flatten: true,
+        });
+        await this.#cdpClient.sendCommand('Runtime.runIfWaitingForDebugger');
+        this.#targetDefers.targetUnblocked.resolve();
+    }
+    get contextId() {
+        return this.#contextId;
+    }
+    get parentId() {
+        return this.#parentId;
+    }
+    get cdpSessionId() {
+        return this.#cdpSessionId;
+    }
+    get children() {
+        return Array.from(this.#children.values());
+    }
+    get url() {
+        return this.#url;
+    }
+    addChild(child) {
+        this.#children.set(child.contextId, child);
+    }
+    async awaitLoaded() {
+        await this.#targetDefers.Page.lifecycleEvent.load;
+    }
+    async awaitUnblocked() {
+        await this.#targetDefers.targetUnblocked;
+    }
+    serializeToBidiValue(maxDepth = 0, addParentFiled = true) {
+        return {
+            context: this.#contextId,
+            url: this.url,
+            children: maxDepth > 0
+                ? this.children.map((c) => c.serializeToBidiValue(maxDepth - 1, false))
+                : null,
+            ...(addParentFiled ? { parent: this.#parentId } : {}),
+        };
+    }
+    #initListeners() {
+        this.#cdpClient.on('Target.targetInfoChanged', (params) => {
+            if (this.contextId !== params.targetInfo.targetId) {
+                return;
+            }
+            this.#url = params.targetInfo.url;
+        });
+        this.#cdpClient.on('Page.frameNavigated', async (params) => {
+            if (this.contextId !== params.frame.id) {
+                return;
+            }
+            this.#url = params.frame.url + (params.frame.urlFragment ?? '');
+            // At the point the page is initiated, all the nested iframes from the
+            // previous page are detached and realms are destroyed.
+            // Remove context's children.
+            await this.#removeChildContexts();
+            // Remove all the already created realms.
+            this.#realmStorage.deleteRealms({ browsingContextId: this.contextId });
+        });
+        this.#cdpClient.on('Page.navigatedWithinDocument', (params) => {
+            if (this.contextId !== params.frameId) {
+                return;
+            }
+            this.#url = params.url;
+            this.#targetDefers.Page.navigatedWithinDocument.resolve(params);
+        });
+        this.#cdpClient.on('Page.lifecycleEvent', async (params) => {
+            if (this.contextId !== params.frameId) {
+                return;
+            }
+            if (params.name === 'init') {
+                this.#documentChanged(params.loaderId);
+                this.#targetDefers.documentInitialized.resolve();
+            }
+            if (params.name === 'commit') {
+                this.#loaderId = params.loaderId;
+                return;
+            }
+            if (params.loaderId !== this.#loaderId) {
+                return;
+            }
+            switch (params.name) {
+                case 'DOMContentLoaded':
+                    this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded.resolve(params);
+                    await this.#eventManager.registerEvent({
+                        method: protocol_js_1.BrowsingContext.EventNames.DomContentLoadedEvent,
+                        params: {
+                            context: this.contextId,
+                            navigation: this.#loaderId,
+                            url: this.#url,
+                        },
+                    }, this.contextId);
+                    break;
+                case 'load':
+                    this.#targetDefers.Page.lifecycleEvent.load.resolve(params);
+                    await this.#eventManager.registerEvent({
+                        method: protocol_js_1.BrowsingContext.EventNames.LoadEvent,
+                        params: {
+                            context: this.contextId,
+                            navigation: this.#loaderId,
+                            url: this.#url,
+                        },
+                    }, this.contextId);
+                    break;
+            }
+        });
+        this.#cdpClient.on('Runtime.executionContextCreated', (params) => {
+            if (params.context.auxData.frameId !== this.contextId) {
+                return;
+            }
+            // Only this execution contexts are supported for now.
+            if (!['default', 'isolated'].includes(params.context.auxData.type)) {
+                return;
+            }
+            const realm = new realm_js_1.Realm(this.#realmStorage, params.context.uniqueId, this.contextId, this.navigableId ?? 'UNKNOWN', params.context.id, this.#getOrigin(params), 
+            // TODO: differentiate types.
+            'window', 
+            // Sandbox name for isolated world.
+            params.context.auxData.type === 'isolated'
+                ? params.context.name
+                : undefined, this.#cdpSessionId, this.#cdpClient);
+            if (params.context.auxData.isDefault) {
+                this.#maybeDefaultRealm = realm;
+            }
+        });
+        this.#cdpClient.on('Runtime.executionContextDestroyed', (params) => {
+            this.#realmStorage.deleteRealms({
+                cdpSessionId: this.#cdpSessionId,
+                executionContextId: params.executionContextId,
+            });
+        });
+    }
+    #getOrigin(params) {
+        if (params.context.auxData.type === 'isolated') {
+            // Sandbox should have the same origin as the context itself, but in CDP
+            // it has an empty one.
+            return this.#defaultRealm.origin;
+        }
+        // https://html.spec.whatwg.org/multipage/origin.html#ascii-serialisation-of-an-origin
+        return ['://', ''].includes(params.context.origin)
+            ? 'null'
+            : params.context.origin;
+    }
+    #documentChanged(loaderId) {
+        if (this.#loaderId === loaderId) {
+            return;
+        }
+        if (!this.#targetDefers.documentInitialized.isFinished) {
+            this.#targetDefers.documentInitialized.reject('Document changed');
+        }
+        this.#targetDefers.documentInitialized = new deferred_js_1.Deferred();
+        if (!this.#targetDefers.Page.navigatedWithinDocument.isFinished) {
+            this.#targetDefers.Page.navigatedWithinDocument.reject('Document changed');
+        }
+        this.#targetDefers.Page.navigatedWithinDocument =
+            new deferred_js_1.Deferred();
+        if (!this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded.isFinished) {
+            this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded.reject('Document changed');
+        }
+        this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded =
+            new deferred_js_1.Deferred();
+        if (!this.#targetDefers.Page.lifecycleEvent.load.isFinished) {
+            this.#targetDefers.Page.lifecycleEvent.load.reject('Document changed');
+        }
+        this.#targetDefers.Page.lifecycleEvent.load =
+            new deferred_js_1.Deferred();
+        this.#loaderId = loaderId;
+    }
+    async navigate(url, wait) {
+        await this.#targetDefers.targetUnblocked;
+        // TODO: handle loading errors.
+        const cdpNavigateResult = await this.#cdpClient.sendCommand('Page.navigate', {
+            url,
+            frameId: this.contextId,
+        });
+        if (cdpNavigateResult.errorText) {
+            throw new protocol_js_1.Message.UnknownException(cdpNavigateResult.errorText);
+        }
+        if (cdpNavigateResult.loaderId !== undefined &&
+            cdpNavigateResult.loaderId !== this.#loaderId) {
+            this.#documentChanged(cdpNavigateResult.loaderId);
+        }
+        // Wait for `wait` condition.
+        switch (wait) {
+            case 'none':
+                break;
+            case 'interactive':
+                // No `loaderId` means same-document navigation.
+                if (cdpNavigateResult.loaderId === undefined) {
+                    await this.#targetDefers.Page.navigatedWithinDocument;
+                }
+                else {
+                    await this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded;
+                }
+                break;
+            case 'complete':
+                // No `loaderId` means same-document navigation.
+                if (cdpNavigateResult.loaderId === undefined) {
+                    await this.#targetDefers.Page.navigatedWithinDocument;
+                }
+                else {
+                    await this.#targetDefers.Page.lifecycleEvent.load;
+                }
+                break;
+            default:
+                throw new Error(`Not implemented wait '${wait}'`);
+        }
+        return {
+            result: {
+                navigation: cdpNavigateResult.loaderId || null,
+                url: url,
+            },
+        };
+    }
+    async getOrCreateSandbox(sandbox) {
+        if (sandbox === undefined || sandbox === '') {
+            return this.#defaultRealm;
+        }
+        let maybeSandboxes = this.#realmStorage.findRealms({
+            browsingContextId: this.contextId,
+            sandbox,
+        });
+        if (maybeSandboxes.length === 0) {
+            await this.#cdpClient.sendCommand('Page.createIsolatedWorld', {
+                frameId: this.contextId,
+                worldName: sandbox,
+            });
+            // `Runtime.executionContextCreated` should be emitted by the time the
+            // previous command is done.
+            maybeSandboxes = this.#realmStorage.findRealms({
+                browsingContextId: this.contextId,
+                sandbox,
+            });
+        }
+        if (maybeSandboxes.length !== 1) {
+            throw Error(`Sandbox ${sandbox} wasn't created.`);
+        }
+        return maybeSandboxes[0];
+    }
+}
+exports.BrowsingContextImpl = BrowsingContextImpl;
+//# sourceMappingURL=browsingContextImpl.js.map
+
+/***/ }),
+
+/***/ 1538:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BrowsingContextProcessor = void 0;
+/**
+ * Copyright 2021 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+const protocol_js_1 = __nccwpck_require__(315);
+const log_js_1 = __nccwpck_require__(5598);
+const browsingContextImpl_js_1 = __nccwpck_require__(177);
+class BrowsingContextProcessor {
+    #browsingContextStorage;
+    #cdpConnection;
+    #eventManager;
+    #logger;
+    #realmStorage;
+    #selfTargetId;
+    #sessions;
+    constructor(realmStorage, cdpConnection, selfTargetId, eventManager, browsingContextStorage, logger) {
+        this.#browsingContextStorage = browsingContextStorage;
+        this.#cdpConnection = cdpConnection;
+        this.#eventManager = eventManager;
+        this.#logger = logger;
+        this.#realmStorage = realmStorage;
+        this.#selfTargetId = selfTargetId;
+        this.#sessions = new Set();
+        this.#setBrowserClientEventListeners(this.#cdpConnection.browserClient());
+    }
+    #setBrowserClientEventListeners(browserClient) {
+        this.#setTargetEventListeners(browserClient);
+    }
+    #setTargetEventListeners(cdpClient) {
+        cdpClient.on('Target.attachedToTarget', async (params) => {
+            await this.#handleAttachedToTargetEvent(params, cdpClient);
+        });
+        cdpClient.on('Target.detachedFromTarget', async (params) => {
+            await this.#handleDetachedFromTargetEvent(params);
+        });
+    }
+    #setSessionEventListeners(sessionId) {
+        if (this.#sessions.has(sessionId)) {
+            return;
+        }
+        this.#sessions.add(sessionId);
+        const sessionCdpClient = this.#cdpConnection.getCdpClient(sessionId);
+        this.#setTargetEventListeners(sessionCdpClient);
+        sessionCdpClient.on('*', async (method, params) => {
+            await this.#eventManager.registerEvent({
+                method: protocol_js_1.CDP.EventNames.EventReceivedEvent,
+                params: {
+                    cdpMethod: method,
+                    cdpParams: params || {},
+                    cdpSession: sessionId,
+                },
+            }, null);
+        });
+        sessionCdpClient.on('Page.frameAttached', async (params) => {
+            await browsingContextImpl_js_1.BrowsingContextImpl.createFrameContext(this.#realmStorage, params.frameId, params.parentFrameId, sessionCdpClient, sessionId, this.#eventManager, this.#browsingContextStorage);
+        });
+    }
+    async #handleAttachedToTargetEvent(params, parentSessionCdpClient) {
+        const { sessionId, targetInfo } = params;
+        const targetSessionCdpClient = this.#cdpConnection.getCdpClient(sessionId);
+        if (!this.#isValidTarget(targetInfo)) {
+            // DevTools or some other not supported by BiDi target.
+            await targetSessionCdpClient.sendCommand('Runtime.runIfWaitingForDebugger');
+            await parentSessionCdpClient.sendCommand('Target.detachFromTarget', params);
+            return;
+        }
+        this.#logger?.(log_js_1.LogType.browsingContexts, 'AttachedToTarget event received:', JSON.stringify(params, null, 2));
+        this.#setSessionEventListeners(sessionId);
+        if (this.#browsingContextStorage.hasKnownContext(targetInfo.targetId)) {
+            // OOPiF.
+            this.#browsingContextStorage
+                .getKnownContext(targetInfo.targetId)
+                .convertFrameToTargetContext(targetSessionCdpClient, sessionId);
+        }
+        else {
+            await browsingContextImpl_js_1.BrowsingContextImpl.createTargetContext(this.#realmStorage, targetInfo.targetId, null, targetSessionCdpClient, sessionId, params.targetInfo.browserContextId ?? null, this.#eventManager, this.#browsingContextStorage);
+        }
+    }
+    // { "method": "Target.detachedFromTarget",
+    //   "params": {
+    //     "sessionId": "7EFBFB2A4942A8989B3EADC561BC46E9",
+    //     "targetId": "19416886405CBA4E03DBB59FA67FF4E8" } }
+    async #handleDetachedFromTargetEvent(params) {
+        // TODO: params.targetId is deprecated. Update this class to track using
+        // params.sessionId instead.
+        // https://github.com/GoogleChromeLabs/chromium-bidi/issues/60
+        const contextId = params.targetId;
+        await this.#browsingContextStorage.findContext(contextId)?.delete();
+    }
+    async process_browsingContext_getTree(params) {
+        const resultContexts = params.root === undefined
+            ? this.#browsingContextStorage.getTopLevelContexts()
+            : [this.#browsingContextStorage.getKnownContext(params.root)];
+        return {
+            result: {
+                contexts: resultContexts.map((c) => c.serializeToBidiValue(params.maxDepth ?? Number.MAX_VALUE)),
+            },
+        };
+    }
+    async process_browsingContext_create(params) {
+        const browserCdpClient = this.#cdpConnection.browserClient();
+        let referenceContext = undefined;
+        if (params.referenceContext !== undefined) {
+            referenceContext = this.#browsingContextStorage.getKnownContext(params.referenceContext);
+            if (referenceContext.parentId !== null) {
+                throw new protocol_js_1.Message.InvalidArgumentException(`referenceContext should be a top-level context`);
+            }
+        }
+        const result = await browserCdpClient.sendCommand('Target.createTarget', {
+            url: 'about:blank',
+            newWindow: params.type === 'window',
+            ...(referenceContext?.cdpBrowserContextId
+                ? { browserContextId: referenceContext.cdpBrowserContextId }
+                : {}),
+        });
+        // Wait for the new tab to be loaded to avoid race conditions in the
+        // `browsingContext` events, when the `browsingContext.domContentLoaded` and
+        // `browsingContext.load` events from the initial `about:blank` navigation
+        // are emitted after the next navigation is started.
+        // Details: https://github.com/web-platform-tests/wpt/issues/35846
+        const contextId = result.targetId;
+        const context = this.#browsingContextStorage.getKnownContext(contextId);
+        await context.awaitLoaded();
+        return {
+            result: context.serializeToBidiValue(1),
+        };
+    }
+    async process_browsingContext_navigate(params) {
+        const context = this.#browsingContextStorage.getKnownContext(params.context);
+        return await context.navigate(params.url, params.wait === undefined ? 'none' : params.wait);
+    }
+    async #getRealm(target) {
+        if ('realm' in target) {
+            return this.#realmStorage.getRealm({
+                realmId: target.realm,
+            });
+        }
+        const context = this.#browsingContextStorage.getKnownContext(target.context);
+        return await context.getOrCreateSandbox(target.sandbox);
+    }
+    async process_script_evaluate(params) {
+        const realm = await this.#getRealm(params.target);
+        return await realm.scriptEvaluate(params.expression, params.awaitPromise, params.resultOwnership ?? 'none', this.#browsingContextStorage);
+    }
+    process_script_getRealms(params) {
+        if (params.context !== undefined) {
+            // Make sure the context is known.
+            this.#browsingContextStorage.getKnownContext(params.context);
+        }
+        const realms = this.#realmStorage
+            .findRealms({
+            browsingContextId: params.context,
+            type: params.type,
+        })
+            .map((realm) => realm.toBiDi());
+        return { result: { realms } };
+    }
+    async process_script_callFunction(params) {
+        const realm = await this.#getRealm(params.target);
+        return await realm.callFunction(params.functionDeclaration, params.this || {
+            type: 'undefined',
+        }, // `this` is `undefined` by default.
+        params.arguments || [], // `arguments` is `[]` by default.
+        params.awaitPromise, params.resultOwnership ?? 'none', this.#browsingContextStorage);
+    }
+    async process_script_disown(params) {
+        const realm = await this.#getRealm(params.target);
+        await Promise.all(params.handles.map(async (h) => await realm.disown(h)));
+        return { result: {} };
+    }
+    async process_browsingContext_close(commandParams) {
+        const browserCdpClient = this.#cdpConnection.browserClient();
+        const context = this.#browsingContextStorage.getKnownContext(commandParams.context);
+        if (context.parentId !== null) {
+            throw new protocol_js_1.Message.InvalidArgumentException('Not a top-level browsing context cannot be closed.');
+        }
+        const detachedFromTargetPromise = new Promise((resolve) => {
+            const onContextDestroyed = (eventParams) => {
+                if (eventParams.targetId === commandParams.context) {
+                    browserCdpClient.off('Target.detachedFromTarget', onContextDestroyed);
+                    resolve();
+                }
+            };
+            browserCdpClient.on('Target.detachedFromTarget', onContextDestroyed);
+        });
+        await this.#cdpConnection
+            .browserClient()
+            .sendCommand('Target.closeTarget', {
+            targetId: commandParams.context,
+        });
+        // Sometimes CDP command finishes before `detachedFromTarget` event,
+        // sometimes after. Wait for the CDP command to be finished, and then wait
+        // for `detachedFromTarget` if it hasn't emitted.
+        await detachedFromTargetPromise;
+        return { result: {} };
+    }
+    #isValidTarget(target) {
+        if (target.targetId === this.#selfTargetId) {
+            return false;
+        }
+        return ['page', 'iframe'].includes(target.type);
+    }
+    async process_cdp_sendCommand(params) {
+        const client = params.cdpSession
+            ? this.#cdpConnection.getCdpClient(params.cdpSession)
+            : this.#cdpConnection.browserClient();
+        const sendCdpCommandResult = await client.sendCommand(params.cdpMethod, params.cdpParams);
+        return {
+            result: sendCdpCommandResult,
+            cdpSession: params.cdpSession,
+        };
+    }
+    async process_cdp_getSession(params) {
+        const context = params.context;
+        const sessionId = this.#browsingContextStorage.getKnownContext(context).cdpSessionId;
+        if (sessionId === undefined) {
+            return { result: { cdpSession: null } };
+        }
+        return { result: { cdpSession: sessionId } };
+    }
+}
+exports.BrowsingContextProcessor = BrowsingContextProcessor;
+//# sourceMappingURL=browsingContextProcessor.js.map
+
+/***/ }),
+
+/***/ 7652:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BrowsingContextStorage = void 0;
+const protocol_js_1 = __nccwpck_require__(315);
+class BrowsingContextStorage {
+    #contexts = new Map();
+    getTopLevelContexts() {
+        return Array.from(this.#contexts.values()).filter((c) => c.parentId === null);
+    }
+    removeContext(contextId) {
+        this.#contexts.delete(contextId);
+    }
+    addContext(context) {
+        this.#contexts.set(context.contextId, context);
+        if (context.parentId !== null) {
+            this.getKnownContext(context.parentId).addChild(context);
+        }
+    }
+    hasKnownContext(contextId) {
+        return this.#contexts.has(contextId);
+    }
+    findContext(contextId) {
+        return this.#contexts.get(contextId);
+    }
+    getKnownContext(contextId) {
+        const result = this.findContext(contextId);
+        if (result === undefined) {
+            throw new protocol_js_1.Message.NoSuchFrameException(`Context ${contextId} not found`);
+        }
+        return result;
+    }
+}
+exports.BrowsingContextStorage = BrowsingContextStorage;
+//# sourceMappingURL=browsingContextStorage.js.map
+
+/***/ }),
+
+/***/ 8701:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.EventManager = void 0;
+const buffer_js_1 = __nccwpck_require__(5860);
+const idWrapper_js_1 = __nccwpck_require__(3018);
+const OutgoingBidiMessage_js_1 = __nccwpck_require__(8596);
+const SubscriptionManager_js_1 = __nccwpck_require__(9793);
+class EventWrapper extends idWrapper_js_1.IdWrapper {
+    #contextId;
+    #event;
+    constructor(event, contextId) {
+        super();
+        this.#contextId = contextId;
+        this.#event = event;
+    }
+    get contextId() {
+        return this.#contextId;
+    }
+    get event() {
+        return this.#event;
+    }
+}
+/**
+ * Maps event name to a desired buffer length.
+ */
+const eventBufferLength = new Map([
+    ['log.entryAdded', 100],
+]);
+class EventManager {
+    /**
+     * Maps event name to a set of contexts where this event already happened.
+     * Needed for getting buffered events from all the contexts in case of
+     * subscripting to all contexts.
+     */
+    #eventToContextsMap = new Map();
+    /**
+     * Maps `eventName` + `browsingContext` to buffer. Used to get buffered events
+     * during subscription. Channel-agnostic.
+     */
+    #eventBuffers = new Map();
+    /**
+     * Maps `eventName` + `browsingContext` + `channel` to last sent event id.
+     * Used to avoid sending duplicated events when user
+     * subscribes -> unsubscribes -> subscribes.
+     */
+    #lastMessageSent = new Map();
+    #subscriptionManager;
+    #bidiServer;
+    constructor(bidiServer) {
+        this.#bidiServer = bidiServer;
+        this.#subscriptionManager = new SubscriptionManager_js_1.SubscriptionManager(bidiServer.getBrowsingContextStorage());
+    }
+    /**
+     * Returns consistent key to be used to access value maps.
+     */
+    #getMapKey(eventName, browsingContext, channel = undefined) {
+        return JSON.stringify({ eventName, browsingContext, channel });
+    }
+    async registerEvent(event, contextId) {
+        await this.registerPromiseEvent(Promise.resolve(event), contextId, event.method);
+    }
+    async registerPromiseEvent(event, contextId, eventName) {
+        const eventWrapper = new EventWrapper(event, contextId);
+        const sortedChannels = this.#subscriptionManager.getChannelsSubscribedToEvent(eventName, contextId);
+        this.#bufferEvent(eventWrapper, eventName);
+        // Send events to channels in the subscription priority.
+        for (const channel of sortedChannels) {
+            this.#bidiServer.emitOutgoingMessage(OutgoingBidiMessage_js_1.OutgoingBidiMessage.createFromPromise(event, channel));
+            this.#markEventSent(eventWrapper, channel, eventName);
+        }
+    }
+    async subscribe(events, contextIds, channel) {
+        for (const eventName of events) {
+            for (const contextId of contextIds) {
+                if (contextId !== null &&
+                    !this.#bidiServer
+                        .getBrowsingContextStorage()
+                        .hasKnownContext(contextId)) {
+                    // Unknown context. Do nothing.
+                    continue;
+                }
+                this.#subscriptionManager.subscribe(eventName, contextId, channel);
+                for (const eventWrapper of this.#getBufferedEvents(eventName, contextId, channel)) {
+                    // The order of the events is important.
+                    this.#bidiServer.emitOutgoingMessage(OutgoingBidiMessage_js_1.OutgoingBidiMessage.createFromPromise(eventWrapper.event, channel));
+                    this.#markEventSent(eventWrapper, channel, eventName);
+                }
+            }
+        }
+    }
+    async unsubscribe(events, contextIds, channel) {
+        for (const event of events) {
+            for (const contextId of contextIds) {
+                this.#subscriptionManager.unsubscribe(event, contextId, channel);
+            }
+        }
+    }
+    /**
+     * If the event is buffer-able, put it in the buffer.
+     */
+    #bufferEvent(eventWrapper, eventName) {
+        if (!eventBufferLength.has(eventName)) {
+            // Do nothing if the event is no buffer-able.
+            return;
+        }
+        const bufferMapKey = this.#getMapKey(eventName, eventWrapper.contextId);
+        if (!this.#eventBuffers.has(bufferMapKey)) {
+            this.#eventBuffers.set(bufferMapKey, new buffer_js_1.Buffer(eventBufferLength.get(eventName)));
+        }
+        this.#eventBuffers.get(bufferMapKey).add(eventWrapper);
+        // Add the context to the list of contexts having `eventName` events.
+        if (!this.#eventToContextsMap.has(eventName)) {
+            this.#eventToContextsMap.set(eventName, new Set());
+        }
+        this.#eventToContextsMap.get(eventName).add(eventWrapper.contextId);
+    }
+    /**
+     * If the event is buffer-able, mark it as sent to the given contextId and channel.
+     */
+    #markEventSent(eventWrapper, channel, eventName) {
+        if (!eventBufferLength.has(eventName)) {
+            // Do nothing if the event is no buffer-able.
+            return;
+        }
+        const lastSentMapKey = this.#getMapKey(eventName, eventWrapper.contextId, channel);
+        this.#lastMessageSent.set(lastSentMapKey, Math.max(this.#lastMessageSent.get(lastSentMapKey) ?? 0, eventWrapper.id));
+    }
+    /**
+     * Returns events which are buffered and not yet sent to the given channel events.
+     */
+    #getBufferedEvents(eventName, contextId, channel) {
+        const bufferMapKey = this.#getMapKey(eventName, contextId);
+        const lastSentMapKey = this.#getMapKey(eventName, contextId, channel);
+        const lastSentMessageId = this.#lastMessageSent.get(lastSentMapKey) ?? -Infinity;
+        const result = this.#eventBuffers
+            .get(bufferMapKey)
+            ?.get()
+            .filter((wrapper) => wrapper.id > lastSentMessageId) ?? [];
+        if (contextId === null) {
+            // For global subscriptions, events buffered in each context should be sent back.
+            Array.from(this.#eventToContextsMap.get(eventName)?.keys() ?? [])
+                // Events without context are already in the result.
+                .filter((_contextId) => _contextId !== null)
+                .map((_contextId) => this.#getBufferedEvents(eventName, _contextId, channel))
+                .forEach((events) => result.push(...events));
+        }
+        return result.sort((e1, e2) => e1.id - e2.id);
+    }
+}
+exports.EventManager = EventManager;
+//# sourceMappingURL=EventManager.js.map
+
+/***/ }),
+
+/***/ 9793:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SubscriptionManager = void 0;
+const protocol_js_1 = __nccwpck_require__(315);
+class SubscriptionManager {
+    #subscriptionPriority = 0;
+    // BrowsingContext `null` means the event has subscription across all the
+    // browsing contexts.
+    // Channel `null` means no `channel` should be added.
+    #channelToContextToEventMap = new Map();
+    #browsingContextStorage;
+    constructor(browsingContextStorage) {
+        this.#browsingContextStorage = browsingContextStorage;
+    }
+    getChannelsSubscribedToEvent(eventMethod, contextId) {
+        const prioritiesAndChannels = Array.from(this.#channelToContextToEventMap.keys())
+            .map((channel) => ({
+            priority: this.#getEventSubscriptionPriorityForChannel(eventMethod, contextId, channel),
+            channel,
+        }))
+            .filter(({ priority }) => priority !== null);
+        // Sort channels by priority.
+        return prioritiesAndChannels
+            .sort((a, b) => a.priority - b.priority)
+            .map(({ channel }) => channel);
+    }
+    #getEventSubscriptionPriorityForChannel(eventMethod, contextId, channel) {
+        const contextToEventMap = this.#channelToContextToEventMap.get(channel);
+        if (contextToEventMap === undefined) {
+            return null;
+        }
+        // Get all the subscription priorities.
+        const priorities = this.#getRelevantContexts(contextId)
+            .map((c) => contextToEventMap.get(c)?.get(eventMethod))
+            .filter((p) => p !== undefined);
+        if (priorities.length === 0) {
+            // Not subscribed, return null.
+            return null;
+        }
+        // Return minimal priority.
+        return Math.min(...priorities);
+    }
+    #getRelevantContexts(contextId) {
+        // `null` covers global subscription.
+        const result = [null];
+        while (contextId !== null) {
+            result.push(contextId);
+            const maybeParentContext = this.#browsingContextStorage.findContext(contextId);
+            contextId = maybeParentContext?.parentId ?? null;
+        }
+        return result;
+    }
+    subscribe(event, contextId, channel) {
+        if (event === protocol_js_1.BrowsingContext.AllEvents) {
+            Object.values(protocol_js_1.BrowsingContext.EventNames).map((specificEvent) => this.subscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (event === protocol_js_1.CDP.AllEvents) {
+            Object.values(protocol_js_1.CDP.EventNames).map((specificEvent) => this.subscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (event === protocol_js_1.Log.AllEvents) {
+            Object.values(protocol_js_1.Log.EventNames).map((specificEvent) => this.subscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (!this.#channelToContextToEventMap.has(channel)) {
+            this.#channelToContextToEventMap.set(channel, new Map());
+        }
+        const contextToEventMap = this.#channelToContextToEventMap.get(channel);
+        if (!contextToEventMap.has(contextId)) {
+            contextToEventMap.set(contextId, new Map());
+        }
+        const eventMap = contextToEventMap.get(contextId);
+        // Do not re-subscribe to events to keep the priority.
+        if (eventMap.has(event)) {
+            return;
+        }
+        eventMap.set(event, this.#subscriptionPriority++);
+    }
+    unsubscribe(event, contextId, channel) {
+        if (event === protocol_js_1.BrowsingContext.AllEvents) {
+            Object.values(protocol_js_1.BrowsingContext.EventNames).map((specificEvent) => this.unsubscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (event === protocol_js_1.CDP.AllEvents) {
+            Object.values(protocol_js_1.CDP.EventNames).map((specificEvent) => this.unsubscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (event === protocol_js_1.Log.AllEvents) {
+            Object.values(protocol_js_1.Log.EventNames).map((specificEvent) => this.unsubscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (!this.#channelToContextToEventMap.has(channel)) {
+            return;
+        }
+        const contextToEventMap = this.#channelToContextToEventMap.get(channel);
+        if (!contextToEventMap.has(contextId)) {
+            return;
+        }
+        const eventMap = contextToEventMap.get(contextId);
+        eventMap.delete(event);
+        // Clean up maps if empty.
+        if (eventMap.size === 0) {
+            contextToEventMap.delete(event);
+        }
+        if (contextToEventMap.size === 0) {
+            this.#channelToContextToEventMap.delete(channel);
+        }
+    }
+}
+exports.SubscriptionManager = SubscriptionManager;
+//# sourceMappingURL=SubscriptionManager.js.map
+
+/***/ }),
+
+/***/ 9283:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getRemoteValuesText = exports.logMessageFormatter = void 0;
+const specifiers = ['%s', '%d', '%i', '%f', '%o', '%O', '%c'];
+function isFormmatSpecifier(str) {
+    return specifiers.some((spec) => str.includes(spec));
+}
+/**
+ * @param args input remote values to be format printed
+ * @returns parsed text of the remote values in specific format
+ */
+function logMessageFormatter(args) {
+    let output = '';
+    const argFormat = args[0].value.toString();
+    const argValues = args.slice(1, undefined);
+    const tokens = argFormat.split(new RegExp(specifiers.map((spec) => `(${spec})`).join('|'), 'g'));
+    for (const token of tokens) {
+        if (token === undefined || token === '') {
+            continue;
+        }
+        if (isFormmatSpecifier(token)) {
+            const arg = argValues.shift();
+            // raise an exception when less value is provided
+            if (arg === undefined) {
+                throw new Error(`Less value is provided: "${getRemoteValuesText(args, false)}"`);
+            }
+            if (token === '%s') {
+                output += stringFromArg(arg);
+            }
+            else if (token === '%d' || token === '%i') {
+                if (arg.type === 'bigint' ||
+                    arg.type === 'number' ||
+                    arg.type === 'string') {
+                    output += parseInt(arg.value.toString(), 10);
+                }
+                else {
+                    output += 'NaN';
+                }
+            }
+            else if (token === '%f') {
+                if (arg.type === 'bigint' ||
+                    arg.type === 'number' ||
+                    arg.type === 'string') {
+                    output += parseFloat(arg.value.toString());
+                }
+                else {
+                    output += 'NaN';
+                }
+            }
+            else {
+                // %o, %O, %c
+                output += toJson(arg);
+            }
+        }
+        else {
+            output += token;
+        }
+    }
+    // raise an exception when more value is provided
+    if (argValues.length > 0) {
+        throw new Error(`More value is provided: "${getRemoteValuesText(args, false)}"`);
+    }
+    return output;
+}
+exports.logMessageFormatter = logMessageFormatter;
+/**
+ * @param arg input remote value to be parsed
+ * @returns parsed text of the remote value
+ *
+ * input: {"type": "number", "value": 1}
+ * output: 1
+ *
+ * input: {"type": "string", "value": "abc"}
+ * output: "abc"
+ *
+ * input: {"type": "object",  "value": [["id", {"type": "number", "value": 1}]]}
+ * output: '{"id": 1}'
+ *
+ * input: {"type": "object", "value": [["font-size", {"type": "string", "value": "20px"}]]}
+ * output: '{"font-size": "20px"}'
+ */
+function toJson(arg) {
+    // arg type validation
+    if (arg.type !== 'array' &&
+        arg.type !== 'bigint' &&
+        arg.type !== 'date' &&
+        arg.type !== 'number' &&
+        arg.type !== 'object' &&
+        arg.type !== 'string') {
+        return stringFromArg(arg);
+    }
+    if (arg.type === 'bigint') {
+        return `${arg.value.toString()}n`;
+    }
+    if (arg.type === 'number') {
+        return arg.value.toString();
+    }
+    if (['date', 'string'].includes(arg.type)) {
+        return JSON.stringify(arg.value);
+    }
+    if (arg.type === 'object') {
+        return `{${arg.value
+            .map((pair) => {
+            return `${JSON.stringify(pair[0])}:${toJson(pair[1])}`;
+        })
+            .join(',')}}`;
+    }
+    if (arg.type === 'array') {
+        return `[${arg.value.map((val) => toJson(val)).join(',')}]`;
+    }
+    throw Error(`Invalid value type: ${arg.toString()}`);
+}
+function stringFromArg(arg) {
+    if (!Object.hasOwn(arg, 'value')) {
+        return arg.type;
+    }
+    switch (arg.type) {
+        case 'string':
+        case 'number':
+        case 'boolean':
+        case 'bigint':
+            return String(arg.value);
+        case 'regexp':
+            return `/${arg.value.pattern}/${arg.value.flags}`;
+        case 'date':
+            return new Date(arg.value).toString();
+        case 'object':
+            return `Object(${arg.value?.length})`;
+        case 'array':
+            return `Array(${arg.value?.length})`;
+        case 'map':
+            return `Map(${arg.value.length})`;
+        case 'set':
+            return `Set(${arg.value.length})`;
+        case 'node':
+            return 'node';
+        default:
+            return arg.type;
+    }
+}
+function getRemoteValuesText(args, formatText) {
+    const arg = args[0];
+    if (!arg) {
+        return '';
+    }
+    // if args[0] is a format specifier, format the args as output
+    if (arg.type === 'string' &&
+        isFormmatSpecifier(arg.value.toString()) &&
+        formatText) {
+        return logMessageFormatter(args);
+    }
+    // if args[0] is not a format specifier, just join the args with \u0020
+    return args
+        .map((arg) => {
+        return stringFromArg(arg);
+    })
+        .join('\u0020');
+}
+exports.getRemoteValuesText = getRemoteValuesText;
+//# sourceMappingURL=logHelper.js.map
+
+/***/ }),
+
+/***/ 3805:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LogManager = void 0;
+/**
+ * Copyright 2021 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+const protocol_js_1 = __nccwpck_require__(315);
+const logHelper_js_1 = __nccwpck_require__(9283);
+/** Converts CDP StackTrace object to Bidi StackTrace object. */
+function getBidiStackTrace(cdpStackTrace) {
+    const stackFrames = cdpStackTrace?.callFrames.map((callFrame) => {
+        return {
+            columnNumber: callFrame.columnNumber,
+            functionName: callFrame.functionName,
+            lineNumber: callFrame.lineNumber,
+            url: callFrame.url,
+        };
+    });
+    return stackFrames ? { callFrames: stackFrames } : undefined;
+}
+function getLogLevel(consoleApiType) {
+    if (['assert', 'error'].includes(consoleApiType)) {
+        return 'error';
+    }
+    if (['debug', 'trace'].includes(consoleApiType)) {
+        return 'debug';
+    }
+    if (['warn', 'warning'].includes(consoleApiType)) {
+        return 'warn';
+    }
+    return 'info';
+}
+class LogManager {
+    #cdpClient;
+    #cdpSessionId;
+    #eventManager;
+    #realmStorage;
+    constructor(realmStorage, cdpClient, cdpSessionId, eventManager) {
+        this.#realmStorage = realmStorage;
+        this.#cdpSessionId = cdpSessionId;
+        this.#cdpClient = cdpClient;
+        this.#eventManager = eventManager;
+    }
+    static create(realmStorage, cdpClient, cdpSessionId, eventManager) {
+        const logManager = new LogManager(realmStorage, cdpClient, cdpSessionId, eventManager);
+        logManager.#initialize();
+        return logManager;
+    }
+    #initialize() {
+        this.#initializeLogEntryAddedEventListener();
+    }
+    #initializeLogEntryAddedEventListener() {
+        this.#cdpClient.on('Runtime.consoleAPICalled', (params) => {
+            // Try to find realm by `cdpSessionId` and `executionContextId`,
+            // if provided.
+            const realm = this.#realmStorage.findRealm({
+                cdpSessionId: this.#cdpSessionId,
+                executionContextId: params.executionContextId,
+            });
+            const argsPromise = realm === undefined
+                ? Promise.resolve(params.args)
+                : // Properly serialize arguments if possible.
+                    Promise.all(params.args.map((arg) => {
+                        return realm.serializeCdpObject(arg, 'none');
+                    }));
+            // No need in waiting for the result, just register the event promise.
+            // noinspection JSIgnoredPromiseFromCall
+            this.#eventManager.registerPromiseEvent(argsPromise.then((args) => ({
+                method: protocol_js_1.Log.EventNames.LogEntryAddedEvent,
+                params: {
+                    level: getLogLevel(params.type),
+                    source: {
+                        realm: realm?.realmId ?? 'UNKNOWN',
+                        context: realm?.browsingContextId ?? 'UNKNOWN',
+                    },
+                    text: (0, logHelper_js_1.getRemoteValuesText)(args, true),
+                    timestamp: Math.round(params.timestamp),
+                    stackTrace: getBidiStackTrace(params.stackTrace),
+                    type: 'console',
+                    // Console method is `warn`, not `warning`.
+                    method: params.type === 'warning' ? 'warn' : params.type,
+                    args,
+                },
+            })), realm?.browsingContextId ?? 'UNKNOWN', protocol_js_1.Log.EventNames.LogEntryAddedEvent);
+        });
+        this.#cdpClient.on('Runtime.exceptionThrown', (params) => {
+            // Try to find realm by `cdpSessionId` and `executionContextId`,
+            // if provided.
+            const realm = this.#realmStorage.findRealm({
+                cdpSessionId: this.#cdpSessionId,
+                executionContextId: params.exceptionDetails.executionContextId,
+            });
+            // Try all the best to get the exception text.
+            const textPromise = (async () => {
+                if (!params.exceptionDetails.exception) {
+                    return params.exceptionDetails.text;
+                }
+                if (realm === undefined) {
+                    return JSON.stringify(params.exceptionDetails.exception);
+                }
+                return await realm.stringifyObject(params.exceptionDetails.exception);
+            })();
+            // No need in waiting for the result, just register the event promise.
+            // noinspection JSIgnoredPromiseFromCall
+            this.#eventManager.registerPromiseEvent(textPromise.then((text) => ({
+                method: protocol_js_1.Log.EventNames.LogEntryAddedEvent,
+                params: {
+                    level: 'error',
+                    source: {
+                        realm: realm?.realmId ?? 'UNKNOWN',
+                        context: realm?.browsingContextId ?? 'UNKNOWN',
+                    },
+                    text,
+                    timestamp: Math.round(params.timestamp),
+                    stackTrace: getBidiStackTrace(params.exceptionDetails.stackTrace),
+                    type: 'javascript',
+                },
+            })), realm?.browsingContextId ?? 'UNKNOWN', protocol_js_1.Log.EventNames.LogEntryAddedEvent);
+        });
+    }
+}
+exports.LogManager = LogManager;
+//# sourceMappingURL=logManager.js.map
+
+/***/ }),
+
+/***/ 3874:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Realm = void 0;
+const scriptEvaluator_js_1 = __nccwpck_require__(1376);
+const scriptEvaluator = new scriptEvaluator_js_1.ScriptEvaluator();
+class Realm {
+    #realmStorage;
+    #realmId;
+    #browsingContextId;
+    #navigableId;
+    #executionContextId;
+    #origin;
+    #type;
+    #cdpClient;
+    sandbox;
+    cdpSessionId;
+    constructor(realmStorage, realmId, browsingContextId, navigableId, executionContextId, origin, type, sandbox, cdpSessionId, cdpClient) {
+        this.#realmId = realmId;
+        this.#browsingContextId = browsingContextId;
+        this.#navigableId = navigableId;
+        this.#executionContextId = executionContextId;
+        this.sandbox = sandbox;
+        this.#origin = origin;
+        this.#type = type;
+        this.cdpSessionId = cdpSessionId;
+        this.#cdpClient = cdpClient;
+        this.#realmStorage = realmStorage;
+        this.#realmStorage.realmMap.set(this.#realmId, this);
+    }
+    async disown(handle) {
+        // Disowning an object from different realm does nothing.
+        if (this.#realmStorage.knownHandlesToRealm.get(handle) !== this.realmId) {
+            return;
+        }
+        try {
+            await this.cdpClient.sendCommand('Runtime.releaseObject', {
+                objectId: handle,
+            });
+        }
+        catch (e) {
+            // Heuristic to determine if the problem is in the unknown handler.
+            // Ignore the error if so.
+            if (!(e.code === -32000 && e.message === 'Invalid remote object id')) {
+                throw e;
+            }
+        }
+        this.#realmStorage.knownHandlesToRealm.delete(handle);
+    }
+    async cdpToBidiValue(cdpValue, resultOwnership) {
+        const cdpWebDriverValue = cdpValue.result.webDriverValue;
+        const bidiValue = this.webDriverValueToBiDi(cdpWebDriverValue);
+        if (cdpValue.result.objectId) {
+            const objectId = cdpValue.result.objectId;
+            if (resultOwnership === 'root') {
+                // Extend BiDi value with `handle` based on required `resultOwnership`
+                // and  CDP response but not on the actual BiDi type.
+                bidiValue.handle = objectId;
+                // Remember all the handles sent to client.
+                this.#realmStorage.knownHandlesToRealm.set(objectId, this.realmId);
+            }
+            else {
+                // No need in waiting for the object to be released.
+                // noinspection ES6MissingAwait
+                this.cdpClient.sendCommand('Runtime.releaseObject', { objectId });
+            }
+        }
+        return bidiValue;
+    }
+    webDriverValueToBiDi(webDriverValue) {
+        // This relies on the CDP to implement proper BiDi serialization, except
+        // backendNodeId/sharedId.
+        const result = webDriverValue;
+        const bidiValue = result.value;
+        if (bidiValue === undefined) {
+            return result;
+        }
+        if (result.type === 'node') {
+            if (Object.hasOwn(bidiValue, 'backendNodeId')) {
+                bidiValue.sharedId = `${this.navigableId}${scriptEvaluator_js_1.SHARED_ID_DIVIDER}${bidiValue.backendNodeId}`;
+                delete bidiValue['backendNodeId'];
+            }
+            if (Object.hasOwn(bidiValue, 'children')) {
+                for (const i in bidiValue.children) {
+                    bidiValue.children[i] = this.webDriverValueToBiDi(bidiValue.children[i]);
+                }
+            }
+        }
+        // Recursively update the nested values.
+        if (['array', 'set'].includes(webDriverValue.type)) {
+            for (const i in bidiValue) {
+                bidiValue[i] = this.webDriverValueToBiDi(bidiValue[i]);
+            }
+        }
+        if (['object', 'map'].includes(webDriverValue.type)) {
+            for (const i in bidiValue) {
+                bidiValue[i] = [
+                    this.webDriverValueToBiDi(bidiValue[i][0]),
+                    this.webDriverValueToBiDi(bidiValue[i][1]),
+                ];
+            }
+        }
+        return result;
+    }
+    toBiDi() {
+        return {
+            realm: this.realmId,
+            origin: this.origin,
+            type: this.type,
+            context: this.browsingContextId,
+            ...(this.sandbox === undefined ? {} : { sandbox: this.sandbox }),
+        };
+    }
+    get realmId() {
+        return this.#realmId;
+    }
+    get navigableId() {
+        return this.#navigableId;
+    }
+    get browsingContextId() {
+        return this.#browsingContextId;
+    }
+    get executionContextId() {
+        return this.#executionContextId;
+    }
+    get origin() {
+        return this.#origin;
+    }
+    get type() {
+        return this.#type;
+    }
+    get cdpClient() {
+        return this.#cdpClient;
+    }
+    async callFunction(functionDeclaration, _this, _arguments, awaitPromise, resultOwnership, browsingContextStorage) {
+        const context = browsingContextStorage.getKnownContext(this.browsingContextId);
+        await context.awaitUnblocked();
+        return {
+            result: await scriptEvaluator.callFunction(this, functionDeclaration, _this, _arguments, awaitPromise, resultOwnership),
+        };
+    }
+    async scriptEvaluate(expression, awaitPromise, resultOwnership, browsingContextStorage) {
+        const context = browsingContextStorage.getKnownContext(this.browsingContextId);
+        await context.awaitUnblocked();
+        return {
+            result: await scriptEvaluator.scriptEvaluate(this, expression, awaitPromise, resultOwnership),
+        };
+    }
+    /**
+     * Serializes a given CDP object into BiDi, keeping references in the
+     * target's `globalThis`.
+     * @param cdpObject CDP remote object to be serialized.
+     * @param resultOwnership indicates desired OwnershipModel.
+     */
+    async serializeCdpObject(cdpObject, resultOwnership) {
+        return await scriptEvaluator.serializeCdpObject(cdpObject, resultOwnership, this);
+    }
+    /**
+     * Gets the string representation of an object. This is equivalent to
+     * calling toString() on the object value.
+     * @param cdpObject CDP remote object representing an object.
+     * @param realm
+     * @returns string The stringified object.
+     */
+    async stringifyObject(cdpObject) {
+        return await (0, scriptEvaluator_js_1.stringifyObject)(cdpObject, this);
+    }
+}
+exports.Realm = Realm;
+//# sourceMappingURL=realm.js.map
+
+/***/ }),
+
+/***/ 4716:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RealmStorage = void 0;
+const protocol_js_1 = __nccwpck_require__(315);
+class RealmStorage {
+    /** Tracks handles and their realms sent to the client. */
+    #knownHandlesToRealm = new Map();
+    #realmMap = new Map();
+    get knownHandlesToRealm() {
+        return this.#knownHandlesToRealm;
+    }
+    get realmMap() {
+        return this.#realmMap;
+    }
+    findRealms(filter) {
+        return Array.from(this.#realmMap.values()).filter((realm) => {
+            if (filter.realmId !== undefined && filter.realmId !== realm.realmId) {
+                return false;
+            }
+            if (filter.browsingContextId !== undefined &&
+                filter.browsingContextId !== realm.browsingContextId) {
+                return false;
+            }
+            if (filter.navigableId !== undefined &&
+                filter.navigableId !== realm.navigableId) {
+                return false;
+            }
+            if (filter.executionContextId !== undefined &&
+                filter.executionContextId !== realm.executionContextId) {
+                return false;
+            }
+            if (filter.origin !== undefined && filter.origin !== realm.origin) {
+                return false;
+            }
+            if (filter.type !== undefined && filter.type !== realm.type) {
+                return false;
+            }
+            if (filter.sandbox !== undefined && filter.sandbox !== realm.sandbox) {
+                return false;
+            }
+            if (filter.cdpSessionId !== undefined &&
+                filter.cdpSessionId !== realm.cdpSessionId) {
+                return false;
+            }
+            return true;
+        });
+    }
+    findRealm(filter) {
+        const maybeRealms = this.findRealms(filter);
+        if (maybeRealms.length !== 1) {
+            return undefined;
+        }
+        return maybeRealms[0];
+    }
+    getRealm(filter) {
+        const maybeRealm = this.findRealm(filter);
+        if (maybeRealm === undefined) {
+            throw new protocol_js_1.Message.NoSuchFrameException(`Realm ${JSON.stringify(filter)} not found`);
+        }
+        return maybeRealm;
+    }
+    deleteRealms(filter) {
+        this.findRealms(filter).map((realm) => {
+            this.#realmMap.delete(realm.realmId);
+            Array.from(this.#knownHandlesToRealm.entries())
+                .filter(([, r]) => r === realm.realmId)
+                .map(([h]) => this.#knownHandlesToRealm.delete(h));
+        });
+    }
+}
+exports.RealmStorage = RealmStorage;
+//# sourceMappingURL=realmStorage.js.map
+
+/***/ }),
+
+/***/ 1376:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ScriptEvaluator = exports.stringifyObject = exports.SHARED_ID_DIVIDER = void 0;
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+const protocol_js_1 = __nccwpck_require__(315);
+// As `script.evaluate` wraps call into serialization script, `lineNumber`
+// should be adjusted.
+const CALL_FUNCTION_STACKTRACE_LINE_OFFSET = 1;
+const EVALUATE_STACKTRACE_LINE_OFFSET = 0;
+exports.SHARED_ID_DIVIDER = '_element_';
+function cdpRemoteObjectToCallArgument(cdpRemoteObject) {
+    if (cdpRemoteObject.objectId !== undefined) {
+        return { objectId: cdpRemoteObject.objectId };
+    }
+    if (cdpRemoteObject.unserializableValue !== undefined) {
+        return { unserializableValue: cdpRemoteObject.unserializableValue };
+    }
+    return { value: cdpRemoteObject.value };
+}
+async function deserializeToCdpArg(argumentValue, realm) {
+    if ('sharedId' in argumentValue) {
+        const [navigableId, rawBackendNodeId] = argumentValue.sharedId.split(exports.SHARED_ID_DIVIDER);
+        const backendNodeId = parseInt(rawBackendNodeId ?? '');
+        if (isNaN(backendNodeId) ||
+            backendNodeId === undefined ||
+            navigableId === undefined) {
+            throw new protocol_js_1.Message.InvalidArgumentException(`SharedId "${argumentValue.sharedId}" should have format "{navigableId}${exports.SHARED_ID_DIVIDER}{backendNodeId}".`);
+        }
+        if (realm.navigableId !== navigableId) {
+            throw new protocol_js_1.Message.NoSuchNodeException(`SharedId "${argumentValue.sharedId}" belongs to different document.`);
+        }
+        try {
+            const obj = await realm.cdpClient.sendCommand('DOM.resolveNode', {
+                backendNodeId,
+                executionContextId: realm.executionContextId,
+            });
+            // TODO: release `obj.object.objectId` after using.
+            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
+            return { objectId: obj.object.objectId };
+        }
+        catch (e) {
+            // Heuristic to detect "no such node" exception. Based on the  specific
+            // CDP implementation.
+            if (e.code === -32000 && e.message === 'No node with given id found') {
+                throw new protocol_js_1.Message.NoSuchNodeException(`SharedId "${argumentValue.sharedId}" was not found.`);
+            }
+            throw e;
+        }
+    }
+    if ('handle' in argumentValue) {
+        return { objectId: argumentValue.handle };
+    }
+    switch (argumentValue.type) {
+        // Primitive Protocol Value
+        // https://w3c.github.io/webdriver-bidi/#data-types-protocolValue-primitiveProtocolValue
+        case 'undefined': {
+            return { unserializableValue: 'undefined' };
+        }
+        case 'null': {
+            return { unserializableValue: 'null' };
+        }
+        case 'string': {
+            return { value: argumentValue.value };
+        }
+        case 'number': {
+            if (argumentValue.value === 'NaN') {
+                return { unserializableValue: 'NaN' };
+            }
+            else if (argumentValue.value === '-0') {
+                return { unserializableValue: '-0' };
+            }
+            else if (argumentValue.value === '+Infinity') {
+                return { unserializableValue: '+Infinity' };
+            }
+            else if (argumentValue.value === 'Infinity') {
+                return { unserializableValue: 'Infinity' };
+            }
+            else if (argumentValue.value === '-Infinity') {
+                return { unserializableValue: '-Infinity' };
+            }
+            return {
+                value: argumentValue.value,
+            };
+        }
+        case 'boolean': {
+            return { value: Boolean(argumentValue.value) };
+        }
+        case 'bigint': {
+            return {
+                unserializableValue: `BigInt(${JSON.stringify(argumentValue.value)})`,
+            };
+        }
+        // Local Value
+        // https://w3c.github.io/webdriver-bidi/#data-types-protocolValue-LocalValue
+        case 'date': {
+            return {
+                unserializableValue: `new Date(Date.parse(${JSON.stringify(argumentValue.value)}))`,
+            };
+        }
+        case 'regexp': {
+            return {
+                unserializableValue: `new RegExp(${JSON.stringify(argumentValue.value.pattern)}, ${JSON.stringify(argumentValue.value.flags)})`,
+            };
+        }
+        case 'map': {
+            // TODO(sadym): if non of the nested keys and values has remote
+            // reference, serialize to `unserializableValue` without CDP roundtrip.
+            const keyValueArray = await flattenKeyValuePairs(argumentValue.value, realm);
+            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                functionDeclaration: String((...args) => {
+                    const result = new Map();
+                    for (let i = 0; i < args.length; i += 2) {
+                        result.set(args[i], args[i + 1]);
+                    }
+                    return result;
+                }),
+                awaitPromise: false,
+                arguments: keyValueArray,
+                returnByValue: false,
+                executionContextId: realm.executionContextId,
+            });
+            // TODO: release `argEvalResult.result.objectId`  after using.
+            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
+            return { objectId: argEvalResult.result.objectId };
+        }
+        case 'object': {
+            // TODO(sadym): if non of the nested keys and values has remote
+            //  reference, serialize to `unserializableValue` without CDP roundtrip.
+            const keyValueArray = await flattenKeyValuePairs(argumentValue.value, realm);
+            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                functionDeclaration: String((...args) => {
+                    const result = {};
+                    for (let i = 0; i < args.length; i += 2) {
+                        // Key should be either `string`, `number`, or `symbol`.
+                        const key = args[i];
+                        result[key] = args[i + 1];
+                    }
+                    return result;
+                }),
+                awaitPromise: false,
+                arguments: keyValueArray,
+                returnByValue: false,
+                executionContextId: realm.executionContextId,
+            });
+            // TODO: release `argEvalResult.result.objectId`  after using.
+            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
+            return { objectId: argEvalResult.result.objectId };
+        }
+        case 'array': {
+            // TODO(sadym): if non of the nested items has remote reference,
+            //  serialize to `unserializableValue` without CDP roundtrip.
+            const args = await flattenValueList(argumentValue.value, realm);
+            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                functionDeclaration: String((...args) => {
+                    return args;
+                }),
+                awaitPromise: false,
+                arguments: args,
+                returnByValue: false,
+                executionContextId: realm.executionContextId,
+            });
+            // TODO: release `argEvalResult.result.objectId`  after using.
+            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
+            return { objectId: argEvalResult.result.objectId };
+        }
+        case 'set': {
+            // TODO(sadym): if non of the nested items has remote reference,
+            //  serialize to `unserializableValue` without CDP roundtrip.
+            const args = await flattenValueList(argumentValue.value, realm);
+            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                functionDeclaration: String((...args) => {
+                    return new Set(args);
+                }),
+                awaitPromise: false,
+                arguments: args,
+                returnByValue: false,
+                executionContextId: realm.executionContextId,
+            });
+            // TODO: release `argEvalResult.result.objectId`  after using.
+            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
+            return { objectId: argEvalResult.result.objectId };
+        }
+        // TODO(sadym): dispose nested objects.
+        default:
+            throw new Error(`Value ${JSON.stringify(argumentValue)} is not deserializable.`);
+    }
+}
+async function flattenKeyValuePairs(value, realm) {
+    const keyValueArray = [];
+    for (const pair of value) {
+        const key = pair[0];
+        const value = pair[1];
+        let keyArg;
+        if (typeof key === 'string') {
+            // Key is a string.
+            keyArg = { value: key };
+        }
+        else {
+            // Key is a serialized value.
+            keyArg = await deserializeToCdpArg(key, realm);
+        }
+        const valueArg = await deserializeToCdpArg(value, realm);
+        keyValueArray.push(keyArg);
+        keyValueArray.push(valueArg);
+    }
+    return keyValueArray;
+}
+async function flattenValueList(list, realm) {
+    const result = [];
+    for (const value of list) {
+        result.push(await deserializeToCdpArg(value, realm));
+    }
+    return result;
+}
+/**
+ * Gets the string representation of an object. This is equivalent to
+ * calling toString() on the object value.
+ * @param cdpObject CDP remote object representing an object.
+ * @param realm
+ * @returns string The stringified object.
+ */
+async function stringifyObject(cdpObject, realm) {
+    const stringifyResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+        functionDeclaration: String((obj) => {
+            return String(obj);
+        }),
+        awaitPromise: false,
+        arguments: [cdpObject],
+        returnByValue: true,
+        executionContextId: realm.executionContextId,
+    });
+    return stringifyResult.result.value;
+}
+exports.stringifyObject = stringifyObject;
+class ScriptEvaluator {
+    /**
+     * Serializes a given CDP object into BiDi, keeping references in the
+     * target's `globalThis`.
+     * @param cdpRemoteObject CDP remote object to be serialized.
+     * @param resultOwnership indicates desired OwnershipModel.
+     * @param realm
+     */
+    async serializeCdpObject(cdpRemoteObject, resultOwnership, realm) {
+        const arg = cdpRemoteObjectToCallArgument(cdpRemoteObject);
+        const cdpWebDriverValue = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+            functionDeclaration: String((obj) => obj),
+            awaitPromise: false,
+            arguments: [arg],
+            generateWebDriverValue: true,
+            executionContextId: realm.executionContextId,
+        });
+        return await realm.cdpToBidiValue(cdpWebDriverValue, resultOwnership);
+    }
+    async callFunction(realm, functionDeclaration, _this, _arguments, awaitPromise, resultOwnership) {
+        const callFunctionAndSerializeScript = `(...args)=>{ return _callFunction((\n${functionDeclaration}\n), args);
+      function _callFunction(f, args) {
+        const deserializedThis = args.shift();
+        const deserializedArgs = args;
+        return f.apply(deserializedThis, deserializedArgs);
+      }}`;
+        const thisAndArgumentsList = [await deserializeToCdpArg(_this, realm)];
+        thisAndArgumentsList.push(...(await Promise.all(_arguments.map(async (a) => {
+            return await deserializeToCdpArg(a, realm);
+        }))));
+        let cdpCallFunctionResult;
+        try {
+            cdpCallFunctionResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                functionDeclaration: callFunctionAndSerializeScript,
+                awaitPromise,
+                arguments: thisAndArgumentsList,
+                generateWebDriverValue: true,
+                executionContextId: realm.executionContextId,
+            });
+        }
+        catch (e) {
+            // Heuristic to determine if the problem is in the argument.
+            // The check can be done on the `deserialization` step, but this approach
+            // helps to save round-trips.
+            if (e.code === -32000 &&
+                [
+                    'Could not find object with given id',
+                    'Argument should belong to the same JavaScript world as target object',
+                ].includes(e.message)) {
+                throw new protocol_js_1.Message.InvalidArgumentException('Handle was not found.');
+            }
+            throw e;
+        }
+        if (cdpCallFunctionResult.exceptionDetails) {
+            // Serialize exception details.
+            return {
+                exceptionDetails: await this.#serializeCdpExceptionDetails(cdpCallFunctionResult.exceptionDetails, CALL_FUNCTION_STACKTRACE_LINE_OFFSET, resultOwnership, realm),
+                type: 'exception',
+                realm: realm.realmId,
+            };
+        }
+        return {
+            type: 'success',
+            result: await realm.cdpToBidiValue(cdpCallFunctionResult, resultOwnership),
+            realm: realm.realmId,
+        };
+    }
+    async #serializeCdpExceptionDetails(cdpExceptionDetails, lineOffset, resultOwnership, realm) {
+        const callFrames = cdpExceptionDetails.stackTrace?.callFrames.map((frame) => ({
+            url: frame.url,
+            functionName: frame.functionName,
+            // As `script.evaluate` wraps call into serialization script, so
+            // `lineNumber` should be adjusted.
+            lineNumber: frame.lineNumber - lineOffset,
+            columnNumber: frame.columnNumber,
+        }));
+        const exception = await this.serializeCdpObject(
+        // Exception should always be there.
+        cdpExceptionDetails.exception, resultOwnership, realm);
+        const text = await stringifyObject(cdpExceptionDetails.exception, realm);
+        return {
+            exception,
+            columnNumber: cdpExceptionDetails.columnNumber,
+            // As `script.evaluate` wraps call into serialization script, so
+            // `lineNumber` should be adjusted.
+            lineNumber: cdpExceptionDetails.lineNumber - lineOffset,
+            stackTrace: {
+                callFrames: callFrames || [],
+            },
+            text: text || cdpExceptionDetails.text,
+        };
+    }
+    async scriptEvaluate(realm, expression, awaitPromise, resultOwnership) {
+        const cdpEvaluateResult = await realm.cdpClient.sendCommand('Runtime.evaluate', {
+            contextId: realm.executionContextId,
+            expression,
+            awaitPromise,
+            generateWebDriverValue: true,
+        });
+        if (cdpEvaluateResult.exceptionDetails) {
+            // Serialize exception details.
+            return {
+                exceptionDetails: await this.#serializeCdpExceptionDetails(cdpEvaluateResult.exceptionDetails, EVALUATE_STACKTRACE_LINE_OFFSET, resultOwnership, realm),
+                type: 'exception',
+                realm: realm.realmId,
+            };
+        }
+        return {
+            type: 'success',
+            result: await realm.cdpToBidiValue(cdpEvaluateResult, resultOwnership),
+            realm: realm.realmId,
+        };
+    }
+}
+exports.ScriptEvaluator = ScriptEvaluator;
+//# sourceMappingURL=scriptEvaluator.js.map
+
+/***/ }),
+
+/***/ 315:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CDP = exports.Log = exports.BrowsingContext = exports.Message = void 0;
+var Message;
+(function (Message) {
+    class ErrorResponseClass {
+        constructor(error, message, stacktrace) {
+            this.error = error;
+            this.message = message;
+            this.stacktrace = stacktrace;
+        }
+        error;
+        message;
+        stacktrace;
+        toErrorResponse(commandId) {
+            return {
+                id: commandId,
+                error: this.error,
+                message: this.message,
+                stacktrace: this.stacktrace,
+            };
+        }
+    }
+    Message.ErrorResponseClass = ErrorResponseClass;
+    class UnknownException extends ErrorResponseClass {
+        constructor(message, stacktrace) {
+            super('unknown error', message, stacktrace);
+        }
+    }
+    Message.UnknownException = UnknownException;
+    class UnknownCommandException extends ErrorResponseClass {
+        constructor(message, stacktrace) {
+            super('unknown command', message, stacktrace);
+        }
+    }
+    Message.UnknownCommandException = UnknownCommandException;
+    class InvalidArgumentException extends ErrorResponseClass {
+        constructor(message, stacktrace) {
+            super('invalid argument', message, stacktrace);
+        }
+    }
+    Message.InvalidArgumentException = InvalidArgumentException;
+    class NoSuchNodeException extends ErrorResponseClass {
+        constructor(message, stacktrace) {
+            super('no such node', message, stacktrace);
+        }
+    }
+    Message.NoSuchNodeException = NoSuchNodeException;
+    class NoSuchFrameException extends ErrorResponseClass {
+        constructor(message) {
+            super('no such frame', message);
+        }
+    }
+    Message.NoSuchFrameException = NoSuchFrameException;
+})(Message = exports.Message || (exports.Message = {}));
+// https://w3c.github.io/webdriver-bidi/#module-browsingContext
+var BrowsingContext;
+(function (BrowsingContext) {
+    let EventNames;
+    (function (EventNames) {
+        EventNames["LoadEvent"] = "browsingContext.load";
+        EventNames["DomContentLoadedEvent"] = "browsingContext.domContentLoaded";
+        EventNames["ContextCreatedEvent"] = "browsingContext.contextCreated";
+        EventNames["ContextDestroyedEvent"] = "browsingContext.contextDestroyed";
+    })(EventNames = BrowsingContext.EventNames || (BrowsingContext.EventNames = {}));
+    BrowsingContext.AllEvents = 'browsingContext';
+})(BrowsingContext = exports.BrowsingContext || (exports.BrowsingContext = {}));
+// https://w3c.github.io/webdriver-bidi/#module-log
+var Log;
+(function (Log) {
+    Log.AllEvents = 'log';
+    let EventNames;
+    (function (EventNames) {
+        EventNames["LogEntryAddedEvent"] = "log.entryAdded";
+    })(EventNames = Log.EventNames || (Log.EventNames = {}));
+})(Log = exports.Log || (exports.Log = {}));
+var CDP;
+(function (CDP) {
+    CDP.AllEvents = 'cdp';
+    let EventNames;
+    (function (EventNames) {
+        EventNames["EventReceivedEvent"] = "cdp.eventReceived";
+    })(EventNames = CDP.EventNames || (CDP.EventNames = {}));
+})(CDP = exports.CDP || (exports.CDP = {}));
+//# sourceMappingURL=protocol.js.map
+
+/***/ }),
+
+/***/ 6111:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.EventEmitter = void 0;
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+const mitt_1 = __importDefault(__nccwpck_require__(8578));
+class EventEmitter {
+    #emitter = (0, mitt_1.default)();
+    on(type, handler) {
+        this.#emitter.on(type, handler);
+        return this;
+    }
+    /**
+     * Like `on` but the listener will only be fired once and then it will be removed.
+     * @param event - the event you'd like to listen to
+     * @param handler - the handler function to run when the event occurs
+     * @returns `this` to enable you to chain method calls.
+     */
+    once(event, handler) {
+        const onceHandler = (eventData) => {
+            handler(eventData);
+            this.off(event, onceHandler);
+        };
+        return this.on(event, onceHandler);
+    }
+    off(type, handler) {
+        this.#emitter.off(type, handler);
+        return this;
+    }
+    /**
+     * Emits an event and call any associated listeners.
+     *
+     * @param event - the event you'd like to emit
+     * @param eventData - any data you'd like to emit with the event
+     * @returns `true` if there are any listeners, `false` if there are not.
+     */
+    emit(event, eventData) {
+        this.#emitter.emit(event, eventData);
+    }
+}
+exports.EventEmitter = EventEmitter;
+//# sourceMappingURL=EventEmitter.js.map
+
+/***/ }),
+
+/***/ 5860:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Buffer = void 0;
+/**
+ * Implements a FIFO buffer with a fixed size.
+ */
+class Buffer {
+    #capacity;
+    #entries = [];
+    #onItemRemoved;
+    /**
+     * @param capacity
+     * @param onItemRemoved optional delegate called for each removed element.
+     */
+    constructor(capacity, onItemRemoved = () => { }) {
+        this.#capacity = capacity;
+        this.#onItemRemoved = onItemRemoved;
+    }
+    get() {
+        return this.#entries;
+    }
+    add(value) {
+        this.#entries.push(value);
+        while (this.#entries.length > this.#capacity) {
+            const item = this.#entries.shift();
+            if (item !== undefined) {
+                this.#onItemRemoved(item);
+            }
+        }
+    }
+}
+exports.Buffer = Buffer;
+//# sourceMappingURL=buffer.js.map
+
+/***/ }),
+
+/***/ 3343:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Deferred = void 0;
+class Deferred {
+    #resolve = () => { };
+    #reject = () => { };
+    #promise;
+    #isFinished = false;
+    get isFinished() {
+        return this.#isFinished;
+    }
+    constructor() {
+        this.#promise = new Promise((resolve, reject) => {
+            this.#resolve = resolve;
+            this.#reject = reject;
+        });
+    }
+    then(onFulfilled, onRejected) {
+        return this.#promise.then(onFulfilled, onRejected);
+    }
+    catch(onRejected) {
+        return this.#promise.catch(onRejected);
+    }
+    resolve(value) {
+        this.#isFinished = true;
+        this.#resolve(value);
+    }
+    reject(reason) {
+        this.#isFinished = true;
+        this.#reject(reason);
+    }
+    finally(onFinally) {
+        return this.#promise.finally(onFinally);
+    }
+    [Symbol.toStringTag] = 'Promise';
+}
+exports.Deferred = Deferred;
+//# sourceMappingURL=deferred.js.map
+
+/***/ }),
+
+/***/ 3018:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.IdWrapper = void 0;
+/**
+ * Creates an object with a positive unique incrementing id.
+ */
+class IdWrapper {
+    static #counter = 0;
+    #id;
+    constructor() {
+        this.#id = ++IdWrapper.#counter;
+    }
+    get id() {
+        return this.#id;
+    }
+}
+exports.IdWrapper = IdWrapper;
+//# sourceMappingURL=idWrapper.js.map
+
+/***/ }),
+
+/***/ 5598:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2021 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LogType = void 0;
+var LogType;
+(function (LogType) {
+    LogType["bidi"] = "BiDi Messages";
+    LogType["browsingContexts"] = "Browsing Contexts";
+    LogType["cdp"] = "CDP";
+    LogType["system"] = "System";
+})(LogType = exports.LogType || (exports.LogType = {}));
+//# sourceMappingURL=log.js.map
+
+/***/ }),
+
+/***/ 9300:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ProcessingQueue = void 0;
+const log_js_1 = __nccwpck_require__(5598);
+class ProcessingQueue {
+    #catch;
+    #logger;
+    #processor;
+    #queue = [];
+    // Flag to keep only 1 active processor.
+    #isProcessing = false;
+    constructor(processor, _catch = () => Promise.resolve(), logger) {
+        this.#catch = _catch;
+        this.#processor = processor;
+        this.#logger = logger;
+    }
+    add(entry) {
+        this.#queue.push(entry);
+        // No need in waiting. Just initialise processor if needed.
+        // noinspection JSIgnoredPromiseFromCall
+        this.#processIfNeeded();
+    }
+    async #processIfNeeded() {
+        if (this.#isProcessing) {
+            return;
+        }
+        this.#isProcessing = true;
+        while (this.#queue.length > 0) {
+            const entryPromise = this.#queue.shift();
+            if (entryPromise !== undefined) {
+                await entryPromise
+                    .then((entry) => this.#processor(entry))
+                    .catch((e) => {
+                    this.#logger?.(log_js_1.LogType.system, 'Event was not processed:', e);
+                    this.#catch(e);
+                })
+                    .finally();
+            }
+        }
+        this.#isProcessing = false;
+    }
+}
+exports.ProcessingQueue = ProcessingQueue;
+//# sourceMappingURL=processingQueue.js.map
+
+/***/ }),
+
 /***/ 6891:
 /***/ ((module) => {
 
@@ -11887,6 +14601,15 @@ function globUnescape (s) {
 function regExpEscape (s) {
   return s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')
 }
+
+
+/***/ }),
+
+/***/ 8578:
+/***/ ((module) => {
+
+module.exports=function(n){return{all:n=n||new Map,on:function(e,t){var i=n.get(e);i?i.push(t):n.set(e,[t])},off:function(e,t){var i=n.get(e);i&&(t?i.splice(i.indexOf(t)>>>0,1):n.set(e,[]))},emit:function(e,t){var i=n.get(e);i&&i.slice().map(function(n){n(t)}),(i=n.get("*"))&&i.slice().map(function(n){n(e,t)})}}};
+//# sourceMappingURL=mitt.js.map
 
 
 /***/ }),
@@ -23082,7 +25805,7 @@ function wrappy (fn, cb) {
 "use strict";
 
 
-const WebSocket = __nccwpck_require__(1518);
+const WebSocket = __nccwpck_require__(8875);
 
 WebSocket.createWebSocketStream = __nccwpck_require__(1658);
 WebSocket.Server = __nccwpck_require__(8887);
@@ -23436,7 +26159,7 @@ const EventTarget = {
    * Register an event listener.
    *
    * @param {String} type A string representing the event type to listen for
-   * @param {Function} listener The listener to add
+   * @param {(Function|Object)} handler The listener to add
    * @param {Object} [options] An options object specifies characteristics about
    *     the event listener
    * @param {Boolean} [options.once=false] A `Boolean` indicating that the
@@ -23444,7 +26167,17 @@ const EventTarget = {
    *     the listener would be automatically removed when invoked.
    * @public
    */
-  addEventListener(type, listener, options = {}) {
+  addEventListener(type, handler, options = {}) {
+    for (const listener of this.listeners(type)) {
+      if (
+        !options[kForOnEventAttribute] &&
+        listener[kListener] === handler &&
+        !listener[kForOnEventAttribute]
+      ) {
+        return;
+      }
+    }
+
     let wrapper;
 
     if (type === 'message') {
@@ -23454,7 +26187,7 @@ const EventTarget = {
         });
 
         event[kTarget] = this;
-        listener.call(this, event);
+        callListener(handler, this, event);
       };
     } else if (type === 'close') {
       wrapper = function onClose(code, message) {
@@ -23465,7 +26198,7 @@ const EventTarget = {
         });
 
         event[kTarget] = this;
-        listener.call(this, event);
+        callListener(handler, this, event);
       };
     } else if (type === 'error') {
       wrapper = function onError(error) {
@@ -23475,21 +26208,21 @@ const EventTarget = {
         });
 
         event[kTarget] = this;
-        listener.call(this, event);
+        callListener(handler, this, event);
       };
     } else if (type === 'open') {
       wrapper = function onOpen() {
         const event = new Event('open');
 
         event[kTarget] = this;
-        listener.call(this, event);
+        callListener(handler, this, event);
       };
     } else {
       return;
     }
 
     wrapper[kForOnEventAttribute] = !!options[kForOnEventAttribute];
-    wrapper[kListener] = listener;
+    wrapper[kListener] = handler;
 
     if (options.once) {
       this.once(type, wrapper);
@@ -23502,7 +26235,7 @@ const EventTarget = {
    * Remove an event listener.
    *
    * @param {String} type A string representing the event type to remove
-   * @param {Function} handler The listener to remove
+   * @param {(Function|Object)} handler The listener to remove
    * @public
    */
   removeEventListener(type, handler) {
@@ -23522,6 +26255,22 @@ module.exports = {
   EventTarget,
   MessageEvent
 };
+
+/**
+ * Call an event listener
+ *
+ * @param {(Function|Object)} listener The listener to call
+ * @param {*} thisArg The value to use as `this`` when calling the listener
+ * @param {Event} event The event to pass to the listener
+ * @private
+ */
+function callListener(listener, thisArg, event) {
+  if (typeof listener === 'object' && listener.handleEvent) {
+    listener.handleEvent.call(listener, event);
+  } else {
+    listener.call(thisArg, event);
+  }
+}
 
 
 /***/ }),
@@ -25819,7 +28568,7 @@ const { createHash } = __nccwpck_require__(6113);
 const extension = __nccwpck_require__(2035);
 const PerMessageDeflate = __nccwpck_require__(6684);
 const subprotocol = __nccwpck_require__(6668);
-const WebSocket = __nccwpck_require__(1518);
+const WebSocket = __nccwpck_require__(8875);
 const { GUID, kWebSocket } = __nccwpck_require__(5949);
 
 const keyRegex = /^[+/0-9A-Za-z]{22}==$/;
@@ -26344,7 +29093,7 @@ function abortHandshakeOrEmitwsClientError(server, req, socket, code, message) {
 
 /***/ }),
 
-/***/ 1518:
+/***/ 8875:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 "use strict";
@@ -28463,7 +31212,7 @@ function defaultCallback(err) {
 /***/ 1942:
 /***/ ((module) => {
 
-module.exports.CHROMIUM_REVISION = "1045629";
+module.exports.CHROMIUM_REVISION = "1095492";
 
 
 /***/ }),
@@ -28705,7 +31454,7 @@ module.exports = require("zlib");
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BrowserContext = exports.Browser = exports.WEB_PERMISSION_TO_PROTOCOL_PERMISSION = void 0;
+exports.Browser = exports.WEB_PERMISSION_TO_PROTOCOL_PERMISSION = void 0;
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 /**
  * @internal
@@ -28745,7 +31494,7 @@ exports.WEB_PERMISSION_TO_PROTOCOL_PERMISSION = new Map([
  * An example of using a {@link Browser} to create a {@link Page}:
  *
  * ```ts
- * const puppeteer = require('puppeteer');
+ * import puppeteer from 'puppeteer';
  *
  * (async () => {
  *   const browser = await puppeteer.launch();
@@ -28759,7 +31508,7 @@ exports.WEB_PERMISSION_TO_PROTOCOL_PERMISSION = new Map([
  * An example of disconnecting from and reconnecting to a {@link Browser}:
  *
  * ```ts
- * const puppeteer = require('puppeteer');
+ * import puppeteer from 'puppeteer';
  *
  * (async () => {
  *   const browser = await puppeteer.launch();
@@ -28935,6 +31684,33 @@ class Browser extends EventEmitter_js_1.EventEmitter {
     }
 }
 exports.Browser = Browser;
+//# sourceMappingURL=Browser.js.map
+
+/***/ }),
+
+/***/ 2185:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2017 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BrowserContext = void 0;
+const EventEmitter_js_1 = __nccwpck_require__(7692);
 /**
  * BrowserContexts provide a way to operate multiple independent browser
  * sessions. When a browser is launched, it has a single BrowserContext used by
@@ -29045,9 +31821,367 @@ class BrowserContext extends EventEmitter_js_1.EventEmitter {
     close() {
         throw new Error('Not implemented');
     }
+    get id() {
+        return undefined;
+    }
 }
 exports.BrowserContext = BrowserContext;
-//# sourceMappingURL=Browser.js.map
+//# sourceMappingURL=BrowserContext.js.map
+
+/***/ }),
+
+/***/ 3839:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ElementHandle = void 0;
+const JSHandle_js_1 = __nccwpck_require__(882);
+/**
+ * ElementHandle represents an in-page DOM element.
+ *
+ * @remarks
+ * ElementHandles can be created with the {@link Page.$} method.
+ *
+ * ```ts
+ * import puppeteer from 'puppeteer';
+ *
+ * (async () => {
+ *   const browser = await puppeteer.launch();
+ *   const page = await browser.newPage();
+ *   await page.goto('https://example.com');
+ *   const hrefElement = await page.$('a');
+ *   await hrefElement.click();
+ *   // ...
+ * })();
+ * ```
+ *
+ * ElementHandle prevents the DOM element from being garbage-collected unless the
+ * handle is {@link JSHandle.dispose | disposed}. ElementHandles are auto-disposed
+ * when their origin frame gets navigated.
+ *
+ * ElementHandle instances can be used as arguments in {@link Page.$eval} and
+ * {@link Page.evaluate} methods.
+ *
+ * If you're using TypeScript, ElementHandle takes a generic argument that
+ * denotes the type of element the handle is holding within. For example, if you
+ * have a handle to a `<select>` element, you can type it as
+ * `ElementHandle<HTMLSelectElement>` and you get some nicer type checks.
+ *
+ * @public
+ */
+class ElementHandle extends JSHandle_js_1.JSHandle {
+    /**
+     * @internal
+     */
+    constructor() {
+        super();
+    }
+    /**
+     * @internal
+     */
+    executionContext() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    get client() {
+        throw new Error('Not implemented');
+    }
+    get frame() {
+        throw new Error('Not implemented');
+    }
+    async $() {
+        throw new Error('Not implemented');
+    }
+    async $$() {
+        throw new Error('Not implemented');
+    }
+    async $eval() {
+        throw new Error('Not implemented');
+    }
+    async $$eval() {
+        throw new Error('Not implemented');
+    }
+    async $x() {
+        throw new Error('Not implemented');
+    }
+    async waitForSelector() {
+        throw new Error('Not implemented');
+    }
+    async waitForXPath() {
+        throw new Error('Not implemented');
+    }
+    async toElement() {
+        throw new Error('Not implemented');
+    }
+    asElement() {
+        return this;
+    }
+    /**
+     * Resolves to the content frame for element handles referencing
+     * iframe nodes, or null otherwise
+     */
+    async contentFrame() {
+        throw new Error('Not implemented');
+    }
+    async clickablePoint() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * This method scrolls element into view if needed, and then
+     * uses {@link Page.mouse} to hover over the center of the element.
+     * If the element is detached from DOM, the method throws an error.
+     */
+    async hover() {
+        throw new Error('Not implemented');
+    }
+    async click() {
+        throw new Error('Not implemented');
+    }
+    async drag() {
+        throw new Error('Not implemented');
+    }
+    async dragEnter() {
+        throw new Error('Not implemented');
+    }
+    async dragOver() {
+        throw new Error('Not implemented');
+    }
+    async drop() {
+        throw new Error('Not implemented');
+    }
+    async dragAndDrop() {
+        throw new Error('Not implemented');
+    }
+    async select() {
+        throw new Error('Not implemented');
+    }
+    async uploadFile() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * This method scrolls element into view if needed, and then uses
+     * {@link Touchscreen.tap} to tap in the center of the element.
+     * If the element is detached from DOM, the method throws an error.
+     */
+    async tap() {
+        throw new Error('Not implemented');
+    }
+    async touchStart() {
+        throw new Error('Not implemented');
+    }
+    async touchMove() {
+        throw new Error('Not implemented');
+    }
+    async touchEnd() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Calls {@link https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus | focus} on the element.
+     */
+    async focus() {
+        throw new Error('Not implemented');
+    }
+    async type() {
+        throw new Error('Not implemented');
+    }
+    async press() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * This method returns the bounding box of the element (relative to the main frame),
+     * or `null` if the element is not visible.
+     */
+    async boundingBox() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * This method returns boxes of the element, or `null` if the element is not visible.
+     *
+     * @remarks
+     *
+     * Boxes are represented as an array of points;
+     * Each Point is an object `{x, y}`. Box points are sorted clock-wise.
+     */
+    async boxModel() {
+        throw new Error('Not implemented');
+    }
+    async screenshot() {
+        throw new Error('Not implemented');
+    }
+    async isIntersectingViewport() {
+        throw new Error('Not implemented');
+    }
+}
+exports.ElementHandle = ElementHandle;
+//# sourceMappingURL=ElementHandle.js.map
+
+/***/ }),
+
+/***/ 882:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.JSHandle = void 0;
+/**
+ * Represents a reference to a JavaScript object. Instances can be created using
+ * {@link Page.evaluateHandle}.
+ *
+ * Handles prevent the referenced JavaScript object from being garbage-collected
+ * unless the handle is purposely {@link JSHandle.dispose | disposed}. JSHandles
+ * are auto-disposed when their associated frame is navigated away or the parent
+ * context gets destroyed.
+ *
+ * Handles can be used as arguments for any evaluation function such as
+ * {@link Page.$eval}, {@link Page.evaluate}, and {@link Page.evaluateHandle}.
+ * They are resolved to their referenced object.
+ *
+ * @example
+ *
+ * ```ts
+ * const windowHandle = await page.evaluateHandle(() => window);
+ * ```
+ *
+ * @public
+ */
+class JSHandle {
+    /**
+     * @internal
+     */
+    constructor() { }
+    /**
+     * @internal
+     */
+    get disposed() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    executionContext() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    get client() {
+        throw new Error('Not implemented');
+    }
+    async evaluate() {
+        throw new Error('Not implemented');
+    }
+    async evaluateHandle() {
+        throw new Error('Not implemented');
+    }
+    async getProperty() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Gets a map of handles representing the properties of the current handle.
+     *
+     * @example
+     *
+     * ```ts
+     * const listHandle = await page.evaluateHandle(() => document.body.children);
+     * const properties = await listHandle.getProperties();
+     * const children = [];
+     * for (const property of properties.values()) {
+     *   const element = property.asElement();
+     *   if (element) {
+     *     children.push(element);
+     *   }
+     * }
+     * children; // holds elementHandles to all children of document.body
+     * ```
+     */
+    async getProperties() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns A vanilla object representing the serializable portions of the
+     * referenced object.
+     * @throws Throws if the object cannot be serialized due to circularity.
+     *
+     * @remarks
+     * If the object has a `toJSON` function, it **will not** be called.
+     */
+    async jsonValue() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @returns Either `null` or the handle itself if the handle is an
+     * instance of {@link ElementHandle}.
+     */
+    asElement() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Releases the object referenced by the handle for garbage collection.
+     */
+    async dispose() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Returns a string representation of the JSHandle.
+     *
+     * @remarks
+     * Useful during debugging.
+     */
+    toString() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    get id() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Provides access to the
+     * [Protocol.Runtime.RemoteObject](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-RemoteObject)
+     * backing this handle.
+     */
+    remoteObject() {
+        throw new Error('Not implemented');
+    }
+}
+exports.JSHandle = JSHandle;
+//# sourceMappingURL=JSHandle.js.map
 
 /***/ }),
 
@@ -29095,7 +32229,7 @@ const EventEmitter_js_1 = __nccwpck_require__(7692);
  * This example creates a page, navigates it to a URL, and then saves a screenshot:
  *
  * ```ts
- * const puppeteer = require('puppeteer');
+ * import puppeteer from 'puppeteer';
  *
  * (async () => {
  *   const browser = await puppeteer.launch();
@@ -29476,7 +32610,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
      *
      * - `height`: page's height in pixels
      *
-     * - `deviceScalarFactor`: Specify device scale factor (can be though of as
+     * - `deviceScaleFactor`: Specify device scale factor (can be though of as
      *   dpr). Defaults to `1`.
      *
      * - `isMobile`: Whether the meta viewport tag is taken into account. Defaults
@@ -29594,6 +32728,50 @@ exports.unitToPixels = {
 
 /***/ }),
 
+/***/ 1742:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+__exportStar(__nccwpck_require__(3469), exports);
+__exportStar(__nccwpck_require__(2185), exports);
+__exportStar(__nccwpck_require__(2194), exports);
+__exportStar(__nccwpck_require__(882), exports);
+__exportStar(__nccwpck_require__(3839), exports);
+//# sourceMappingURL=api.js.map
+
+/***/ }),
+
 /***/ 7473:
 /***/ (function(__unused_webpack_module, exports) {
 
@@ -29704,7 +32882,7 @@ class Accessibility {
         let backendNodeId;
         if (root) {
             const { node } = await __classPrivateFieldGet(this, _Accessibility_client, "f").send('DOM.describeNode', {
-                objectId: root.remoteObject().objectId,
+                objectId: root.id,
             });
             backendNodeId = node.backendNodeId;
         }
@@ -29993,7 +33171,10 @@ class AXNode {
         }
         for (const node of nodeById.values()) {
             for (const childId of node.payload.childIds || []) {
-                node.children.push(nodeById.get(childId));
+                const child = nodeById.get(childId);
+                if (child) {
+                    node.children.push(child);
+                }
             }
         }
         return nodeById.values().next().value;
@@ -30046,31 +33227,29 @@ _AXNode_richlyEditable = new WeakMap(), _AXNode_editable = new WeakMap(), _AXNod
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var _a;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ariaHandler = void 0;
+exports.ARIAQueryHandler = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
-const ElementHandle_js_1 = __nccwpck_require__(865);
-const Frame_js_1 = __nccwpck_require__(1106);
-const IsolatedWorld_js_1 = __nccwpck_require__(5651);
-async function queryAXTree(client, element, accessibleName, role) {
+const AsyncIterableUtil_js_1 = __nccwpck_require__(6992);
+const QueryHandler_js_1 = __nccwpck_require__(3200);
+const queryAXTree = async (client, element, accessibleName, role) => {
     const { nodes } = await client.send('Accessibility.queryAXTree', {
-        objectId: element.remoteObject().objectId,
+        objectId: element.id,
         accessibleName,
         role,
     });
-    const filteredNodes = nodes.filter((node) => {
+    return nodes.filter((node) => {
         return !node.role || node.role.value !== 'StaticText';
     });
-    return filteredNodes;
-}
+};
+const KNOWN_ATTRIBUTES = Object.freeze(['name', 'role']);
+const isKnownAttribute = (attribute) => {
+    return KNOWN_ATTRIBUTES.includes(attribute);
+};
 const normalizeValue = (value) => {
     return value.replace(/ +/g, ' ').trim();
 };
-const knownAttributes = new Set(['name', 'role']);
-const attributeRegexp = /\[\s*(?<attribute>\w+)\s*=\s*(?<quote>"|')(?<value>\\.|.*?(?=\k<quote>))\k<quote>\s*\]/g;
-function isKnownAttribute(attribute) {
-    return knownAttributes.has(attribute);
-}
 /**
  * The selectors consist of an accessible name to query for and optionally
  * further aria attributes on the form `[<attribute>=<value>]`.
@@ -30082,9 +33261,10 @@ function isKnownAttribute(attribute) {
  * - 'label' queries for elements with name 'label' and any role.
  * - '[name=""][role="button"]' queries for elements with no name and role 'button'.
  */
-function parseAriaSelector(selector) {
+const ATTRIBUTE_REGEXP = /\[\s*(?<attribute>\w+)\s*=\s*(?<quote>"|')(?<value>\\.|.*?(?=\k<quote>))\k<quote>\s*\]/g;
+const parseARIASelector = (selector) => {
     const queryOptions = {};
-    const defaultName = selector.replace(attributeRegexp, (_, attribute, _quote, value) => {
+    const defaultName = selector.replace(ATTRIBUTE_REGEXP, (_, attribute, __, value) => {
         attribute = attribute.trim();
         (0, assert_js_1.assert)(isKnownAttribute(attribute), `Unknown aria attribute "${attribute}" in selector`);
         queryOptions[attribute] = normalizeValue(value);
@@ -30094,69 +33274,152 @@ function parseAriaSelector(selector) {
         queryOptions.name = normalizeValue(defaultName);
     }
     return queryOptions;
-}
-const queryOneId = async (element, selector) => {
-    const { name, role } = parseAriaSelector(selector);
-    const res = await queryAXTree(element.client, element, name, role);
-    if (!res[0] || !res[0].backendDOMNodeId) {
-        return null;
-    }
-    return res[0].backendDOMNodeId;
-};
-const queryOne = async (element, selector) => {
-    const id = await queryOneId(element, selector);
-    if (!id) {
-        return null;
-    }
-    return (await element.frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].adoptBackendNode(id));
-};
-const waitFor = async (elementOrFrame, selector, options) => {
-    let frame;
-    let element;
-    if (elementOrFrame instanceof Frame_js_1.Frame) {
-        frame = elementOrFrame;
-    }
-    else {
-        frame = elementOrFrame.frame;
-        element = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].adoptHandle(elementOrFrame);
-    }
-    const ariaQuerySelector = async (selector) => {
-        const id = await queryOneId(element || (await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].document()), selector);
-        if (!id) {
-            return null;
-        }
-        return (await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].adoptBackendNode(id));
-    };
-    const result = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD]._waitForSelectorInPage((_, selector) => {
-        return globalThis.ariaQuerySelector(selector);
-    }, element, selector, options, new Map([['ariaQuerySelector', ariaQuerySelector]]));
-    if (element) {
-        await element.dispose();
-    }
-    if (!(result instanceof ElementHandle_js_1.ElementHandle)) {
-        await (result === null || result === void 0 ? void 0 : result.dispose());
-        return null;
-    }
-    return result.frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(result);
-};
-const queryAll = async (element, selector) => {
-    const exeCtx = element.executionContext();
-    const { name, role } = parseAriaSelector(selector);
-    const res = await queryAXTree(exeCtx._client, element, name, role);
-    const world = exeCtx._world;
-    return Promise.all(res.map(axNode => {
-        return world.adoptBackendNode(axNode.backendDOMNodeId);
-    }));
 };
 /**
  * @internal
  */
-exports.ariaHandler = {
-    queryOne,
-    waitFor,
-    queryAll,
+class ARIAQueryHandler extends QueryHandler_js_1.QueryHandler {
+    static async *queryAll(element, selector) {
+        const context = element.executionContext();
+        const { name, role } = parseARIASelector(selector);
+        const results = await queryAXTree(context._client, element, name, role);
+        const world = context._world;
+        yield* AsyncIterableUtil_js_1.AsyncIterableUtil.map(results, node => {
+            return world.adoptBackendNode(node.backendDOMNodeId);
+        });
+    }
+}
+exports.ARIAQueryHandler = ARIAQueryHandler;
+_a = ARIAQueryHandler;
+ARIAQueryHandler.querySelector = async (node, selector, { ariaQuerySelector }) => {
+    return ariaQuerySelector(node, selector);
+};
+ARIAQueryHandler.queryOne = async (element, selector) => {
+    var _b;
+    return ((_b = (await AsyncIterableUtil_js_1.AsyncIterableUtil.first(_a.queryAll(element, selector)))) !== null && _b !== void 0 ? _b : null);
 };
 //# sourceMappingURL=AriaQueryHandler.js.map
+
+/***/ }),
+
+/***/ 1518:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Binding_name, _Binding_fn;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Binding = void 0;
+const JSHandle_js_1 = __nccwpck_require__(882);
+const ErrorLike_js_1 = __nccwpck_require__(2937);
+const util_js_1 = __nccwpck_require__(8274);
+/**
+ * @internal
+ */
+class Binding {
+    constructor(name, fn) {
+        _Binding_name.set(this, void 0);
+        _Binding_fn.set(this, void 0);
+        __classPrivateFieldSet(this, _Binding_name, name, "f");
+        __classPrivateFieldSet(this, _Binding_fn, fn, "f");
+    }
+    get name() {
+        return __classPrivateFieldGet(this, _Binding_name, "f");
+    }
+    /**
+     * @param context - Context to run the binding in; the context should have
+     * the binding added to it beforehand.
+     * @param id - ID of the call. This should come from the CDP
+     * `onBindingCalled` response.
+     * @param args - Plain arguments from CDP.
+     */
+    async run(context, id, args, isTrivial) {
+        const garbage = [];
+        try {
+            if (!isTrivial) {
+                // Getting non-trivial arguments.
+                const handles = await context.evaluateHandle((name, seq) => {
+                    // @ts-expect-error Code is evaluated in a different context.
+                    return globalThis[name].args.get(seq);
+                }, __classPrivateFieldGet(this, _Binding_name, "f"), id);
+                try {
+                    const properties = await handles.getProperties();
+                    for (const [index, handle] of properties) {
+                        // This is not straight-forward since some arguments can stringify, but
+                        // aren't plain objects so add subtypes when the use-case arises.
+                        if (index in args) {
+                            switch (handle.remoteObject().subtype) {
+                                case 'node':
+                                    args[+index] = handle;
+                                    break;
+                                default:
+                                    garbage.push(handle.dispose());
+                            }
+                        }
+                        else {
+                            garbage.push(handle.dispose());
+                        }
+                    }
+                }
+                finally {
+                    await handles.dispose();
+                }
+            }
+            await context.evaluate((name, seq, result) => {
+                // @ts-expect-error Code is evaluated in a different context.
+                const callbacks = globalThis[name].callbacks;
+                callbacks.get(seq).resolve(result);
+                callbacks.delete(seq);
+            }, __classPrivateFieldGet(this, _Binding_name, "f"), id, await __classPrivateFieldGet(this, _Binding_fn, "f").call(this, ...args));
+            for (const arg of args) {
+                if (arg instanceof JSHandle_js_1.JSHandle) {
+                    garbage.push(arg.dispose());
+                }
+            }
+        }
+        catch (error) {
+            if ((0, ErrorLike_js_1.isErrorLike)(error)) {
+                await context
+                    .evaluate((name, seq, message, stack) => {
+                    const error = new Error(message);
+                    error.stack = stack;
+                    // @ts-expect-error Code is evaluated in a different context.
+                    const callbacks = globalThis[name].callbacks;
+                    callbacks.get(seq).reject(error);
+                    callbacks.delete(seq);
+                }, __classPrivateFieldGet(this, _Binding_name, "f"), id, error.message, error.stack)
+                    .catch(util_js_1.debugError);
+            }
+            else {
+                await context
+                    .evaluate((name, seq, error) => {
+                    // @ts-expect-error Code is evaluated in a different context.
+                    const callbacks = globalThis[name].callbacks;
+                    callbacks.get(seq).reject(error);
+                    callbacks.delete(seq);
+                }, __classPrivateFieldGet(this, _Binding_name, "f"), id, error)
+                    .catch(util_js_1.debugError);
+            }
+        }
+        finally {
+            await Promise.all(garbage);
+        }
+    }
+}
+exports.Binding = Binding;
+_Binding_name = new WeakMap(), _Binding_fn = new WeakMap();
+//# sourceMappingURL=Binding.js.map
 
 /***/ }),
 
@@ -30180,32 +33443,47 @@ exports.ariaHandler = {
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
     return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
 };
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
 var _CDPBrowser_instances, _CDPBrowser_ignoreHTTPSErrors, _CDPBrowser_defaultViewport, _CDPBrowser_process, _CDPBrowser_connection, _CDPBrowser_closeCallback, _CDPBrowser_targetFilterCallback, _CDPBrowser_isPageTargetCallback, _CDPBrowser_defaultContext, _CDPBrowser_contexts, _CDPBrowser_screenshotTaskQueue, _CDPBrowser_targetManager, _CDPBrowser_emitDisconnected, _CDPBrowser_setIsPageTargetCallback, _CDPBrowser_createTarget, _CDPBrowser_onAttachedToTarget, _CDPBrowser_onDetachedFromTarget, _CDPBrowser_onTargetChanged, _CDPBrowser_onTargetDiscovered, _CDPBrowser_getVersion, _CDPBrowserContext_connection, _CDPBrowserContext_browser, _CDPBrowserContext_id;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CDPBrowserContext = exports.CDPBrowser = void 0;
+const Browser_js_1 = __nccwpck_require__(3469);
+const BrowserContext_js_1 = __nccwpck_require__(2185);
 const assert_js_1 = __nccwpck_require__(7729);
+const ChromeTargetManager_js_1 = __nccwpck_require__(2264);
 const Connection_js_1 = __nccwpck_require__(370);
-const util_js_1 = __nccwpck_require__(8274);
+const FirefoxTargetManager_js_1 = __nccwpck_require__(9806);
 const Target_js_1 = __nccwpck_require__(7005);
 const TaskQueue_js_1 = __nccwpck_require__(2967);
-const ChromeTargetManager_js_1 = __nccwpck_require__(2264);
-const FirefoxTargetManager_js_1 = __nccwpck_require__(9806);
-const Browser_js_1 = __nccwpck_require__(3469);
+const util_js_1 = __nccwpck_require__(8274);
 /**
  * @internal
  */
 class CDPBrowser extends Browser_js_1.Browser {
+    /**
+     * @internal
+     */
+    static async _create(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback) {
+        const browser = new CDPBrowser(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback);
+        await browser._attach();
+        return browser;
+    }
+    /**
+     * @internal
+     */
+    get _targets() {
+        return __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").getAvailableTargets();
+    }
     /**
      * @internal
      */
@@ -30294,20 +33572,6 @@ class CDPBrowser extends Browser_js_1.Browser {
         for (const contextId of contextIds) {
             __classPrivateFieldGet(this, _CDPBrowser_contexts, "f").set(contextId, new CDPBrowserContext(__classPrivateFieldGet(this, _CDPBrowser_connection, "f"), this, contextId));
         }
-    }
-    /**
-     * @internal
-     */
-    static async _create(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback) {
-        const browser = new CDPBrowser(product, connection, contextIds, ignoreHTTPSErrors, defaultViewport, process, closeCallback, targetFilterCallback, isPageTargetCallback);
-        await browser._attach();
-        return browser;
-    }
-    /**
-     * @internal
-     */
-    get _targets() {
-        return __classPrivateFieldGet(this, _CDPBrowser_targetManager, "f").getAvailableTargets();
     }
     /**
      * @internal
@@ -30596,7 +33860,7 @@ _CDPBrowser_ignoreHTTPSErrors = new WeakMap(), _CDPBrowser_defaultViewport = new
 /**
  * @internal
  */
-class CDPBrowserContext extends Browser_js_1.BrowserContext {
+class CDPBrowserContext extends BrowserContext_js_1.BrowserContext {
     /**
      * @internal
      */
@@ -30608,6 +33872,9 @@ class CDPBrowserContext extends Browser_js_1.BrowserContext {
         __classPrivateFieldSet(this, _CDPBrowserContext_connection, connection, "f");
         __classPrivateFieldSet(this, _CDPBrowserContext_browser, browser, "f");
         __classPrivateFieldSet(this, _CDPBrowserContext_id, contextId, "f");
+    }
+    get id() {
+        return __classPrivateFieldGet(this, _CDPBrowserContext_id, "f");
     }
     /**
      * An array of all active targets inside the browser context.
@@ -30631,7 +33898,7 @@ class CDPBrowserContext extends Browser_js_1.BrowserContext {
      * ```
      *
      * @param predicate - A function to be run for every target
-     * @param options - An object of options. Accepts a timout,
+     * @param options - An object of options. Accepts a timeout,
      * which is the maximum wait time in milliseconds.
      * Pass `0` to disable the timeout. Defaults to 30 seconds.
      * @returns Promise which resolves to the first target found
@@ -30794,13 +34061,13 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports._connectToCDPBrowser = void 0;
-const util_js_1 = __nccwpck_require__(8274);
-const ErrorLike_js_1 = __nccwpck_require__(2937);
 const environment_js_1 = __nccwpck_require__(1577);
 const assert_js_1 = __nccwpck_require__(7729);
+const ErrorLike_js_1 = __nccwpck_require__(2937);
 const Browser_js_1 = __nccwpck_require__(2087);
 const Connection_js_1 = __nccwpck_require__(370);
 const fetch_js_1 = __nccwpck_require__(9831);
+const util_js_1 = __nccwpck_require__(8274);
 const getWebSocketTransportClass = async () => {
     return environment_js_1.isNode
         ? (await Promise.resolve().then(() => __importStar(__nccwpck_require__(4098)))).NodeWebSocketTransport
@@ -30814,7 +34081,7 @@ const getWebSocketTransportClass = async () => {
  * @internal
  */
 async function _connectToCDPBrowser(options) {
-    const { browserWSEndpoint, browserURL, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, transport, slowMo = 0, targetFilter, _isPageTarget: isPageTarget, } = options;
+    const { browserWSEndpoint, browserURL, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, transport, headers = {}, slowMo = 0, targetFilter, _isPageTarget: isPageTarget, } = options;
     (0, assert_js_1.assert)(Number(!!browserWSEndpoint) + Number(!!browserURL) + Number(!!transport) ===
         1, 'Exactly one of browserWSEndpoint, browserURL or transport must be passed to puppeteer.connect');
     let connection;
@@ -30823,7 +34090,7 @@ async function _connectToCDPBrowser(options) {
     }
     else if (browserWSEndpoint) {
         const WebSocketClass = await getWebSocketTransportClass();
-        const connectionTransport = await WebSocketClass.create(browserWSEndpoint);
+        const connectionTransport = await WebSocketClass.create(browserWSEndpoint, headers);
         connection = new Connection_js_1.Connection(browserWSEndpoint, connectionTransport, slowMo);
     }
     else if (browserURL) {
@@ -30892,6 +34159,15 @@ exports.BrowserWebSocketTransport = void 0;
  * @internal
  */
 class BrowserWebSocketTransport {
+    static create(url) {
+        return new Promise((resolve, reject) => {
+            const ws = new WebSocket(url);
+            ws.addEventListener('open', () => {
+                return resolve(new BrowserWebSocketTransport(ws));
+            });
+            ws.addEventListener('error', reject);
+        });
+    }
     constructor(ws) {
         _BrowserWebSocketTransport_ws.set(this, void 0);
         __classPrivateFieldSet(this, _BrowserWebSocketTransport_ws, ws, "f");
@@ -30907,15 +34183,6 @@ class BrowserWebSocketTransport {
         });
         // Silently ignore all errors - we don't know what to do with them.
         __classPrivateFieldGet(this, _BrowserWebSocketTransport_ws, "f").addEventListener('error', () => { });
-    }
-    static create(url) {
-        return new Promise((resolve, reject) => {
-            const ws = new WebSocket(url);
-            ws.addEventListener('open', () => {
-                return resolve(new BrowserWebSocketTransport(ws));
-            });
-            ws.addEventListener('error', reject);
-        });
     }
     send(message) {
         __classPrivateFieldGet(this, _BrowserWebSocketTransport_ws, "f").send(message);
@@ -31132,7 +34399,7 @@ class ChromeTargetManager extends EventEmitter_js_1.EventEmitter {
                     // present in #attachedTargetsBySessionId.
                     (0, assert_js_1.assert)(__classPrivateFieldGet(this, _ChromeTargetManager_attachedTargetsBySessionId, "f").has(parentSession.id()));
                 }
-                await interceptor(target, parentSession instanceof Connection_js_1.Connection
+                interceptor(target, parentSession instanceof Connection_js_1.Connection
                     ? null
                     : __classPrivateFieldGet(this, _ChromeTargetManager_attachedTargetsBySessionId, "f").get(parentSession.id()));
             }
@@ -31243,25 +34510,36 @@ _ChromeTargetManager_connection = new WeakMap(), _ChromeTargetManager_discovered
 
 /***/ }),
 
+/***/ 3110:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=Configuration.js.map
+
+/***/ }),
+
 /***/ 370:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
-var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _Connection_instances, _Connection_url, _Connection_transport, _Connection_delay, _Connection_lastId, _Connection_sessions, _Connection_closed, _Connection_callbacks, _Connection_manuallyAttached, _Connection_onClose, _CDPSessionImpl_sessionId, _CDPSessionImpl_targetType, _CDPSessionImpl_callbacks, _CDPSessionImpl_connection;
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isTargetClosedError = exports.CDPSessionImpl = exports.CDPSession = exports.CDPSessionEmittedEvents = exports.Connection = exports.ConnectionEmittedEvents = void 0;
 /**
  * Copyright 2017 Google Inc. All rights reserved.
  *
@@ -31277,12 +34555,27 @@ exports.isTargetClosedError = exports.CDPSessionImpl = exports.CDPSession = expo
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Connection_instances, _Connection_url, _Connection_transport, _Connection_delay, _Connection_lastId, _Connection_sessions, _Connection_closed, _Connection_callbacks, _Connection_manuallyAttached, _Connection_onClose, _CDPSessionImpl_sessionId, _CDPSessionImpl_targetType, _CDPSessionImpl_callbacks, _CDPSessionImpl_connection;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isTargetClosedError = exports.CDPSessionImpl = exports.CDPSession = exports.CDPSessionEmittedEvents = exports.Connection = exports.ConnectionEmittedEvents = void 0;
+/* eslint-disable import/order */
 const assert_js_1 = __nccwpck_require__(7729);
 const Debug_js_1 = __nccwpck_require__(4090);
 const debugProtocolSend = (0, Debug_js_1.debug)('puppeteer:protocol:SEND ►');
 const debugProtocolReceive = (0, Debug_js_1.debug)('puppeteer:protocol:RECV ◀');
-const EventEmitter_js_1 = __nccwpck_require__(7692);
 const Errors_js_1 = __nccwpck_require__(6315);
+const EventEmitter_js_1 = __nccwpck_require__(7692);
 /**
  * Internal events that the Connection class emits.
  *
@@ -31655,6 +34948,31 @@ exports.isTargetClosedError = isTargetClosedError;
 
 /***/ }),
 
+/***/ 1153:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2020 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=ConnectionTransport.js.map
+
+/***/ }),
+
 /***/ 1167:
 /***/ (function(__unused_webpack_module, exports) {
 
@@ -31780,8 +35098,8 @@ var _Coverage_jsCoverage, _Coverage_cssCoverage, _JSCoverage_instances, _JSCover
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CSSCoverage = exports.JSCoverage = exports.Coverage = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
-const util_js_1 = __nccwpck_require__(8274);
 const ExecutionContext_js_1 = __nccwpck_require__(8272);
+const util_js_1 = __nccwpck_require__(8274);
 const util_js_2 = __nccwpck_require__(8274);
 /**
  * The Coverage class provides methods to gathers information about parts of
@@ -32127,6 +35445,206 @@ function convertToDisjointRanges(nestedRanges) {
 
 /***/ }),
 
+/***/ 5057:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _CustomQueryHandlerRegistry_handlers;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.clearCustomQueryHandlers = exports.customQueryHandlerNames = exports.unregisterCustomQueryHandler = exports.registerCustomQueryHandler = exports.customQueryHandlers = exports.CustomQueryHandlerRegistry = void 0;
+const assert_js_1 = __nccwpck_require__(7729);
+const Function_js_1 = __nccwpck_require__(2329);
+const QueryHandler_js_1 = __nccwpck_require__(3200);
+const ScriptInjector_js_1 = __nccwpck_require__(2379);
+/**
+ * The registry of {@link CustomQueryHandler | custom query handlers}.
+ *
+ * @example
+ *
+ * ```ts
+ * Puppeteer.customQueryHandlers.register('lit', { … });
+ * const aHandle = await page.$('lit/…');
+ * ```
+ *
+ * @internal
+ */
+class CustomQueryHandlerRegistry {
+    constructor() {
+        _CustomQueryHandlerRegistry_handlers.set(this, new Map());
+    }
+    /**
+     * @internal
+     */
+    get(name) {
+        const handler = __classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").get(name);
+        return handler ? handler[1] : undefined;
+    }
+    /**
+     * Registers a {@link CustomQueryHandler | custom query handler}.
+     *
+     * @remarks
+     * After registration, the handler can be used everywhere where a selector is
+     * expected by prepending the selection string with `<name>/`. The name is
+     * only allowed to consist of lower- and upper case latin letters.
+     *
+     * @example
+     *
+     * ```ts
+     * Puppeteer.customQueryHandlers.register('lit', { … });
+     * const aHandle = await page.$('lit/…');
+     * ```
+     *
+     * @param name - Name to register under.
+     * @param queryHandler - {@link CustomQueryHandler | Custom query handler} to
+     * register.
+     *
+     * @internal
+     */
+    register(name, handler) {
+        var _a;
+        if (__classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").has(name)) {
+            throw new Error(`Cannot register over existing handler: ${name}`);
+        }
+        (0, assert_js_1.assert)(!__classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").has(name), `Cannot register over existing handler: ${name}`);
+        (0, assert_js_1.assert)(/^[a-zA-Z]+$/.test(name), `Custom query handler names may only contain [a-zA-Z]`);
+        (0, assert_js_1.assert)(handler.queryAll || handler.queryOne, `At least one query method must be implemented.`);
+        const Handler = (_a = class extends QueryHandler_js_1.QueryHandler {
+            },
+            _a.querySelectorAll = (0, Function_js_1.interpolateFunction)((node, selector, PuppeteerUtil) => {
+                return PuppeteerUtil.customQuerySelectors
+                    .get(PLACEHOLDER('name'))
+                    .querySelectorAll(node, selector);
+            }, { name: JSON.stringify(name) }),
+            _a.querySelector = (0, Function_js_1.interpolateFunction)((node, selector, PuppeteerUtil) => {
+                return PuppeteerUtil.customQuerySelectors
+                    .get(PLACEHOLDER('name'))
+                    .querySelector(node, selector);
+            }, { name: JSON.stringify(name) }),
+            _a);
+        const registerScript = (0, Function_js_1.interpolateFunction)((PuppeteerUtil) => {
+            PuppeteerUtil.customQuerySelectors.register(PLACEHOLDER('name'), {
+                queryAll: PLACEHOLDER('queryAll'),
+                queryOne: PLACEHOLDER('queryOne'),
+            });
+        }, {
+            name: JSON.stringify(name),
+            queryAll: handler.queryAll
+                ? (0, Function_js_1.stringifyFunction)(handler.queryAll)
+                : String(undefined),
+            queryOne: handler.queryOne
+                ? (0, Function_js_1.stringifyFunction)(handler.queryOne)
+                : String(undefined),
+        }).toString();
+        __classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").set(name, [registerScript, Handler]);
+        ScriptInjector_js_1.scriptInjector.append(registerScript);
+    }
+    /**
+     * Unregisters the {@link CustomQueryHandler | custom query handler} for the
+     * given name.
+     *
+     * @throws `Error` if there is no handler under the given name.
+     *
+     * @internal
+     */
+    unregister(name) {
+        const handler = __classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").get(name);
+        if (!handler) {
+            throw new Error(`Cannot unregister unknown handler: ${name}`);
+        }
+        ScriptInjector_js_1.scriptInjector.pop(handler[0]);
+        __classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").delete(name);
+    }
+    /**
+     * Gets the names of all {@link CustomQueryHandler | custom query handlers}.
+     *
+     * @internal
+     */
+    names() {
+        return [...__classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").keys()];
+    }
+    /**
+     * Unregisters all custom query handlers.
+     *
+     * @internal
+     */
+    clear() {
+        for (const [registerScript] of __classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f")) {
+            ScriptInjector_js_1.scriptInjector.pop(registerScript);
+        }
+        __classPrivateFieldGet(this, _CustomQueryHandlerRegistry_handlers, "f").clear();
+    }
+}
+exports.CustomQueryHandlerRegistry = CustomQueryHandlerRegistry;
+_CustomQueryHandlerRegistry_handlers = new WeakMap();
+/**
+ * @internal
+ */
+exports.customQueryHandlers = new CustomQueryHandlerRegistry();
+/**
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.registerCustomQueryHandler}
+ *
+ * @public
+ */
+function registerCustomQueryHandler(name, handler) {
+    exports.customQueryHandlers.register(name, handler);
+}
+exports.registerCustomQueryHandler = registerCustomQueryHandler;
+/**
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.unregisterCustomQueryHandler}
+ *
+ * @public
+ */
+function unregisterCustomQueryHandler(name) {
+    exports.customQueryHandlers.unregister(name);
+}
+exports.unregisterCustomQueryHandler = unregisterCustomQueryHandler;
+/**
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.customQueryHandlerNames}
+ *
+ * @public
+ */
+function customQueryHandlerNames() {
+    return exports.customQueryHandlers.names();
+}
+exports.customQueryHandlerNames = customQueryHandlerNames;
+/**
+ * @deprecated Import {@link Puppeteer} and use the static method
+ * {@link Puppeteer.clearCustomQueryHandlers}
+ *
+ * @public
+ */
+function clearCustomQueryHandlers() {
+    exports.customQueryHandlers.clear();
+}
+exports.clearCustomQueryHandlers = clearCustomQueryHandlers;
+//# sourceMappingURL=CustomQueryHandler.js.map
+
+/***/ }),
+
 /***/ 4090:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -32171,7 +35689,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.debug = exports.importDebug = void 0;
+exports.getCapturedLogs = exports.setLogCapture = exports.debug = exports.importDebug = void 0;
 const environment_js_1 = __nccwpck_require__(1577);
 /**
  * @internal
@@ -32228,6 +35746,9 @@ exports.importDebug = importDebug;
 const debug = (prefix) => {
     if (environment_js_1.isNode) {
         return async (...logArgs) => {
+            if (captureLogs) {
+                capturedLogs.push(prefix + logArgs);
+            }
             (await importDebug())(prefix)(logArgs);
         };
     }
@@ -32254,6 +35775,29 @@ const debug = (prefix) => {
     };
 };
 exports.debug = debug;
+/**
+ * @internal
+ */
+let capturedLogs = [];
+/**
+ * @internal
+ */
+let captureLogs = false;
+/**
+ * @internal
+ */
+function setLogCapture(value) {
+    capturedLogs = [];
+    captureLogs = value;
+}
+exports.setLogCapture = setLogCapture;
+/**
+ * @internal
+ */
+function getCapturedLogs() {
+    return capturedLogs;
+}
+exports.getCapturedLogs = getCapturedLogs;
 //# sourceMappingURL=Debug.js.map
 
 /***/ }),
@@ -33741,7 +37285,7 @@ const assert_js_1 = __nccwpck_require__(7729);
  * @example
  *
  * ```ts
- * const puppeteer = require('puppeteer');
+ * import puppeteer from 'puppeteer';
  *
  * (async () => {
  *   const browser = await puppeteer.launch();
@@ -33876,12 +37420,14 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _ElementHandle_instances, _ElementHandle_frame, _ElementHandle_frameManager_get, _ElementHandle_page_get, _ElementHandle_scrollIntoViewIfNeeded, _ElementHandle_getOOPIFOffsets, _ElementHandle_getBoxModel, _ElementHandle_fromProtocolQuad, _ElementHandle_intersectQuadWithViewport;
+var _CDPElementHandle_instances, _CDPElementHandle_frame, _CDPElementHandle_jsHandle, _CDPElementHandle_frameManager_get, _CDPElementHandle_page_get, _CDPElementHandle_scrollIntoViewIfNeeded, _CDPElementHandle_getOOPIFOffsets, _CDPElementHandle_getBoxModel, _CDPElementHandle_fromProtocolQuad, _CDPElementHandle_intersectQuadWithViewport;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ElementHandle = void 0;
+exports.CDPElementHandle = void 0;
+const ElementHandle_js_1 = __nccwpck_require__(3839);
 const assert_js_1 = __nccwpck_require__(7729);
+const AsyncIterableUtil_js_1 = __nccwpck_require__(6992);
+const GetQueryHandler_js_1 = __nccwpck_require__(3465);
 const JSHandle_js_1 = __nccwpck_require__(2045);
-const QueryHandler_js_1 = __nccwpck_require__(3200);
 const util_js_1 = __nccwpck_require__(8274);
 const applyOffsetsToQuad = (quad, offsetX, offsetY) => {
     return quad.map(part => {
@@ -33889,101 +37435,77 @@ const applyOffsetsToQuad = (quad, offsetX, offsetY) => {
     });
 };
 /**
- * ElementHandle represents an in-page DOM element.
+ * The CDPElementHandle extends ElementHandle now to keep compatibility
+ * with `instanceof` because of that we need to have methods for
+ * CDPJSHandle to in this implementation as well.
  *
- * @remarks
- * ElementHandles can be created with the {@link Page.$} method.
- *
- * ```ts
- * const puppeteer = require('puppeteer');
- *
- * (async () => {
- *   const browser = await puppeteer.launch();
- *   const page = await browser.newPage();
- *   await page.goto('https://example.com');
- *   const hrefElement = await page.$('a');
- *   await hrefElement.click();
- *   // ...
- * })();
- * ```
- *
- * ElementHandle prevents the DOM element from being garbage-collected unless the
- * handle is {@link JSHandle.dispose | disposed}. ElementHandles are auto-disposed
- * when their origin frame gets navigated.
- *
- * ElementHandle instances can be used as arguments in {@link Page.$eval} and
- * {@link Page.evaluate} methods.
- *
- * If you're using TypeScript, ElementHandle takes a generic argument that
- * denotes the type of element the handle is holding within. For example, if you
- * have a handle to a `<select>` element, you can type it as
- * `ElementHandle<HTMLSelectElement>` and you get some nicer type checks.
- *
- * @public
+ * @internal
  */
-class ElementHandle extends JSHandle_js_1.JSHandle {
+class CDPElementHandle extends ElementHandle_js_1.ElementHandle {
+    constructor(context, remoteObject, frame) {
+        super();
+        _CDPElementHandle_instances.add(this);
+        _CDPElementHandle_frame.set(this, void 0);
+        _CDPElementHandle_jsHandle.set(this, void 0);
+        __classPrivateFieldSet(this, _CDPElementHandle_jsHandle, new JSHandle_js_1.CDPJSHandle(context, remoteObject), "f");
+        __classPrivateFieldSet(this, _CDPElementHandle_frame, frame, "f");
+    }
     /**
      * @internal
      */
-    constructor(context, remoteObject, frame) {
-        super(context, remoteObject);
-        _ElementHandle_instances.add(this);
-        _ElementHandle_frame.set(this, void 0);
-        __classPrivateFieldSet(this, _ElementHandle_frame, frame, "f");
+    executionContext() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").executionContext();
+    }
+    /**
+     * @internal
+     */
+    get client() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").client;
+    }
+    get id() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").id;
+    }
+    remoteObject() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").remoteObject();
+    }
+    async evaluate(pageFunction, ...args) {
+        return this.executionContext().evaluate(pageFunction, this, ...args);
+    }
+    evaluateHandle(pageFunction, ...args) {
+        return this.executionContext().evaluateHandle(pageFunction, this, ...args);
     }
     get frame() {
-        return __classPrivateFieldGet(this, _ElementHandle_frame, "f");
+        return __classPrivateFieldGet(this, _CDPElementHandle_frame, "f");
     }
-    /**
-     * Queries the current element for an element matching the given selector.
-     *
-     * @param selector - The selector to query for.
-     * @returns A {@link ElementHandle | element handle} to the first element
-     * matching the given selector. Otherwise, `null`.
-     */
+    get disposed() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").disposed;
+    }
+    async getProperty(propertyName) {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").getProperty(propertyName);
+    }
+    async getProperties() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").getProperties();
+    }
+    asElement() {
+        return this;
+    }
+    async jsonValue() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").jsonValue();
+    }
+    toString() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").toString();
+    }
+    async dispose() {
+        return await __classPrivateFieldGet(this, _CDPElementHandle_jsHandle, "f").dispose();
+    }
     async $(selector) {
-        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
-        (0, assert_js_1.assert)(queryHandler.queryOne, 'Cannot handle queries for a single element with the given selector');
-        return (await queryHandler.queryOne(this, updatedSelector));
+        const { updatedSelector, QueryHandler } = (0, GetQueryHandler_js_1.getQueryHandlerAndSelector)(selector);
+        return (await QueryHandler.queryOne(this, updatedSelector));
     }
-    /**
-     * Queries the current element for all elements matching the given selector.
-     *
-     * @param selector - The selector to query for.
-     * @returns An array of {@link ElementHandle | element handles} that point to
-     * elements matching the given selector.
-     */
     async $$(selector) {
-        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
-        (0, assert_js_1.assert)(queryHandler.queryAll, 'Cannot handle queries for a multiple element with the given selector');
-        return (await queryHandler.queryAll(this, updatedSelector));
+        const { updatedSelector, QueryHandler } = (0, GetQueryHandler_js_1.getQueryHandlerAndSelector)(selector);
+        return AsyncIterableUtil_js_1.AsyncIterableUtil.collect(QueryHandler.queryAll(this, updatedSelector));
     }
-    /**
-     * Runs the given function on the first element matching the given selector in
-     * the current element.
-     *
-     * If the given function returns a promise, then this method will wait till
-     * the promise resolves.
-     *
-     * @example
-     *
-     * ```ts
-     * const tweetHandle = await page.$('.tweet');
-     * expect(await tweetHandle.$eval('.like', node => node.innerText)).toBe(
-     *   '100'
-     * );
-     * expect(await tweetHandle.$eval('.retweets', node => node.innerText)).toBe(
-     *   '10'
-     * );
-     * ```
-     *
-     * @param selector - The selector to query for.
-     * @param pageFunction - The function to be evaluated in this element's page's
-     * context. The first element matching the selector will be passed in as the
-     * first argument.
-     * @param args - Additional arguments to pass to `pageFunction`.
-     * @returns A promise to the result of the function.
-     */
     async $eval(selector, pageFunction, ...args) {
         const elementHandle = await this.$(selector);
         if (!elementHandle) {
@@ -33993,189 +37515,45 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         await elementHandle.dispose();
         return result;
     }
-    /**
-     * Runs the given function on an array of elements matching the given selector
-     * in the current element.
-     *
-     * If the given function returns a promise, then this method will wait till
-     * the promise resolves.
-     *
-     * @example
-     * HTML:
-     *
-     * ```html
-     * <div class="feed">
-     *   <div class="tweet">Hello!</div>
-     *   <div class="tweet">Hi!</div>
-     * </div>
-     * ```
-     *
-     * JavaScript:
-     *
-     * ```js
-     * const feedHandle = await page.$('.feed');
-     * expect(
-     *   await feedHandle.$$eval('.tweet', nodes => nodes.map(n => n.innerText))
-     * ).toEqual(['Hello!', 'Hi!']);
-     * ```
-     *
-     * @param selector - The selector to query for.
-     * @param pageFunction - The function to be evaluated in the element's page's
-     * context. An array of elements matching the given selector will be passed to
-     * the function as its first argument.
-     * @param args - Additional arguments to pass to `pageFunction`.
-     * @returns A promise to the result of the function.
-     */
     async $$eval(selector, pageFunction, ...args) {
-        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
-        (0, assert_js_1.assert)(queryHandler.queryAll, 'Cannot handle queries for a multiple element with the given selector');
-        const handles = (await queryHandler.queryAll(this, updatedSelector));
+        const results = await this.$$(selector);
         const elements = await this.evaluateHandle((_, ...elements) => {
             return elements;
-        }, ...handles);
+        }, ...results);
         const [result] = await Promise.all([
             elements.evaluate(pageFunction, ...args),
-            ...handles.map(handle => {
-                return handle.dispose();
+            ...results.map(results => {
+                return results.dispose();
             }),
         ]);
         await elements.dispose();
         return result;
     }
-    /**
-     * @deprecated Use {@link ElementHandle.$$} with the `xpath` prefix.
-     *
-     * Example: `await elementHandle.$$('xpath/' + xpathExpression)`
-     *
-     * The method evaluates the XPath expression relative to the elementHandle.
-     * If `xpath` starts with `//` instead of `.//`, the dot will be appended
-     * automatically.
-     *
-     * If there are no such elements, the method will resolve to an empty array.
-     * @param expression - Expression to {@link https://developer.mozilla.org/en-US/docs/Web/API/Document/evaluate | evaluate}
-     */
     async $x(expression) {
         if (expression.startsWith('//')) {
             expression = `.${expression}`;
         }
         return this.$$(`xpath/${expression}`);
     }
-    /**
-     * Wait for an element matching the given selector to appear in the current
-     * element.
-     *
-     * Unlike {@link Frame.waitForSelector}, this method does not work across
-     * navigations or if the element is detached from DOM.
-     *
-     * @example
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     *
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   let currentURL;
-     *   page
-     *     .mainFrame()
-     *     .waitForSelector('img')
-     *     .then(() => console.log('First URL with image: ' + currentURL));
-     *
-     *   for (currentURL of [
-     *     'https://example.com',
-     *     'https://google.com',
-     *     'https://bbc.com',
-     *   ]) {
-     *     await page.goto(currentURL);
-     *   }
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @param selector - The selector to query and wait for.
-     * @param options - Options for customizing waiting behavior.
-     * @returns An element matching the given selector.
-     * @throws Throws if an element matching the given selector doesn't appear.
-     */
     async waitForSelector(selector, options = {}) {
-        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
-        (0, assert_js_1.assert)(queryHandler.waitFor, 'Query handler does not support waiting');
-        return (await queryHandler.waitFor(this, updatedSelector, options));
+        const { updatedSelector, QueryHandler } = (0, GetQueryHandler_js_1.getQueryHandlerAndSelector)(selector);
+        return (await QueryHandler.waitFor(this, updatedSelector, options));
     }
-    /**
-     * @deprecated Use {@link ElementHandle.waitForSelector} with the `xpath`
-     * prefix.
-     *
-     * Example: `await elementHandle.waitForSelector('xpath/' + xpathExpression)`
-     *
-     * The method evaluates the XPath expression relative to the elementHandle.
-     *
-     * Wait for the `xpath` within the element. If at the moment of calling the
-     * method the `xpath` already exists, the method will return immediately. If
-     * the `xpath` doesn't appear after the `timeout` milliseconds of waiting, the
-     * function will throw.
-     *
-     * If `xpath` starts with `//` instead of `.//`, the dot will be appended
-     * automatically.
-     *
-     * This method works across navigation.
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   let currentURL;
-     *   page
-     *     .waitForXPath('//img')
-     *     .then(() => console.log('First URL with image: ' + currentURL));
-     *   for (currentURL of [
-     *     'https://example.com',
-     *     'https://google.com',
-     *     'https://bbc.com',
-     *   ]) {
-     *     await page.goto(currentURL);
-     *   }
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @param xpath - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/XPath | xpath} of an
-     * element to wait for
-     * @param options - Optional waiting parameters
-     * @returns Promise which resolves when element specified by xpath string is
-     * added to DOM. Resolves to `null` if waiting for `hidden: true` and xpath is
-     * not found in DOM.
-     * @remarks
-     * The optional Argument `options` have properties:
-     *
-     * - `visible`: A boolean to wait for element to be present in DOM and to be
-     *   visible, i.e. to not have `display: none` or `visibility: hidden` CSS
-     *   properties. Defaults to `false`.
-     *
-     * - `hidden`: A boolean wait for element to not be found in the DOM or to be
-     *   hidden, i.e. have `display: none` or `visibility: hidden` CSS properties.
-     *   Defaults to `false`.
-     *
-     * - `timeout`: A number which is maximum time to wait for in milliseconds.
-     *   Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
-     *   default value can be changed by using the {@link Page.setDefaultTimeout}
-     *   method.
-     */
     async waitForXPath(xpath, options = {}) {
         if (xpath.startsWith('//')) {
             xpath = `.${xpath}`;
         }
         return this.waitForSelector(`xpath/${xpath}`, options);
     }
-    asElement() {
+    async toElement(tagName) {
+        const isMatchingTagName = await this.evaluate((node, tagName) => {
+            return node.nodeName === tagName.toUpperCase();
+        }, tagName);
+        if (!isMatchingTagName) {
+            throw new Error(`Element is not a(n) \`${tagName}\` element`);
+        }
         return this;
     }
-    /**
-     * Resolves to the content frame for element handles referencing
-     * iframe nodes, or null otherwise
-     */
     async contentFrame() {
         const nodeInfo = await this.client.send('DOM.describeNode', {
             objectId: this.remoteObject().objectId,
@@ -34183,11 +37561,8 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         if (typeof nodeInfo.node.frameId !== 'string') {
             return null;
         }
-        return __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_frameManager_get).frame(nodeInfo.node.frameId);
+        return __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_frameManager_get).frame(nodeInfo.node.frameId);
     }
-    /**
-     * Returns the middle point within an element unless a specific offset is provided.
-     */
     async clickablePoint(offset) {
         const [result, layoutMetrics] = await Promise.all([
             this.client
@@ -34195,7 +37570,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
                 objectId: this.remoteObject().objectId,
             })
                 .catch(util_js_1.debugError),
-            __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get)._client().send('Page.getLayoutMetrics'),
+            __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get)._client().send('Page.getLayoutMetrics'),
         ]);
         if (!result || !result.quads.length) {
             throw new Error('Node is either not clickable or not an HTMLElement');
@@ -34203,16 +37578,16 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         // Filter out quads that have too small area to click into.
         // Fallback to `layoutViewport` in case of using Firefox.
         const { clientWidth, clientHeight } = layoutMetrics.cssLayoutViewport || layoutMetrics.layoutViewport;
-        const { offsetX, offsetY } = await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_getOOPIFOffsets).call(this, __classPrivateFieldGet(this, _ElementHandle_frame, "f"));
+        const { offsetX, offsetY } = await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_getOOPIFOffsets).call(this, __classPrivateFieldGet(this, _CDPElementHandle_frame, "f"));
         const quads = result.quads
             .map(quad => {
-            return __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_fromProtocolQuad).call(this, quad);
+            return __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_fromProtocolQuad).call(this, quad);
         })
             .map(quad => {
             return applyOffsetsToQuad(quad, offsetX, offsetY);
         })
             .map(quad => {
-            return __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_intersectQuadWithViewport).call(this, quad, clientWidth, clientHeight);
+            return __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_intersectQuadWithViewport).call(this, quad, clientWidth, clientHeight);
         })
             .filter(quad => {
             return computeQuadArea(quad) > 1;
@@ -34259,9 +37634,9 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      * If the element is detached from DOM, the method throws an error.
      */
     async hover() {
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const { x, y } = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.move(x, y);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).mouse.move(x, y);
     }
     /**
      * This method scrolls element into view if needed, and then
@@ -34269,68 +37644,40 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      * If the element is detached from DOM, the method throws an error.
      */
     async click(options = {}) {
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const { x, y } = await this.clickablePoint(options.offset);
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.click(x, y, options);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).mouse.click(x, y, options);
     }
     /**
      * This method creates and captures a dragevent from the element.
      */
     async drag(target) {
-        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).isDragInterceptionEnabled(), 'Drag Interception is not enabled!');
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).isDragInterceptionEnabled(), 'Drag Interception is not enabled!');
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const start = await this.clickablePoint();
-        return await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.drag(start, target);
+        return await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).mouse.drag(start, target);
     }
-    /**
-     * This method creates a `dragenter` event on the element.
-     */
     async dragEnter(data = { items: [], dragOperationsMask: 1 }) {
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const target = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.dragEnter(target, data);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).mouse.dragEnter(target, data);
     }
-    /**
-     * This method creates a `dragover` event on the element.
-     */
     async dragOver(data = { items: [], dragOperationsMask: 1 }) {
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const target = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.dragOver(target, data);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).mouse.dragOver(target, data);
     }
-    /**
-     * This method triggers a drop on the element.
-     */
     async drop(data = { items: [], dragOperationsMask: 1 }) {
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const destination = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.drop(destination, data);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).mouse.drop(destination, data);
     }
-    /**
-     * This method triggers a dragenter, dragover, and drop on the element.
-     */
     async dragAndDrop(target, options) {
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const startPoint = await this.clickablePoint();
         const targetPoint = await target.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).mouse.dragAndDrop(startPoint, targetPoint, options);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).mouse.dragAndDrop(startPoint, targetPoint, options);
     }
-    /**
-     * Triggers a `change` and `input` event once all the provided options have been
-     * selected. If there's no `<select>` element matching `selector`, the method
-     * throws an error.
-     *
-     * @example
-     *
-     * ```ts
-     * handle.select('blue'); // single selection
-     * handle.select('red', 'green', 'blue'); // multiple selections
-     * ```
-     *
-     * @param values - Values of options to select. If the `<select>` has the
-     * `multiple` attribute, all values are considered, otherwise only the first
-     * one is taken into account.
-     */
     async select(...values) {
         for (const value of values) {
             (0, assert_js_1.assert)((0, util_js_1.isString)(value), 'Values must be strings. Found value "' +
@@ -34370,16 +37717,6 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
             return [...selectedValues.values()];
         }, values);
     }
-    /**
-     * This method expects `elementHandle` to point to an
-     * {@link https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input | input element}.
-     *
-     * @param filePaths - Sets the value of the file input to these paths.
-     * If a path is relative, then it is resolved against the
-     * {@link https://nodejs.org/api/process.html#process_process_cwd | current working directory}.
-     * Note for locals script connecting to remote chrome environments,
-     * paths must be absolute.
-     */
     async uploadFile(...filePaths) {
         const isMultiple = await this.evaluate(element => {
             return element.multiple;
@@ -34405,7 +37742,9 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
             }
         });
         const { objectId } = this.remoteObject();
-        const { node } = await this.client.send('DOM.describeNode', { objectId });
+        const { node } = await this.client.send('DOM.describeNode', {
+            objectId,
+        });
         const { backendNodeId } = node;
         /*  The zero-length array is a special case, it seems that
              DOM.setFileInputFiles does not actually update the files in that case,
@@ -34427,19 +37766,26 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
             });
         }
     }
-    /**
-     * This method scrolls element into view if needed, and then uses
-     * {@link Touchscreen.tap} to tap in the center of the element.
-     * If the element is detached from DOM, the method throws an error.
-     */
     async tap() {
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         const { x, y } = await this.clickablePoint();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).touchscreen.tap(x, y);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).touchscreen.touchStart(x, y);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).touchscreen.touchEnd();
     }
-    /**
-     * Calls {@link https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus | focus} on the element.
-     */
+    async touchStart() {
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
+        const { x, y } = await this.clickablePoint();
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).touchscreen.touchStart(x, y);
+    }
+    async touchMove() {
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
+        const { x, y } = await this.clickablePoint();
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).touchscreen.touchMove(x, y);
+    }
+    async touchEnd() {
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).touchscreen.touchEnd();
+    }
     async focus() {
         await this.evaluate(element => {
             if (!(element instanceof HTMLElement)) {
@@ -34448,61 +37794,20 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
             return element.focus();
         });
     }
-    /**
-     * Focuses the element, and then sends a `keydown`, `keypress`/`input`, and
-     * `keyup` event for each character in the text.
-     *
-     * To press a special key, like `Control` or `ArrowDown`,
-     * use {@link ElementHandle.press}.
-     *
-     * @example
-     *
-     * ```ts
-     * await elementHandle.type('Hello'); // Types instantly
-     * await elementHandle.type('World', {delay: 100}); // Types slower, like a user
-     * ```
-     *
-     * @example
-     * An example of typing into a text field and then submitting the form:
-     *
-     * ```ts
-     * const elementHandle = await page.$('input');
-     * await elementHandle.type('some text');
-     * await elementHandle.press('Enter');
-     * ```
-     */
     async type(text, options) {
         await this.focus();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).keyboard.type(text, options);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).keyboard.type(text, options);
     }
-    /**
-     * Focuses the element, and then uses {@link Keyboard.down} and {@link Keyboard.up}.
-     *
-     * @remarks
-     * If `key` is a single character and no modifier keys besides `Shift`
-     * are being held down, a `keypress`/`input` event will also be generated.
-     * The `text` option can be specified to force an input event to be generated.
-     *
-     * **NOTE** Modifier keys DO affect `elementHandle.press`. Holding down `Shift`
-     * will type the text in upper case.
-     *
-     * @param key - Name of key to press, such as `ArrowLeft`.
-     * See {@link KeyInput} for a list of all key names.
-     */
     async press(key, options) {
         await this.focus();
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).keyboard.press(key, options);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).keyboard.press(key, options);
     }
-    /**
-     * This method returns the bounding box of the element (relative to the main frame),
-     * or `null` if the element is not visible.
-     */
     async boundingBox() {
-        const result = await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_getBoxModel).call(this);
+        const result = await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_getBoxModel).call(this);
         if (!result) {
             return null;
         }
-        const { offsetX, offsetY } = await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_getOOPIFOffsets).call(this, __classPrivateFieldGet(this, _ElementHandle_frame, "f"));
+        const { offsetX, offsetY } = await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_getOOPIFOffsets).call(this, __classPrivateFieldGet(this, _CDPElementHandle_frame, "f"));
         const quad = result.model.border;
         const x = Math.min(quad[0], quad[2], quad[4], quad[6]);
         const y = Math.min(quad[1], quad[3], quad[5], quad[7]);
@@ -34510,40 +37815,27 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         const height = Math.max(quad[1], quad[3], quad[5], quad[7]) - y;
         return { x: x + offsetX, y: y + offsetY, width, height };
     }
-    /**
-     * This method returns boxes of the element, or `null` if the element is not visible.
-     *
-     * @remarks
-     *
-     * Boxes are represented as an array of points;
-     * Each Point is an object `{x, y}`. Box points are sorted clock-wise.
-     */
     async boxModel() {
-        const result = await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_getBoxModel).call(this);
+        const result = await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_getBoxModel).call(this);
         if (!result) {
             return null;
         }
-        const { offsetX, offsetY } = await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_getOOPIFOffsets).call(this, __classPrivateFieldGet(this, _ElementHandle_frame, "f"));
+        const { offsetX, offsetY } = await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_getOOPIFOffsets).call(this, __classPrivateFieldGet(this, _CDPElementHandle_frame, "f"));
         const { content, padding, border, margin, width, height } = result.model;
         return {
-            content: applyOffsetsToQuad(__classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_fromProtocolQuad).call(this, content), offsetX, offsetY),
-            padding: applyOffsetsToQuad(__classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_fromProtocolQuad).call(this, padding), offsetX, offsetY),
-            border: applyOffsetsToQuad(__classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_fromProtocolQuad).call(this, border), offsetX, offsetY),
-            margin: applyOffsetsToQuad(__classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_fromProtocolQuad).call(this, margin), offsetX, offsetY),
+            content: applyOffsetsToQuad(__classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_fromProtocolQuad).call(this, content), offsetX, offsetY),
+            padding: applyOffsetsToQuad(__classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_fromProtocolQuad).call(this, padding), offsetX, offsetY),
+            border: applyOffsetsToQuad(__classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_fromProtocolQuad).call(this, border), offsetX, offsetY),
+            margin: applyOffsetsToQuad(__classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_fromProtocolQuad).call(this, margin), offsetX, offsetY),
             width,
             height,
         };
     }
-    /**
-     * This method scrolls element into view if needed, and then uses
-     * {@link Page.screenshot} to take a screenshot of the element.
-     * If the element is detached from DOM, the method throws an error.
-     */
     async screenshot(options = {}) {
         let needsViewportReset = false;
         let boundingBox = await this.boundingBox();
         (0, assert_js_1.assert)(boundingBox, 'Node is either not visible or not an HTMLElement');
-        const viewport = __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).viewport();
+        const viewport = __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).viewport();
         if (viewport &&
             (boundingBox.width > viewport.width ||
                 boundingBox.height > viewport.height)) {
@@ -34551,10 +37843,10 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
                 width: Math.max(viewport.width, Math.ceil(boundingBox.width)),
                 height: Math.max(viewport.height, Math.ceil(boundingBox.height)),
             };
-            await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).setViewport(Object.assign({}, viewport, newViewport));
+            await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).setViewport(Object.assign({}, viewport, newViewport));
             needsViewportReset = true;
         }
-        await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_scrollIntoViewIfNeeded).call(this);
+        await __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_scrollIntoViewIfNeeded).call(this);
         boundingBox = await this.boundingBox();
         (0, assert_js_1.assert)(boundingBox, 'Node is either not visible or not an HTMLElement');
         (0, assert_js_1.assert)(boundingBox.width !== 0, 'Node has 0 width.');
@@ -34565,17 +37857,14 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         const clip = Object.assign({}, boundingBox);
         clip.x += pageX;
         clip.y += pageY;
-        const imageData = await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).screenshot(Object.assign({}, {
+        const imageData = await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).screenshot(Object.assign({}, {
             clip,
         }, options));
         if (needsViewportReset && viewport) {
-            await __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).setViewport(viewport);
+            await __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).setViewport(viewport);
         }
         return imageData;
     }
-    /**
-     * Resolves to true if the element is visible in the current viewport.
-     */
     async isIntersectingViewport(options) {
         const { threshold = 0 } = options !== null && options !== void 0 ? options : {};
         return await this.evaluate(async (element, threshold) => {
@@ -34590,12 +37879,12 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
         }, threshold);
     }
 }
-exports.ElementHandle = ElementHandle;
-_ElementHandle_frame = new WeakMap(), _ElementHandle_instances = new WeakSet(), _ElementHandle_frameManager_get = function _ElementHandle_frameManager_get() {
-    return __classPrivateFieldGet(this, _ElementHandle_frame, "f")._frameManager;
-}, _ElementHandle_page_get = function _ElementHandle_page_get() {
-    return __classPrivateFieldGet(this, _ElementHandle_frame, "f").page();
-}, _ElementHandle_scrollIntoViewIfNeeded = async function _ElementHandle_scrollIntoViewIfNeeded() {
+exports.CDPElementHandle = CDPElementHandle;
+_CDPElementHandle_frame = new WeakMap(), _CDPElementHandle_jsHandle = new WeakMap(), _CDPElementHandle_instances = new WeakSet(), _CDPElementHandle_frameManager_get = function _CDPElementHandle_frameManager_get() {
+    return __classPrivateFieldGet(this, _CDPElementHandle_frame, "f")._frameManager;
+}, _CDPElementHandle_page_get = function _CDPElementHandle_page_get() {
+    return __classPrivateFieldGet(this, _CDPElementHandle_frame, "f").page();
+}, _CDPElementHandle_scrollIntoViewIfNeeded = async function _CDPElementHandle_scrollIntoViewIfNeeded() {
     const error = await this.evaluate(async (element) => {
         if (!element.isConnected) {
             return 'Node is detached from document';
@@ -34635,9 +37924,9 @@ _ElementHandle_frame = new WeakMap(), _ElementHandle_instances = new WeakSet(), 
                     behavior: 'instant',
                 });
             }
-        }, __classPrivateFieldGet(this, _ElementHandle_instances, "a", _ElementHandle_page_get).isJavaScriptEnabled());
+        }, __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).isJavaScriptEnabled());
     }
-}, _ElementHandle_getOOPIFOffsets = async function _ElementHandle_getOOPIFOffsets(frame) {
+}, _CDPElementHandle_getOOPIFOffsets = async function _CDPElementHandle_getOOPIFOffsets(frame) {
     let offsetX = 0;
     let offsetY = 0;
     let currentFrame = frame;
@@ -34657,27 +37946,27 @@ _ElementHandle_frame = new WeakMap(), _ElementHandle_instances = new WeakSet(), 
             break;
         }
         const contentBoxQuad = result.model.content;
-        const topLeftCorner = __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_fromProtocolQuad).call(this, contentBoxQuad)[0];
+        const topLeftCorner = __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_fromProtocolQuad).call(this, contentBoxQuad)[0];
         offsetX += topLeftCorner.x;
         offsetY += topLeftCorner.y;
         currentFrame = parent;
     }
     return { offsetX, offsetY };
-}, _ElementHandle_getBoxModel = function _ElementHandle_getBoxModel() {
+}, _CDPElementHandle_getBoxModel = function _CDPElementHandle_getBoxModel() {
     const params = {
-        objectId: this.remoteObject().objectId,
+        objectId: this.id,
     };
     return this.client.send('DOM.getBoxModel', params).catch(error => {
         return (0, util_js_1.debugError)(error);
     });
-}, _ElementHandle_fromProtocolQuad = function _ElementHandle_fromProtocolQuad(quad) {
+}, _CDPElementHandle_fromProtocolQuad = function _CDPElementHandle_fromProtocolQuad(quad) {
     return [
         { x: quad[0], y: quad[1] },
         { x: quad[2], y: quad[3] },
         { x: quad[4], y: quad[5] },
         { x: quad[6], y: quad[7] },
     ];
-}, _ElementHandle_intersectQuadWithViewport = function _ElementHandle_intersectQuadWithViewport(quad, width, height) {
+}, _CDPElementHandle_intersectQuadWithViewport = function _CDPElementHandle_intersectQuadWithViewport(quad, width, height) {
     return quad.map(point => {
         return {
             x: Math.min(Math.max(point.x, 0), width),
@@ -35062,11 +38351,23 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _ExecutionContext_instances, _ExecutionContext_evaluate;
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var _ExecutionContext_instances, _ExecutionContext_puppeteerUtil, _ExecutionContext_installGlobalBinding, _ExecutionContext_evaluate;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ExecutionContext = exports.EVALUATION_SCRIPT_URL = void 0;
+const AsyncIterableUtil_js_1 = __nccwpck_require__(6992);
+const Function_js_1 = __nccwpck_require__(2329);
+const AriaQueryHandler_js_1 = __nccwpck_require__(3082);
+const Binding_js_1 = __nccwpck_require__(1518);
+const ElementHandle_js_1 = __nccwpck_require__(865);
 const JSHandle_js_1 = __nccwpck_require__(2045);
 const LazyArg_js_1 = __nccwpck_require__(4897);
+const ScriptInjector_js_1 = __nccwpck_require__(2379);
 const util_js_1 = __nccwpck_require__(8274);
 /**
  * @public
@@ -35101,10 +38402,34 @@ class ExecutionContext {
      */
     constructor(client, contextPayload, world) {
         _ExecutionContext_instances.add(this);
+        _ExecutionContext_puppeteerUtil.set(this, void 0);
         this._client = client;
         this._world = world;
         this._contextId = contextPayload.id;
-        this._contextName = contextPayload.name;
+        if (contextPayload.name) {
+            this._contextName = contextPayload.name;
+        }
+    }
+    get puppeteerUtil() {
+        ScriptInjector_js_1.scriptInjector.inject(script => {
+            if (__classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f")) {
+                __classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f").then(handle => {
+                    handle.dispose();
+                });
+            }
+            __classPrivateFieldSet(this, _ExecutionContext_puppeteerUtil, Promise.all([
+                __classPrivateFieldGet(this, _ExecutionContext_instances, "m", _ExecutionContext_installGlobalBinding).call(this, new Binding_js_1.Binding('__ariaQuerySelector', AriaQueryHandler_js_1.ARIAQueryHandler.queryOne)),
+                __classPrivateFieldGet(this, _ExecutionContext_instances, "m", _ExecutionContext_installGlobalBinding).call(this, new Binding_js_1.Binding('__ariaQuerySelectorAll', (async (element, selector) => {
+                    const results = AriaQueryHandler_js_1.ARIAQueryHandler.queryAll(element, selector);
+                    return element.executionContext().evaluateHandle((...elements) => {
+                        return elements;
+                    }, ...(await AsyncIterableUtil_js_1.AsyncIterableUtil.collect(results)));
+                }))),
+            ]).then(() => {
+                return this.evaluateHandle(script);
+            }), "f");
+        }, !__classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f"));
+        return __classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f");
     }
     /**
      * Evaluates the given function.
@@ -35203,7 +38528,19 @@ class ExecutionContext {
     }
 }
 exports.ExecutionContext = ExecutionContext;
-_ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async function _ExecutionContext_evaluate(returnByValue, pageFunction, ...args) {
+_ExecutionContext_puppeteerUtil = new WeakMap(), _ExecutionContext_instances = new WeakSet(), _ExecutionContext_installGlobalBinding = async function _ExecutionContext_installGlobalBinding(binding) {
+    try {
+        if (this._world) {
+            this._world._bindings.set(binding.name, binding);
+            await this._world._addBindingToContext(this, binding.name);
+        }
+    }
+    catch {
+        // If the binding cannot be added, then either the browser doesn't support
+        // bindings (e.g. Firefox) or the context is broken. Either breakage is
+        // okay, so we ignore the error.
+    }
+}, _ExecutionContext_evaluate = async function _ExecutionContext_evaluate(returnByValue, pageFunction, ...args) {
     const suffix = `//# sourceURL=${exports.EVALUATION_SCRIPT_URL}`;
     if ((0, util_js_1.isString)(pageFunction)) {
         const contextId = this._contextId;
@@ -35227,32 +38564,10 @@ _ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async 
             ? (0, util_js_1.valueFromRemoteObject)(remoteObject)
             : (0, util_js_1.createJSHandle)(this, remoteObject);
     }
-    let functionText = pageFunction.toString();
-    try {
-        new Function('(' + functionText + ')');
-    }
-    catch (error) {
-        // This means we might have a function shorthand. Try another
-        // time prefixing 'function '.
-        if (functionText.startsWith('async ')) {
-            functionText =
-                'async function ' + functionText.substring('async '.length);
-        }
-        else {
-            functionText = 'function ' + functionText;
-        }
-        try {
-            new Function('(' + functionText + ')');
-        }
-        catch (error) {
-            // We tried hard to serialize, but there's a weird beast here.
-            throw new Error('Passed function is not well-serializable!');
-        }
-    }
     let callFunctionOnPromise;
     try {
         callFunctionOnPromise = this._client.send('Runtime.callFunctionOn', {
-            functionDeclaration: functionText + '\n' + suffix + '\n',
+            functionDeclaration: `${(0, Function_js_1.stringifyFunction)(pageFunction)}\n${suffix}\n`,
             executionContextId: this._contextId,
             arguments: await Promise.all(args.map(convertArgument.bind(this))),
             returnByValue,
@@ -35276,7 +38591,7 @@ _ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async 
         : (0, util_js_1.createJSHandle)(this, remoteObject);
     async function convertArgument(arg) {
         if (arg instanceof LazyArg_js_1.LazyArg) {
-            arg = await arg.get();
+            arg = await arg.get(this);
         }
         if (typeof arg === 'bigint') {
             // eslint-disable-line valid-typeof
@@ -35294,7 +38609,9 @@ _ExecutionContext_instances = new WeakSet(), _ExecutionContext_evaluate = async 
         if (Object.is(arg, NaN)) {
             return { unserializableValue: 'NaN' };
         }
-        const objectHandle = arg && arg instanceof JSHandle_js_1.JSHandle ? arg : null;
+        const objectHandle = arg && (arg instanceof JSHandle_js_1.CDPJSHandle || arg instanceof ElementHandle_js_1.CDPElementHandle)
+            ? arg
+            : null;
         if (objectHandle) {
             if (objectHandle.executionContext() !== this) {
                 throw new Error('JSHandles can be evaluated only in the context they were created!');
@@ -35695,11 +39012,12 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _Frame_url, _Frame_detached, _Frame_client;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Frame = void 0;
-const assert_js_1 = __nccwpck_require__(7729);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
+const GetQueryHandler_js_1 = __nccwpck_require__(3465);
 const IsolatedWorld_js_1 = __nccwpck_require__(5651);
+const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
+const LazyArg_js_1 = __nccwpck_require__(4897);
 const LifecycleWatcher_js_1 = __nccwpck_require__(2169);
-const QueryHandler_js_1 = __nccwpck_require__(3200);
 const util_js_1 = __nccwpck_require__(8274);
 /**
  * Represents a DOM frame.
@@ -35717,7 +39035,7 @@ const util_js_1 = __nccwpck_require__(8274);
  * An example of dumping frame tree:
  *
  * ```ts
- * const puppeteer = require('puppeteer');
+ * import puppeteer from 'puppeteer';
  *
  * (async () => {
  *   const browser = await puppeteer.launch();
@@ -35788,8 +39106,8 @@ class Frame {
     updateClient(client) {
         __classPrivateFieldSet(this, _Frame_client, client, "f");
         this.worlds = {
-            [IsolatedWorld_js_1.MAIN_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(this),
-            [IsolatedWorld_js_1.PUPPETEER_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(this),
+            [IsolatedWorlds_js_1.MAIN_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(this),
+            [IsolatedWorlds_js_1.PUPPETEER_WORLD]: new IsolatedWorld_js_1.IsolatedWorld(this),
         };
     }
     /**
@@ -35843,11 +39161,11 @@ class Frame {
      * calling {@link HTTPResponse.status}.
      */
     async goto(url, options = {}) {
-        const { referer = this._frameManager.networkManager.extraHTTPHeaders()['referer'], waitUntil = ['load'], timeout = this._frameManager.timeoutSettings.navigationTimeout(), } = options;
+        const { referer = this._frameManager.networkManager.extraHTTPHeaders()['referer'], referrerPolicy = this._frameManager.networkManager.extraHTTPHeaders()['referer-policy'], waitUntil = ['load'], timeout = this._frameManager.timeoutSettings.navigationTimeout(), } = options;
         let ensureNewDocumentNavigation = false;
         const watcher = new LifecycleWatcher_js_1.LifecycleWatcher(this._frameManager, this, waitUntil, timeout);
         let error = await Promise.race([
-            navigate(__classPrivateFieldGet(this, _Frame_client, "f"), url, referer, this._id),
+            navigate(__classPrivateFieldGet(this, _Frame_client, "f"), url, referer, referrerPolicy, this._id),
             watcher.timeoutOrTerminationPromise(),
         ]);
         if (!error) {
@@ -35867,14 +39185,18 @@ class Frame {
         finally {
             watcher.dispose();
         }
-        async function navigate(client, url, referrer, frameId) {
+        async function navigate(client, url, referrer, referrerPolicy, frameId) {
             try {
                 const response = await client.send('Page.navigate', {
                     url,
                     referrer,
                     frameId,
+                    referrerPolicy,
                 });
                 ensureNewDocumentNavigation = !!response.loaderId;
+                if (response.errorText === 'net::ERR_HTTP_RESPONSE_CODE_FAILURE') {
+                    return null;
+                }
                 return response.errorText
                     ? new Error(`${response.errorText} at ${url}`)
                     : null;
@@ -35938,7 +39260,7 @@ class Frame {
      * @internal
      */
     executionContext() {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].executionContext();
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].executionContext();
     }
     /**
      * Behaves identically to {@link Page.evaluateHandle} except it's run within
@@ -35947,7 +39269,7 @@ class Frame {
      * @see {@link Page.evaluateHandle} for details.
      */
     async evaluateHandle(pageFunction, ...args) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].evaluateHandle(pageFunction, ...args);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].evaluateHandle(pageFunction, ...args);
     }
     /**
      * Behaves identically to {@link Page.evaluate} except it's run within the
@@ -35956,7 +39278,7 @@ class Frame {
      * @see {@link Page.evaluate} for details.
      */
     async evaluate(pageFunction, ...args) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].evaluate(pageFunction, ...args);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].evaluate(pageFunction, ...args);
     }
     /**
      * Queries the frame for an element matching the given selector.
@@ -35966,7 +39288,7 @@ class Frame {
      * matching the given selector. Otherwise, `null`.
      */
     async $(selector) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].$(selector);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].$(selector);
     }
     /**
      * Queries the frame for all elements matching the given selector.
@@ -35976,7 +39298,7 @@ class Frame {
      * elements matching the given selector.
      */
     async $$(selector) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].$$(selector);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].$$(selector);
     }
     /**
      * Runs the given function on the first element matching the given selector in
@@ -35999,7 +39321,7 @@ class Frame {
      * @returns A promise to the result of the function.
      */
     async $eval(selector, pageFunction, ...args) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].$eval(selector, pageFunction, ...args);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].$eval(selector, pageFunction, ...args);
     }
     /**
      * Runs the given function on an array of elements matching the given selector
@@ -36022,7 +39344,7 @@ class Frame {
      * @returns A promise to the result of the function.
      */
     async $$eval(selector, pageFunction, ...args) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].$$eval(selector, pageFunction, ...args);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].$$eval(selector, pageFunction, ...args);
     }
     /**
      * @deprecated Use {@link Frame.$$} with the `xpath` prefix.
@@ -36035,7 +39357,7 @@ class Frame {
      * @param expression - the XPath expression to evaluate.
      */
     async $x(expression) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].$x(expression);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].$x(expression);
     }
     /**
      * Waits for an element matching the given selector to appear in the frame.
@@ -36045,7 +39367,7 @@ class Frame {
      * @example
      *
      * ```ts
-     * const puppeteer = require('puppeteer');
+     * import puppeteer from 'puppeteer';
      *
      * (async () => {
      *   const browser = await puppeteer.launch();
@@ -36073,9 +39395,8 @@ class Frame {
      * @throws Throws if an element matching the given selector doesn't appear.
      */
     async waitForSelector(selector, options = {}) {
-        const { updatedSelector, queryHandler } = (0, QueryHandler_js_1.getQueryHandlerAndSelector)(selector);
-        (0, assert_js_1.assert)(queryHandler.waitFor, 'Query handler does not support waiting');
-        return (await queryHandler.waitFor(this, updatedSelector, options));
+        const { updatedSelector, QueryHandler } = (0, GetQueryHandler_js_1.getQueryHandlerAndSelector)(selector);
+        return (await QueryHandler.waitFor(this, updatedSelector, options));
     }
     /**
      * @deprecated Use {@link Frame.waitForSelector} with the `xpath` prefix.
@@ -36096,7 +39417,7 @@ class Frame {
      * an XPath.
      *
      * @param xpath - the XPath expression to wait for.
-     * @param options - options to configure the visiblity of the element and how
+     * @param options - options to configure the visibility of the element and how
      * long to wait before timing out.
      */
     async waitForXPath(xpath, options = {}) {
@@ -36110,7 +39431,7 @@ class Frame {
      * The `waitForFunction` can be used to observe viewport size change:
      *
      * ```ts
-     * const puppeteer = require('puppeteer');
+     * import puppeteer from 'puppeteer';
      *
      * (async () => {
      * .  const browser = await puppeteer.launch();
@@ -36139,13 +39460,13 @@ class Frame {
      * @returns the promise which resolve when the `pageFunction` returns a truthy value.
      */
     waitForFunction(pageFunction, options = {}, ...args) {
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].waitForFunction(pageFunction, options, ...args);
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].waitForFunction(pageFunction, options, ...args);
     }
     /**
      * @returns The full HTML contents of the frame, including the DOCTYPE.
      */
     async content() {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].content();
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].content();
     }
     /**
      * Set the content of the frame.
@@ -36155,7 +39476,7 @@ class Frame {
      * what point to consider the content setting successful.
      */
     async setContent(html, options = {}) {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].setContent(html, options);
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].setContent(html, options);
     }
     /**
      * @returns The frame's `name` attribute as specified in the tag.
@@ -36222,7 +39543,7 @@ class Frame {
             content += `//# sourceURL=${path.replace(/\n/g, '')}`;
         }
         type = type !== null && type !== void 0 ? type : 'text/javascript';
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].evaluateHandle(async ({ createDeferredPromise }, { url, id, type, content }) => {
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].transferHandle(await this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].evaluateHandle(async ({ createDeferredPromise }, { url, id, type, content }) => {
             const promise = createDeferredPromise();
             const script = document.createElement('script');
             script.type = type;
@@ -36246,7 +39567,9 @@ class Frame {
             document.head.appendChild(script);
             await promise;
             return script;
-        }, await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].puppeteerUtil, { ...options, type, content }));
+        }, LazyArg_js_1.LazyArg.create(context => {
+            return context.puppeteerUtil;
+        }), { ...options, type, content }));
     }
     async addStyleTag(options) {
         let { content = '' } = options;
@@ -36269,7 +39592,7 @@ class Frame {
             content += '/*# sourceURL=' + path.replace(/\n/g, '') + '*/';
             options.content = content;
         }
-        return this.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].evaluateHandle(async ({ createDeferredPromise }, { url, content }) => {
+        return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].transferHandle(await this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].evaluateHandle(async ({ createDeferredPromise }, { url, content }) => {
             const promise = createDeferredPromise();
             let element;
             if (!url) {
@@ -36292,7 +39615,9 @@ class Frame {
             document.head.appendChild(element);
             await promise;
             return element;
-        }, await this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].puppeteerUtil, options));
+        }, LazyArg_js_1.LazyArg.create(context => {
+            return context.puppeteerUtil;
+        }), options));
     }
     /**
      * Clicks the first element found that matches `selector`.
@@ -36313,7 +39638,7 @@ class Frame {
      * @param selector - The selector to query for.
      */
     async click(selector, options = {}) {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].click(selector, options);
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].click(selector, options);
     }
     /**
      * Focuses the first element that matches the `selector`.
@@ -36322,7 +39647,7 @@ class Frame {
      * @throws Throws if there's no element matching `selector`.
      */
     async focus(selector) {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].focus(selector);
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].focus(selector);
     }
     /**
      * Hovers the pointer over the center of the first element that matches the
@@ -36332,7 +39657,7 @@ class Frame {
      * @throws Throws if there's no element matching `selector`.
      */
     async hover(selector) {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].hover(selector);
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].hover(selector);
     }
     /**
      * Selects a set of value on the first `<select>` element that matches the
@@ -36353,7 +39678,7 @@ class Frame {
      * @throws Throws if there's no `<select>` matching `selector`.
      */
     select(selector, ...values) {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].select(selector, ...values);
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].select(selector, ...values);
     }
     /**
      * Taps the first element that matches the `selector`.
@@ -36362,7 +39687,7 @@ class Frame {
      * @throws Throws if there's no element matching `selector`.
      */
     async tap(selector) {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].tap(selector);
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].tap(selector);
     }
     /**
      * Sends a `keydown`, `keypress`/`input`, and `keyup` event for each character
@@ -36386,7 +39711,7 @@ class Frame {
      * between key presses in milliseconds. Defaults to `0`.
      */
     async type(selector, text, options) {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].type(selector, text, options);
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].type(selector, text, options);
     }
     /**
      * @deprecated Replace with `new Promise(r => setTimeout(r, milliseconds));`.
@@ -36417,7 +39742,7 @@ class Frame {
      * @returns the frame's title.
      */
     async title() {
-        return this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].title();
+        return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].title();
     }
     /**
      * @internal
@@ -36460,8 +39785,8 @@ class Frame {
      */
     _detach() {
         __classPrivateFieldSet(this, _Frame_detached, true, "f");
-        this.worlds[IsolatedWorld_js_1.MAIN_WORLD]._detach();
-        this.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD]._detach();
+        this.worlds[IsolatedWorlds_js_1.MAIN_WORLD]._detach();
+        this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD]._detach();
     }
 }
 exports.Frame = Frame;
@@ -36490,18 +39815,18 @@ _Frame_url = new WeakMap(), _Frame_detached = new WeakMap(), _Frame_client = new
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
     return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
 };
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _FrameManager_instances, _FrameManager_page, _FrameManager_networkManager, _FrameManager_timeoutSettings, _FrameManager_contextIdToContext, _FrameManager_isolatedWorlds, _FrameManager_client, _FrameManager_onLifecycleEvent, _FrameManager_onFrameStartedLoading, _FrameManager_onFrameStoppedLoading, _FrameManager_handleFrameTree, _FrameManager_onFrameAttached, _FrameManager_onFrameNavigated, _FrameManager_createIsolatedWorld, _FrameManager_onFrameNavigatedWithinDocument, _FrameManager_onFrameDetached, _FrameManager_onExecutionContextCreated, _FrameManager_onExecutionContextDestroyed, _FrameManager_onExecutionContextsCleared, _FrameManager_removeFramesRecursively;
+var _FrameManager_instances, _FrameManager_page, _FrameManager_networkManager, _FrameManager_timeoutSettings, _FrameManager_contextIdToContext, _FrameManager_isolatedWorlds, _FrameManager_client, _FrameManager_frameNavigatedReceived, _FrameManager_onLifecycleEvent, _FrameManager_onFrameStartedLoading, _FrameManager_onFrameStoppedLoading, _FrameManager_handleFrameTree, _FrameManager_onFrameAttached, _FrameManager_onFrameNavigated, _FrameManager_createIsolatedWorld, _FrameManager_onFrameNavigatedWithinDocument, _FrameManager_onFrameDetached, _FrameManager_onExecutionContextCreated, _FrameManager_onExecutionContextDestroyed, _FrameManager_onExecutionContextsCleared, _FrameManager_removeFramesRecursively;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FrameManager = exports.FrameManagerEmittedEvents = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
@@ -36511,7 +39836,7 @@ const EventEmitter_js_1 = __nccwpck_require__(7692);
 const ExecutionContext_js_1 = __nccwpck_require__(8272);
 const Frame_js_1 = __nccwpck_require__(1106);
 const FrameTree_js_1 = __nccwpck_require__(3751);
-const IsolatedWorld_js_1 = __nccwpck_require__(5651);
+const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
 const NetworkManager_js_1 = __nccwpck_require__(5381);
 const util_js_1 = __nccwpck_require__(8274);
 const UTILITY_WORLD_NAME = '__puppeteer_utility_world__';
@@ -36537,6 +39862,15 @@ exports.FrameManagerEmittedEvents = {
  * @internal
  */
 class FrameManager extends EventEmitter_js_1.EventEmitter {
+    get timeoutSettings() {
+        return __classPrivateFieldGet(this, _FrameManager_timeoutSettings, "f");
+    }
+    get networkManager() {
+        return __classPrivateFieldGet(this, _FrameManager_networkManager, "f");
+    }
+    get client() {
+        return __classPrivateFieldGet(this, _FrameManager_client, "f");
+    }
     constructor(client, page, ignoreHTTPSErrors, timeoutSettings) {
         super();
         _FrameManager_instances.add(this);
@@ -36550,26 +39884,24 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
          * @internal
          */
         this._frameTree = new FrameTree_js_1.FrameTree();
+        /**
+         * Set of frame IDs stored to indicate if a frame has received a
+         * frameNavigated event so that frame tree responses could be ignored as the
+         * frameNavigated event usually contains the latest information.
+         */
+        _FrameManager_frameNavigatedReceived.set(this, new Set());
         __classPrivateFieldSet(this, _FrameManager_client, client, "f");
         __classPrivateFieldSet(this, _FrameManager_page, page, "f");
         __classPrivateFieldSet(this, _FrameManager_networkManager, new NetworkManager_js_1.NetworkManager(client, ignoreHTTPSErrors, this), "f");
         __classPrivateFieldSet(this, _FrameManager_timeoutSettings, timeoutSettings, "f");
         this.setupEventListeners(__classPrivateFieldGet(this, _FrameManager_client, "f"));
     }
-    get timeoutSettings() {
-        return __classPrivateFieldGet(this, _FrameManager_timeoutSettings, "f");
-    }
-    get networkManager() {
-        return __classPrivateFieldGet(this, _FrameManager_networkManager, "f");
-    }
-    get client() {
-        return __classPrivateFieldGet(this, _FrameManager_client, "f");
-    }
     setupEventListeners(session) {
         session.on('Page.frameAttached', event => {
             __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_onFrameAttached).call(this, session, event.frameId, event.parentFrameId);
         });
         session.on('Page.frameNavigated', event => {
+            __classPrivateFieldGet(this, _FrameManager_frameNavigatedReceived, "f").add(event.frame.id);
             __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_onFrameNavigated).call(this, event.frame);
         });
         session.on('Page.navigatedWithinDocument', event => {
@@ -36625,10 +39957,12 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
         }
     }
     executionContextById(contextId, session = __classPrivateFieldGet(this, _FrameManager_client, "f")) {
-        const key = `${session.id()}:${contextId}`;
-        const context = __classPrivateFieldGet(this, _FrameManager_contextIdToContext, "f").get(key);
+        const context = this.getExecutionContextById(contextId, session);
         (0, assert_js_1.assert)(context, 'INTERNAL ERROR: missing context with id = ' + contextId);
         return context;
+    }
+    getExecutionContextById(contextId, session = __classPrivateFieldGet(this, _FrameManager_client, "f")) {
+        return __classPrivateFieldGet(this, _FrameManager_contextIdToContext, "f").get(`${session.id()}:${contextId}`);
     }
     page() {
         return __classPrivateFieldGet(this, _FrameManager_page, "f");
@@ -36655,17 +39989,9 @@ class FrameManager extends EventEmitter_js_1.EventEmitter {
         this.setupEventListeners(target._session());
         this.initialize(target._session());
     }
-    onDetachedFromTarget(target) {
-        const frame = this.frame(target._targetId);
-        if (frame && frame.isOOPFrame()) {
-            // When an OOP iframe is removed from the page, it
-            // will only get a Target.detachedFromTarget event.
-            __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_removeFramesRecursively).call(this, frame);
-        }
-    }
 }
 exports.FrameManager = FrameManager;
-_FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap(), _FrameManager_timeoutSettings = new WeakMap(), _FrameManager_contextIdToContext = new WeakMap(), _FrameManager_isolatedWorlds = new WeakMap(), _FrameManager_client = new WeakMap(), _FrameManager_instances = new WeakSet(), _FrameManager_onLifecycleEvent = function _FrameManager_onLifecycleEvent(event) {
+_FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap(), _FrameManager_timeoutSettings = new WeakMap(), _FrameManager_contextIdToContext = new WeakMap(), _FrameManager_isolatedWorlds = new WeakMap(), _FrameManager_client = new WeakMap(), _FrameManager_frameNavigatedReceived = new WeakMap(), _FrameManager_instances = new WeakSet(), _FrameManager_onLifecycleEvent = function _FrameManager_onLifecycleEvent(event) {
     const frame = this.frame(event.frameId);
     if (!frame) {
         return;
@@ -36689,7 +40015,12 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
     if (frameTree.frame.parentId) {
         __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_onFrameAttached).call(this, session, frameTree.frame.id, frameTree.frame.parentId);
     }
-    __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_onFrameNavigated).call(this, frameTree.frame);
+    if (!__classPrivateFieldGet(this, _FrameManager_frameNavigatedReceived, "f").has(frameTree.frame.id)) {
+        __classPrivateFieldGet(this, _FrameManager_instances, "m", _FrameManager_onFrameNavigated).call(this, frameTree.frame);
+    }
+    else {
+        __classPrivateFieldGet(this, _FrameManager_frameNavigatedReceived, "f").delete(frameTree.frame.id);
+    }
     if (!frameTree.childFrames) {
         return;
     }
@@ -36792,15 +40123,15 @@ _FrameManager_page = new WeakMap(), _FrameManager_networkManager = new WeakMap()
         if (frame._client() !== session) {
             return;
         }
-        if (contextPayload.auxData && !!contextPayload.auxData['isDefault']) {
-            world = frame.worlds[IsolatedWorld_js_1.MAIN_WORLD];
+        if (contextPayload.auxData && contextPayload.auxData['isDefault']) {
+            world = frame.worlds[IsolatedWorlds_js_1.MAIN_WORLD];
         }
         else if (contextPayload.name === UTILITY_WORLD_NAME &&
-            !frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].hasContext()) {
+            !frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].hasContext()) {
             // In case of multiple sessions to the same target, there's a race between
             // connections so we might end up creating multiple isolated worlds.
             // We can use either.
-            world = frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD];
+            world = frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD];
         }
     }
     const context = new ExecutionContext_js_1.ExecutionContext((frame === null || frame === void 0 ? void 0 : frame._client()) || __classPrivateFieldGet(this, _FrameManager_client, "f"), contextPayload, world);
@@ -36970,21 +40301,93 @@ _FrameTree_frames = new WeakMap(), _FrameTree_parentIds = new WeakMap(), _FrameT
 
 /***/ }),
 
+/***/ 3465:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getQueryHandlerAndSelector = exports.getQueryHandlerByName = exports.BUILTIN_QUERY_HANDLERS = void 0;
+const AriaQueryHandler_js_1 = __nccwpck_require__(3082);
+const CustomQueryHandler_js_1 = __nccwpck_require__(5057);
+const PierceQueryHandler_js_1 = __nccwpck_require__(8198);
+const PQueryHandler_js_1 = __nccwpck_require__(3873);
+const TextQueryHandler_js_1 = __nccwpck_require__(9374);
+const XPathQueryHandler_js_1 = __nccwpck_require__(2578);
+exports.BUILTIN_QUERY_HANDLERS = Object.freeze({
+    aria: AriaQueryHandler_js_1.ARIAQueryHandler,
+    pierce: PierceQueryHandler_js_1.PierceQueryHandler,
+    xpath: XPathQueryHandler_js_1.XPathQueryHandler,
+    text: TextQueryHandler_js_1.TextQueryHandler,
+});
+const QUERY_SEPARATORS = ['=', '/'];
+/**
+ * @internal
+ */
+function getQueryHandlerByName(name) {
+    if (name in exports.BUILTIN_QUERY_HANDLERS) {
+        return exports.BUILTIN_QUERY_HANDLERS[name];
+    }
+    return CustomQueryHandler_js_1.customQueryHandlers.get(name);
+}
+exports.getQueryHandlerByName = getQueryHandlerByName;
+/**
+ * @internal
+ */
+function getQueryHandlerAndSelector(selector) {
+    for (const handlerMap of [
+        CustomQueryHandler_js_1.customQueryHandlers.names().map(name => {
+            return [name, CustomQueryHandler_js_1.customQueryHandlers.get(name)];
+        }),
+        Object.entries(exports.BUILTIN_QUERY_HANDLERS),
+    ]) {
+        for (const [name, QueryHandler] of handlerMap) {
+            for (const separator of QUERY_SEPARATORS) {
+                const prefix = `${name}${separator}`;
+                if (selector.startsWith(prefix)) {
+                    selector = selector.slice(prefix.length);
+                    return { updatedSelector: selector, QueryHandler };
+                }
+            }
+        }
+    }
+    return { updatedSelector: selector, QueryHandler: PQueryHandler_js_1.PQueryHandler };
+}
+exports.getQueryHandlerAndSelector = getQueryHandlerAndSelector;
+//# sourceMappingURL=GetQueryHandler.js.map
+
+/***/ }),
+
 /***/ 3780:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
     return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
 var _HTTPRequest_instances, _HTTPRequest_client, _HTTPRequest_isNavigationRequest, _HTTPRequest_allowInterception, _HTTPRequest_interceptionHandled, _HTTPRequest_url, _HTTPRequest_resourceType, _HTTPRequest_method, _HTTPRequest_postData, _HTTPRequest_headers, _HTTPRequest_frame, _HTTPRequest_continueRequestOverrides, _HTTPRequest_responseForRequest, _HTTPRequest_abortErrorReason, _HTTPRequest_interceptResolutionState, _HTTPRequest_interceptHandlers, _HTTPRequest_initiator, _HTTPRequest_continue, _HTTPRequest_respond, _HTTPRequest_abort;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
@@ -37029,6 +40432,14 @@ exports.DEFAULT_INTERCEPT_RESOLUTION_PRIORITY = 0;
  * @public
  */
 class HTTPRequest {
+    /**
+     * Warning! Using this client can break Puppeteer. Use with caution.
+     *
+     * @experimental
+     */
+    get client() {
+        return __classPrivateFieldGet(this, _HTTPRequest_client, "f");
+    }
     /**
      * @internal
      */
@@ -37081,14 +40492,6 @@ class HTTPRequest {
         for (const [key, value] of Object.entries(event.request.headers)) {
             __classPrivateFieldGet(this, _HTTPRequest_headers, "f")[key.toLowerCase()] = value;
         }
-    }
-    /**
-     * Warning! Using this client can break Puppeteer. Use with caution.
-     *
-     * @experimental
-     */
-    get client() {
-        return __classPrivateFieldGet(this, _HTTPRequest_client, "f");
     }
     /**
      * @returns the URL of the request
@@ -37652,8 +41055,8 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _HTTPResponse_instances, _HTTPResponse_client, _HTTPResponse_request, _HTTPResponse_contentPromise, _HTTPResponse_bodyLoadedPromise, _HTTPResponse_bodyLoadedPromiseFulfill, _HTTPResponse_remoteAddress, _HTTPResponse_status, _HTTPResponse_statusText, _HTTPResponse_url, _HTTPResponse_fromDiskCache, _HTTPResponse_fromServiceWorker, _HTTPResponse_headers, _HTTPResponse_securityDetails, _HTTPResponse_timing, _HTTPResponse_parseStatusTextFromExtrInfo;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HTTPResponse = void 0;
-const SecurityDetails_js_1 = __nccwpck_require__(8762);
 const Errors_js_1 = __nccwpck_require__(6315);
+const SecurityDetails_js_1 = __nccwpck_require__(8762);
 /**
  * The HTTPResponse class represents responses which are received by the
  * {@link Page} class.
@@ -37862,6 +41265,80 @@ _HTTPResponse_client = new WeakMap(), _HTTPResponse_request = new WeakMap(), _HT
 
 /***/ }),
 
+/***/ 5718:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.transposeIterableHandle = void 0;
+const DEFAULT_BATCH_SIZE = 20;
+/**
+ * This will transpose an iterator JSHandle into a fast, Puppeteer-side iterator
+ * of JSHandles.
+ *
+ * @param size - The number of elements to transpose. This should be something
+ * reasonable.
+ */
+async function* fastTransposeIteratorHandle(iterator, size = DEFAULT_BATCH_SIZE) {
+    const array = await iterator.evaluateHandle(async (iterator, size) => {
+        const results = [];
+        while (results.length < size) {
+            const result = await iterator.next();
+            if (result.done) {
+                break;
+            }
+            results.push(result.value);
+        }
+        return results;
+    }, size);
+    const properties = (await array.getProperties());
+    await array.dispose();
+    yield* properties.values();
+    return properties.size === 0;
+}
+/**
+ * This will transpose an iterator JSHandle in batches based on the default size
+ * of {@link fastTransposeIteratorHandle}.
+ */
+async function* transposeIteratorHandle(iterator) {
+    try {
+        while (!(yield* fastTransposeIteratorHandle(iterator))) { }
+    }
+    finally {
+        await iterator.dispose();
+    }
+}
+/**
+ * @internal
+ */
+async function* transposeIterableHandle(handle) {
+    yield* transposeIteratorHandle(await handle.evaluateHandle(iterable => {
+        return (async function* () {
+            yield* iterable;
+        })();
+    }));
+}
+exports.transposeIterableHandle = transposeIterableHandle;
+//# sourceMappingURL=HandleIterator.js.map
+
+/***/ }),
+
 /***/ 7773:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -37976,9 +41453,14 @@ class Keyboard {
      * See {@link KeyInput} for a list of all key names.
      *
      * @param options - An object of options. Accepts text which, if specified,
-     * generates an input event with this text.
+     * generates an input event with this text. Accepts commands which, if specified,
+     * is the commands of keyboard shortcuts,
+     * see {@link https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/core/editing/commands/editor_command_names.h | Chromium Source Code} for valid command names.
      */
-    async down(key, options = { text: undefined }) {
+    async down(key, options = {
+        text: undefined,
+        commands: [],
+    }) {
         const description = __classPrivateFieldGet(this, _Keyboard_instances, "m", _Keyboard_keyDescriptionForString).call(this, key);
         const autoRepeat = __classPrivateFieldGet(this, _Keyboard_pressedKeys, "f").has(description.code);
         __classPrivateFieldGet(this, _Keyboard_pressedKeys, "f").add(description.code);
@@ -37995,6 +41477,7 @@ class Keyboard {
             autoRepeat,
             location: description.location,
             isKeypad: description.location === 3,
+            commands: options.commands,
         });
     }
     /**
@@ -38096,7 +41579,9 @@ class Keyboard {
      * @param options - An object of options. Accepts text which, if specified,
      * generates an input event with this text. Accepts delay which,
      * if specified, is the time to wait between `keydown` and `keyup` in milliseconds.
-     * Defaults to 0.
+     * Defaults to 0. Accepts commands which, if specified,
+     * is the commands of keyboard shortcuts,
+     * see {@link https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/core/editing/commands/editor_command_names.h | Chromium Source Code} for valid command names.
      */
     async press(key, options = {}) {
         const { delay = null } = options;
@@ -38464,12 +41949,39 @@ class Touchscreen {
      * @param y - Vertical position of the tap.
      */
     async tap(x, y) {
+        await this.touchStart(x, y);
+        await this.touchEnd();
+    }
+    /**
+     * Dispatches a `touchstart` event.
+     * @param x - Horizontal position of the tap.
+     * @param y - Vertical position of the tap.
+     */
+    async touchStart(x, y) {
         const touchPoints = [{ x: Math.round(x), y: Math.round(y) }];
         await __classPrivateFieldGet(this, _Touchscreen_client, "f").send('Input.dispatchTouchEvent', {
             type: 'touchStart',
             touchPoints,
             modifiers: __classPrivateFieldGet(this, _Touchscreen_keyboard, "f")._modifiers,
         });
+    }
+    /**
+     * Dispatches a `touchMove` event.
+     * @param x - Horizontal position of the move.
+     * @param y - Vertical position of the move.
+     */
+    async touchMove(x, y) {
+        const movePoints = [{ x: Math.round(x), y: Math.round(y) }];
+        await __classPrivateFieldGet(this, _Touchscreen_client, "f").send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: movePoints,
+            modifiers: __classPrivateFieldGet(this, _Touchscreen_keyboard, "f")._modifiers,
+        });
+    }
+    /**
+     * Dispatches a `touchend` event.
+     */
+    async touchEnd() {
         await __classPrivateFieldGet(this, _Touchscreen_client, "f").send('Input.dispatchTouchEvent', {
             type: 'touchEnd',
             touchPoints: [],
@@ -38503,46 +42015,36 @@ _Touchscreen_client = new WeakMap(), _Touchscreen_keyboard = new WeakMap();
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
     return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
 };
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _IsolatedWorld_instances, _a, _IsolatedWorld_frame, _IsolatedWorld_document, _IsolatedWorld_context, _IsolatedWorld_detached, _IsolatedWorld_ctxBindings, _IsolatedWorld_boundFunctions, _IsolatedWorld_taskManager, _IsolatedWorld_puppeteerUtil, _IsolatedWorld_bindingIdentifier, _IsolatedWorld_client_get, _IsolatedWorld_frameManager_get, _IsolatedWorld_timeoutSettings_get, _IsolatedWorld_injectPuppeteerUtil, _IsolatedWorld_settingUpBinding, _IsolatedWorld_onBindingCalled;
+var _IsolatedWorld_instances, _IsolatedWorld_frame, _IsolatedWorld_document, _IsolatedWorld_context, _IsolatedWorld_detached, _IsolatedWorld_contextBindings, _IsolatedWorld_bindings, _IsolatedWorld_taskManager, _IsolatedWorld_client_get, _IsolatedWorld_frameManager_get, _IsolatedWorld_timeoutSettings_get, _IsolatedWorld_mutex, _IsolatedWorld_onBindingCalled, _Mutex_locked, _Mutex_acquirers;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.IsolatedWorld = exports.PUPPETEER_WORLD = exports.MAIN_WORLD = void 0;
-const injected_js_1 = __nccwpck_require__(8153);
+exports.IsolatedWorld = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
 const DeferredPromise_js_1 = __nccwpck_require__(7015);
-const ErrorLike_js_1 = __nccwpck_require__(2937);
-const LazyArg_js_1 = __nccwpck_require__(4897);
+const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
 const LifecycleWatcher_js_1 = __nccwpck_require__(2169);
 const util_js_1 = __nccwpck_require__(8274);
 const WaitTask_js_1 = __nccwpck_require__(806);
 /**
- * A unique key for {@link IsolatedWorldChart} to denote the default world.
- * Execution contexts are automatically created in the default world.
- *
- * @internal
- */
-exports.MAIN_WORLD = Symbol('mainWorld');
-/**
- * A unique key for {@link IsolatedWorldChart} to denote the puppeteer world.
- * This world contains all puppeteer-internal bindings/code.
- *
- * @internal
- */
-exports.PUPPETEER_WORLD = Symbol('puppeteerWorld');
-/**
  * @internal
  */
 class IsolatedWorld {
+    get taskManager() {
+        return __classPrivateFieldGet(this, _IsolatedWorld_taskManager, "f");
+    }
+    get _bindings() {
+        return __classPrivateFieldGet(this, _IsolatedWorld_bindings, "f");
+    }
     constructor(frame) {
         _IsolatedWorld_instances.add(this);
         _IsolatedWorld_frame.set(this, void 0);
@@ -38550,20 +42052,15 @@ class IsolatedWorld {
         _IsolatedWorld_context.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _IsolatedWorld_detached.set(this, false);
         // Set of bindings that have been registered in the current context.
-        _IsolatedWorld_ctxBindings.set(this, new Set());
+        _IsolatedWorld_contextBindings.set(this, new Set());
         // Contains mapping from functions that should be bound to Puppeteer functions.
-        _IsolatedWorld_boundFunctions.set(this, new Map());
+        _IsolatedWorld_bindings.set(this, new Map());
         _IsolatedWorld_taskManager.set(this, new WaitTask_js_1.TaskManager());
-        _IsolatedWorld_puppeteerUtil.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         // If multiple waitFor are set up asynchronously, we need to wait for the
         // first one to set up the binding in the page before running the others.
-        _IsolatedWorld_settingUpBinding.set(this, null);
+        _IsolatedWorld_mutex.set(this, new Mutex());
         _IsolatedWorld_onBindingCalled.set(this, async (event) => {
             let payload;
-            if (!this.hasContext()) {
-                return;
-            }
-            const context = await this.executionContext();
             try {
                 payload = JSON.parse(event.payload);
             }
@@ -38572,65 +42069,36 @@ class IsolatedWorld {
                 // called before our wrapper was initialized.
                 return;
             }
-            const { type, name, seq, args } = payload;
-            if (type !== 'internal' ||
-                !__classPrivateFieldGet(this, _IsolatedWorld_ctxBindings, "f").has(__classPrivateFieldGet(IsolatedWorld, _a, "f", _IsolatedWorld_bindingIdentifier).call(IsolatedWorld, name, context._contextId))) {
+            const { type, name, seq, args, isTrivial } = payload;
+            if (type !== 'internal') {
                 return;
             }
-            if (context._contextId !== event.executionContextId) {
+            if (!__classPrivateFieldGet(this, _IsolatedWorld_contextBindings, "f").has(name)) {
                 return;
             }
-            try {
-                const fn = this._boundFunctions.get(name);
-                if (!fn) {
-                    throw new Error(`Bound function $name is not found`);
-                }
-                const result = await fn(...args);
-                await context.evaluate((name, seq, result) => {
-                    // @ts-expect-error Code is evaluated in a different context.
-                    const callbacks = self[name].callbacks;
-                    callbacks.get(seq).resolve(result);
-                    callbacks.delete(seq);
-                }, name, seq, result);
+            const context = await __classPrivateFieldGet(this, _IsolatedWorld_context, "f");
+            if (event.executionContextId !== context._contextId) {
+                return;
             }
-            catch (error) {
-                // The WaitTask may already have been resolved by timing out, or the
-                // exection context may have been destroyed.
-                // In both caes, the promises above are rejected with a protocol error.
-                // We can safely ignores these, as the WaitTask is re-installed in
-                // the next execution context if needed.
-                if (error.message.includes('Protocol error')) {
-                    return;
-                }
-                (0, util_js_1.debugError)(error);
-            }
+            const binding = this._bindings.get(name);
+            await (binding === null || binding === void 0 ? void 0 : binding.run(context, seq, args, isTrivial));
         });
         // Keep own reference to client because it might differ from the FrameManager's
         // client for OOP iframes.
         __classPrivateFieldSet(this, _IsolatedWorld_frame, frame, "f");
         __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_client_get).on('Runtime.bindingCalled', __classPrivateFieldGet(this, _IsolatedWorld_onBindingCalled, "f"));
     }
-    get puppeteerUtil() {
-        return __classPrivateFieldGet(this, _IsolatedWorld_puppeteerUtil, "f");
-    }
-    get taskManager() {
-        return __classPrivateFieldGet(this, _IsolatedWorld_taskManager, "f");
-    }
-    get _boundFunctions() {
-        return __classPrivateFieldGet(this, _IsolatedWorld_boundFunctions, "f");
-    }
     frame() {
         return __classPrivateFieldGet(this, _IsolatedWorld_frame, "f");
     }
     clearContext() {
         __classPrivateFieldSet(this, _IsolatedWorld_document, undefined, "f");
-        __classPrivateFieldSet(this, _IsolatedWorld_puppeteerUtil, (0, DeferredPromise_js_1.createDeferredPromise)(), "f");
         __classPrivateFieldSet(this, _IsolatedWorld_context, (0, DeferredPromise_js_1.createDeferredPromise)(), "f");
     }
     setContext(context) {
-        __classPrivateFieldGet(this, _IsolatedWorld_instances, "m", _IsolatedWorld_injectPuppeteerUtil).call(this, context);
-        __classPrivateFieldGet(this, _IsolatedWorld_ctxBindings, "f").clear();
+        __classPrivateFieldGet(this, _IsolatedWorld_contextBindings, "f").clear();
         __classPrivateFieldGet(this, _IsolatedWorld_context, "f").resolve(context);
+        __classPrivateFieldGet(this, _IsolatedWorld_taskManager, "f").rerunAll();
     }
     hasContext() {
         return __classPrivateFieldGet(this, _IsolatedWorld_context, "f").resolved();
@@ -38756,93 +42224,44 @@ class IsolatedWorld {
         await handle.dispose();
     }
     async _addBindingToContext(context, name) {
-        // Previous operation added the binding so we are done.
-        if (__classPrivateFieldGet(this, _IsolatedWorld_ctxBindings, "f").has(__classPrivateFieldGet(IsolatedWorld, _a, "f", _IsolatedWorld_bindingIdentifier).call(IsolatedWorld, name, context._contextId))) {
+        if (__classPrivateFieldGet(this, _IsolatedWorld_contextBindings, "f").has(name)) {
             return;
         }
-        // Wait for other operation to finish
-        if (__classPrivateFieldGet(this, _IsolatedWorld_settingUpBinding, "f")) {
-            await __classPrivateFieldGet(this, _IsolatedWorld_settingUpBinding, "f");
-            return this._addBindingToContext(context, name);
-        }
-        const bind = async (name) => {
-            const expression = (0, util_js_1.pageBindingInitString)('internal', name);
-            try {
-                // TODO: In theory, it would be enough to call this just once
-                await context._client.send('Runtime.addBinding', {
-                    name,
-                    executionContextName: context._contextName,
-                });
-                await context.evaluate(expression);
-            }
-            catch (error) {
-                // We could have tried to evaluate in a context which was already
-                // destroyed. This happens, for example, if the page is navigated while
-                // we are trying to add the binding
-                if (error instanceof Error) {
-                    // Destroyed context.
-                    if (error.message.includes('Execution context was destroyed')) {
-                        return;
-                    }
-                    // Missing context.
-                    if (error.message.includes('Cannot find context with specified id')) {
-                        return;
-                    }
-                }
-                (0, util_js_1.debugError)(error);
-                return;
-            }
-            __classPrivateFieldGet(this, _IsolatedWorld_ctxBindings, "f").add(__classPrivateFieldGet(IsolatedWorld, _a, "f", _IsolatedWorld_bindingIdentifier).call(IsolatedWorld, name, context._contextId));
-        };
-        __classPrivateFieldSet(this, _IsolatedWorld_settingUpBinding, bind(name), "f");
-        await __classPrivateFieldGet(this, _IsolatedWorld_settingUpBinding, "f");
-        __classPrivateFieldSet(this, _IsolatedWorld_settingUpBinding, null, "f");
-    }
-    async _waitForSelectorInPage(queryOne, root, selector, options, bindings = new Map()) {
-        const { visible: waitForVisible = false, hidden: waitForHidden = false, timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).timeout(), } = options;
+        await __classPrivateFieldGet(this, _IsolatedWorld_mutex, "f").acquire();
         try {
-            const handle = await this.waitForFunction(async (PuppeteerUtil, query, selector, root, visible) => {
-                if (!PuppeteerUtil) {
-                    return;
-                }
-                const node = (await PuppeteerUtil.createFunction(query)(root || document, selector, PuppeteerUtil));
-                return PuppeteerUtil.checkVisibility(node, visible);
-            }, {
-                bindings,
-                polling: waitForVisible || waitForHidden ? 'raf' : 'mutation',
-                root,
-                timeout,
-            }, new LazyArg_js_1.LazyArg(async () => {
-                try {
-                    // In case CDP fails.
-                    return await this.puppeteerUtil;
-                }
-                catch {
-                    return undefined;
-                }
-            }), queryOne.toString(), selector, root, waitForVisible ? true : waitForHidden ? false : undefined);
-            const elementHandle = handle.asElement();
-            if (!elementHandle) {
-                await handle.dispose();
-                return null;
-            }
-            return elementHandle;
+            await context._client.send('Runtime.addBinding', {
+                name,
+                executionContextName: context._contextName,
+            });
+            await context.evaluate(util_js_1.addPageBinding, 'internal', name);
+            __classPrivateFieldGet(this, _IsolatedWorld_contextBindings, "f").add(name);
         }
         catch (error) {
-            if (!(0, ErrorLike_js_1.isErrorLike)(error)) {
-                throw error;
+            // We could have tried to evaluate in a context which was already
+            // destroyed. This happens, for example, if the page is navigated while
+            // we are trying to add the binding
+            if (error instanceof Error) {
+                // Destroyed context.
+                if (error.message.includes('Execution context was destroyed')) {
+                    return;
+                }
+                // Missing context.
+                if (error.message.includes('Cannot find context with specified id')) {
+                    return;
+                }
             }
-            error.message = `Waiting for selector \`${selector}\` failed: ${error.message}`;
-            throw error;
+            (0, util_js_1.debugError)(error);
+        }
+        finally {
+            __classPrivateFieldGet(this, _IsolatedWorld_mutex, "f").release();
         }
     }
     waitForFunction(pageFunction, options = {}, ...args) {
-        const { polling = 'raf', timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).timeout(), bindings, root, } = options;
+        const { polling = 'raf', timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).timeout(), root, } = options;
         if (typeof polling === 'number' && polling < 0) {
             throw new Error('Cannot poll with non-positive interval');
         }
         const waitTask = new WaitTask_js_1.WaitTask(this, {
-            bindings,
             polling,
             root,
             timeout,
@@ -38863,43 +42282,103 @@ class IsolatedWorld {
         return (0, util_js_1.createJSHandle)(executionContext, object);
     }
     async adoptHandle(handle) {
-        const executionContext = await this.executionContext();
-        (0, assert_js_1.assert)(handle.executionContext() !== executionContext, 'Cannot adopt handle that already belongs to this execution context');
+        const context = await this.executionContext();
+        (0, assert_js_1.assert)(handle.executionContext() !== context, 'Cannot adopt handle that already belongs to this execution context');
         const nodeInfo = await __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_client_get).send('DOM.describeNode', {
-            objectId: handle.remoteObject().objectId,
+            objectId: handle.id,
         });
         return (await this.adoptBackendNode(nodeInfo.node.backendNodeId));
     }
     async transferHandle(handle) {
-        const result = await this.adoptHandle(handle);
+        const context = await this.executionContext();
+        if (handle.executionContext() === context) {
+            return handle;
+        }
+        const info = await __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_client_get).send('DOM.describeNode', {
+            objectId: handle.remoteObject().objectId,
+        });
+        const newHandle = (await this.adoptBackendNode(info.node.backendNodeId));
         await handle.dispose();
-        return result;
+        return newHandle;
     }
 }
 exports.IsolatedWorld = IsolatedWorld;
-_a = IsolatedWorld, _IsolatedWorld_frame = new WeakMap(), _IsolatedWorld_document = new WeakMap(), _IsolatedWorld_context = new WeakMap(), _IsolatedWorld_detached = new WeakMap(), _IsolatedWorld_ctxBindings = new WeakMap(), _IsolatedWorld_boundFunctions = new WeakMap(), _IsolatedWorld_taskManager = new WeakMap(), _IsolatedWorld_puppeteerUtil = new WeakMap(), _IsolatedWorld_settingUpBinding = new WeakMap(), _IsolatedWorld_onBindingCalled = new WeakMap(), _IsolatedWorld_instances = new WeakSet(), _IsolatedWorld_client_get = function _IsolatedWorld_client_get() {
+_IsolatedWorld_frame = new WeakMap(), _IsolatedWorld_document = new WeakMap(), _IsolatedWorld_context = new WeakMap(), _IsolatedWorld_detached = new WeakMap(), _IsolatedWorld_contextBindings = new WeakMap(), _IsolatedWorld_bindings = new WeakMap(), _IsolatedWorld_taskManager = new WeakMap(), _IsolatedWorld_mutex = new WeakMap(), _IsolatedWorld_onBindingCalled = new WeakMap(), _IsolatedWorld_instances = new WeakSet(), _IsolatedWorld_client_get = function _IsolatedWorld_client_get() {
     return __classPrivateFieldGet(this, _IsolatedWorld_frame, "f")._client();
 }, _IsolatedWorld_frameManager_get = function _IsolatedWorld_frameManager_get() {
     return __classPrivateFieldGet(this, _IsolatedWorld_frame, "f")._frameManager;
 }, _IsolatedWorld_timeoutSettings_get = function _IsolatedWorld_timeoutSettings_get() {
     return __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_frameManager_get).timeoutSettings;
-}, _IsolatedWorld_injectPuppeteerUtil = async function _IsolatedWorld_injectPuppeteerUtil(context) {
-    try {
-        __classPrivateFieldGet(this, _IsolatedWorld_puppeteerUtil, "f").resolve((await context.evaluateHandle(`(() => {
-              const module = {};
-              ${injected_js_1.source}
-              return module.exports.default;
-            })()`)));
-        __classPrivateFieldGet(this, _IsolatedWorld_taskManager, "f").rerunAll();
-    }
-    catch (error) {
-        (0, util_js_1.debugError)(error);
-    }
 };
-_IsolatedWorld_bindingIdentifier = { value: (name, contextId) => {
-        return `${name}_${contextId}`;
-    } };
+class Mutex {
+    constructor() {
+        _Mutex_locked.set(this, false);
+        _Mutex_acquirers.set(this, []);
+    }
+    // This is FIFO.
+    acquire() {
+        if (!__classPrivateFieldGet(this, _Mutex_locked, "f")) {
+            __classPrivateFieldSet(this, _Mutex_locked, true, "f");
+            return Promise.resolve();
+        }
+        let resolve;
+        const promise = new Promise(res => {
+            resolve = res;
+        });
+        __classPrivateFieldGet(this, _Mutex_acquirers, "f").push(resolve);
+        return promise;
+    }
+    release() {
+        const resolve = __classPrivateFieldGet(this, _Mutex_acquirers, "f").shift();
+        if (!resolve) {
+            __classPrivateFieldSet(this, _Mutex_locked, false, "f");
+            return;
+        }
+        resolve();
+    }
+}
+_Mutex_locked = new WeakMap(), _Mutex_acquirers = new WeakMap();
 //# sourceMappingURL=IsolatedWorld.js.map
+
+/***/ }),
+
+/***/ 2296:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PUPPETEER_WORLD = exports.MAIN_WORLD = void 0;
+/**
+ * A unique key for {@link IsolatedWorldChart} to denote the default world.
+ * Execution contexts are automatically created in the default world.
+ *
+ * @internal
+ */
+exports.MAIN_WORLD = Symbol('mainWorld');
+/**
+ * A unique key for {@link IsolatedWorldChart} to denote the puppeteer world.
+ * This world contains all puppeteer-internal bindings/code.
+ *
+ * @internal
+ */
+exports.PUPPETEER_WORLD = Symbol('puppeteerWorld');
+//# sourceMappingURL=IsolatedWorlds.js.map
 
 /***/ }),
 
@@ -38923,83 +42402,51 @@ _IsolatedWorld_bindingIdentifier = { value: (name, contextId) => {
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
     return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
 };
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _JSHandle_disposed, _JSHandle_context, _JSHandle_remoteObject;
+var _CDPJSHandle_disposed, _CDPJSHandle_context, _CDPJSHandle_remoteObject;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.JSHandle = void 0;
+exports.CDPJSHandle = void 0;
+const JSHandle_js_1 = __nccwpck_require__(882);
 const assert_js_1 = __nccwpck_require__(7729);
 const util_js_1 = __nccwpck_require__(8274);
 /**
- * Represents a reference to a JavaScript object. Instances can be created using
- * {@link Page.evaluateHandle}.
- *
- * Handles prevent the referenced JavaScript object from being garbage-collected
- * unless the handle is purposely {@link JSHandle.dispose | disposed}. JSHandles
- * are auto-disposed when their associated frame is navigated away or the parent
- * context gets destroyed.
- *
- * Handles can be used as arguments for any evaluation function such as
- * {@link Page.$eval}, {@link Page.evaluate}, and {@link Page.evaluateHandle}.
- * They are resolved to their referenced object.
- *
- * @example
- *
- * ```ts
- * const windowHandle = await page.evaluateHandle(() => window);
- * ```
- *
- * @public
+ * @internal
  */
-class JSHandle {
-    /**
-     * @internal
-     */
-    constructor(context, remoteObject) {
-        _JSHandle_disposed.set(this, false);
-        _JSHandle_context.set(this, void 0);
-        _JSHandle_remoteObject.set(this, void 0);
-        __classPrivateFieldSet(this, _JSHandle_context, context, "f");
-        __classPrivateFieldSet(this, _JSHandle_remoteObject, remoteObject, "f");
-    }
-    /**
-     * @internal
-     */
-    get client() {
-        return __classPrivateFieldGet(this, _JSHandle_context, "f")._client;
-    }
-    /**
-     * @internal
-     */
+class CDPJSHandle extends JSHandle_js_1.JSHandle {
     get disposed() {
-        return __classPrivateFieldGet(this, _JSHandle_disposed, "f");
+        return __classPrivateFieldGet(this, _CDPJSHandle_disposed, "f");
     }
-    /**
-     * @internal
-     */
+    constructor(context, remoteObject) {
+        super();
+        _CDPJSHandle_disposed.set(this, false);
+        _CDPJSHandle_context.set(this, void 0);
+        _CDPJSHandle_remoteObject.set(this, void 0);
+        __classPrivateFieldSet(this, _CDPJSHandle_context, context, "f");
+        __classPrivateFieldSet(this, _CDPJSHandle_remoteObject, remoteObject, "f");
+    }
     executionContext() {
-        return __classPrivateFieldGet(this, _JSHandle_context, "f");
+        return __classPrivateFieldGet(this, _CDPJSHandle_context, "f");
+    }
+    get client() {
+        return __classPrivateFieldGet(this, _CDPJSHandle_context, "f")._client;
     }
     /**
-     * Evaluates the given function with the current handle as its first argument.
-     *
      * @see {@link ExecutionContext.evaluate} for more details.
      */
     async evaluate(pageFunction, ...args) {
         return await this.executionContext().evaluate(pageFunction, this, ...args);
     }
     /**
-     * Evaluates the given function with the current handle as its first argument.
-     *
      * @see {@link ExecutionContext.evaluateHandle} for more details.
      */
     async evaluateHandle(pageFunction, ...args) {
@@ -39010,30 +42457,12 @@ class JSHandle {
             return object[propertyName];
         }, propertyName);
     }
-    /**
-     * Gets a map of handles representing the properties of the current handle.
-     *
-     * @example
-     *
-     * ```ts
-     * const listHandle = await page.evaluateHandle(() => document.body.children);
-     * const properties = await listHandle.getProperties();
-     * const children = [];
-     * for (const property of properties.values()) {
-     *   const element = property.asElement();
-     *   if (element) {
-     *     children.push(element);
-     *   }
-     * }
-     * children; // holds elementHandles to all children of document.body
-     * ```
-     */
     async getProperties() {
-        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _JSHandle_remoteObject, "f").objectId);
+        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f").objectId);
         // We use Runtime.getProperties rather than iterative building because the
         // iterative approach might create a distorted snapshot.
         const response = await this.client.send('Runtime.getProperties', {
-            objectId: __classPrivateFieldGet(this, _JSHandle_remoteObject, "f").objectId,
+            objectId: __classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f").objectId,
             ownProperties: true,
         });
         const result = new Map();
@@ -39041,21 +42470,13 @@ class JSHandle {
             if (!property.enumerable || !property.value) {
                 continue;
             }
-            result.set(property.name, (0, util_js_1.createJSHandle)(__classPrivateFieldGet(this, _JSHandle_context, "f"), property.value));
+            result.set(property.name, (0, util_js_1.createJSHandle)(__classPrivateFieldGet(this, _CDPJSHandle_context, "f"), property.value));
         }
         return result;
     }
-    /**
-     * @returns A vanilla object representing the serializable portions of the
-     * referenced object.
-     * @throws Throws if the object cannot be serialized due to circularity.
-     *
-     * @remarks
-     * If the object has a `toJSON` function, it **will not** be called.
-     */
     async jsonValue() {
-        if (!__classPrivateFieldGet(this, _JSHandle_remoteObject, "f").objectId) {
-            return (0, util_js_1.valueFromRemoteObject)(__classPrivateFieldGet(this, _JSHandle_remoteObject, "f"));
+        if (!__classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f").objectId) {
+            return (0, util_js_1.valueFromRemoteObject)(__classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f"));
         }
         const value = await this.evaluate(object => {
             return object;
@@ -39072,40 +42493,29 @@ class JSHandle {
     asElement() {
         return null;
     }
-    /**
-     * Releases the object referenced by the handle for garbage collection.
-     */
     async dispose() {
-        if (__classPrivateFieldGet(this, _JSHandle_disposed, "f")) {
+        if (__classPrivateFieldGet(this, _CDPJSHandle_disposed, "f")) {
             return;
         }
-        __classPrivateFieldSet(this, _JSHandle_disposed, true, "f");
-        await (0, util_js_1.releaseObject)(this.client, __classPrivateFieldGet(this, _JSHandle_remoteObject, "f"));
+        __classPrivateFieldSet(this, _CDPJSHandle_disposed, true, "f");
+        await (0, util_js_1.releaseObject)(this.client, __classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f"));
     }
-    /**
-     * Returns a string representation of the JSHandle.
-     *
-     * @remarks
-     * Useful during debugging.
-     */
     toString() {
-        if (!__classPrivateFieldGet(this, _JSHandle_remoteObject, "f").objectId) {
-            return 'JSHandle:' + (0, util_js_1.valueFromRemoteObject)(__classPrivateFieldGet(this, _JSHandle_remoteObject, "f"));
+        if (!__classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f").objectId) {
+            return 'JSHandle:' + (0, util_js_1.valueFromRemoteObject)(__classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f"));
         }
-        const type = __classPrivateFieldGet(this, _JSHandle_remoteObject, "f").subtype || __classPrivateFieldGet(this, _JSHandle_remoteObject, "f").type;
+        const type = __classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f").subtype || __classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f").type;
         return 'JSHandle@' + type;
     }
-    /**
-     * Provides access to the
-     * [Protocol.Runtime.RemoteObject](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-RemoteObject)
-     * backing this handle.
-     */
+    get id() {
+        return __classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f").objectId;
+    }
     remoteObject() {
-        return __classPrivateFieldGet(this, _JSHandle_remoteObject, "f");
+        return __classPrivateFieldGet(this, _CDPJSHandle_remoteObject, "f");
     }
 }
-exports.JSHandle = JSHandle;
-_JSHandle_disposed = new WeakMap(), _JSHandle_context = new WeakMap(), _JSHandle_remoteObject = new WeakMap();
+exports.CDPJSHandle = CDPJSHandle;
+_CDPJSHandle_disposed = new WeakMap(), _CDPJSHandle_context = new WeakMap(), _CDPJSHandle_remoteObject = new WeakMap();
 //# sourceMappingURL=JSHandle.js.map
 
 /***/ }),
@@ -39152,12 +42562,17 @@ class LazyArg {
         _LazyArg_get.set(this, void 0);
         __classPrivateFieldSet(this, _LazyArg_get, get, "f");
     }
-    get() {
-        return __classPrivateFieldGet(this, _LazyArg_get, "f").call(this);
+    async get(context) {
+        return __classPrivateFieldGet(this, _LazyArg_get, "f").call(this, context);
     }
 }
 exports.LazyArg = LazyArg;
 _LazyArg_get = new WeakMap();
+LazyArg.create = (get) => {
+    // We don't want to introduce LazyArg to the type system, otherwise we would
+    // have to make it public.
+    return new LazyArg(get);
+};
 //# sourceMappingURL=LazyArg.js.map
 
 /***/ }),
@@ -39193,16 +42608,16 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _LifecycleWatcher_instances, _LifecycleWatcher_expectedLifecycle, _LifecycleWatcher_frameManager, _LifecycleWatcher_frame, _LifecycleWatcher_timeout, _LifecycleWatcher_navigationRequest, _LifecycleWatcher_eventListeners, _LifecycleWatcher_initialLoaderId, _LifecycleWatcher_sameDocumentNavigationCompleteCallback, _LifecycleWatcher_sameDocumentNavigationPromise, _LifecycleWatcher_lifecycleCallback, _LifecycleWatcher_lifecyclePromise, _LifecycleWatcher_newDocumentNavigationCompleteCallback, _LifecycleWatcher_newDocumentNavigationPromise, _LifecycleWatcher_terminationCallback, _LifecycleWatcher_terminationPromise, _LifecycleWatcher_timeoutPromise, _LifecycleWatcher_maximumTimer, _LifecycleWatcher_hasSameDocumentNavigation, _LifecycleWatcher_swapped, _LifecycleWatcher_navigationResponseReceived, _LifecycleWatcher_onRequest, _LifecycleWatcher_onResponse, _LifecycleWatcher_onFrameDetached, _LifecycleWatcher_terminate, _LifecycleWatcher_createTimeoutPromise, _LifecycleWatcher_navigatedWithinDocument, _LifecycleWatcher_navigated, _LifecycleWatcher_frameSwapped, _LifecycleWatcher_checkLifecycleComplete;
+var _LifecycleWatcher_instances, _LifecycleWatcher_expectedLifecycle, _LifecycleWatcher_frameManager, _LifecycleWatcher_frame, _LifecycleWatcher_timeout, _LifecycleWatcher_navigationRequest, _LifecycleWatcher_eventListeners, _LifecycleWatcher_initialLoaderId, _LifecycleWatcher_sameDocumentNavigationCompleteCallback, _LifecycleWatcher_sameDocumentNavigationPromise, _LifecycleWatcher_lifecycleCallback, _LifecycleWatcher_lifecyclePromise, _LifecycleWatcher_newDocumentNavigationCompleteCallback, _LifecycleWatcher_newDocumentNavigationPromise, _LifecycleWatcher_terminationCallback, _LifecycleWatcher_terminationPromise, _LifecycleWatcher_timeoutPromise, _LifecycleWatcher_maximumTimer, _LifecycleWatcher_hasSameDocumentNavigation, _LifecycleWatcher_swapped, _LifecycleWatcher_navigationResponseReceived, _LifecycleWatcher_onRequest, _LifecycleWatcher_onRequestFailed, _LifecycleWatcher_onResponse, _LifecycleWatcher_onFrameDetached, _LifecycleWatcher_terminate, _LifecycleWatcher_createTimeoutPromise, _LifecycleWatcher_navigatedWithinDocument, _LifecycleWatcher_navigated, _LifecycleWatcher_frameSwapped, _LifecycleWatcher_checkLifecycleComplete;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LifecycleWatcher = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
-const util_js_1 = __nccwpck_require__(8274);
 const DeferredPromise_js_1 = __nccwpck_require__(7015);
+const Connection_js_1 = __nccwpck_require__(370);
 const Errors_js_1 = __nccwpck_require__(6315);
 const FrameManager_js_1 = __nccwpck_require__(490);
 const NetworkManager_js_1 = __nccwpck_require__(5381);
-const Connection_js_1 = __nccwpck_require__(370);
+const util_js_1 = __nccwpck_require__(8274);
 const puppeteerToProtocolLifecycle = new Map([
     ['load', 'load'],
     ['domcontentloaded', 'DOMContentLoaded'],
@@ -39268,6 +42683,7 @@ class LifecycleWatcher {
             (0, util_js_1.addEventListener)(__classPrivateFieldGet(this, _LifecycleWatcher_frameManager, "f"), FrameManager_js_1.FrameManagerEmittedEvents.FrameDetached, __classPrivateFieldGet(this, _LifecycleWatcher_instances, "m", _LifecycleWatcher_onFrameDetached).bind(this)),
             (0, util_js_1.addEventListener)(__classPrivateFieldGet(this, _LifecycleWatcher_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Request, __classPrivateFieldGet(this, _LifecycleWatcher_instances, "m", _LifecycleWatcher_onRequest).bind(this)),
             (0, util_js_1.addEventListener)(__classPrivateFieldGet(this, _LifecycleWatcher_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Response, __classPrivateFieldGet(this, _LifecycleWatcher_instances, "m", _LifecycleWatcher_onResponse).bind(this)),
+            (0, util_js_1.addEventListener)(__classPrivateFieldGet(this, _LifecycleWatcher_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.RequestFailed, __classPrivateFieldGet(this, _LifecycleWatcher_instances, "m", _LifecycleWatcher_onRequestFailed).bind(this)),
         ], "f");
         __classPrivateFieldSet(this, _LifecycleWatcher_timeoutPromise, __classPrivateFieldGet(this, _LifecycleWatcher_instances, "m", _LifecycleWatcher_createTimeoutPromise).call(this), "f");
         __classPrivateFieldGet(this, _LifecycleWatcher_instances, "m", _LifecycleWatcher_checkLifecycleComplete).call(this);
@@ -39310,6 +42726,12 @@ _LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameMana
     if (request.response() !== null) {
         (_b = __classPrivateFieldGet(this, _LifecycleWatcher_navigationResponseReceived, "f")) === null || _b === void 0 ? void 0 : _b.resolve();
     }
+}, _LifecycleWatcher_onRequestFailed = function _LifecycleWatcher_onRequestFailed(request) {
+    var _a, _b;
+    if (((_a = __classPrivateFieldGet(this, _LifecycleWatcher_navigationRequest, "f")) === null || _a === void 0 ? void 0 : _a._requestId) !== request._requestId) {
+        return;
+    }
+    (_b = __classPrivateFieldGet(this, _LifecycleWatcher_navigationResponseReceived, "f")) === null || _b === void 0 ? void 0 : _b.resolve();
 }, _LifecycleWatcher_onResponse = function _LifecycleWatcher_onResponse(response) {
     var _a, _b;
     if (((_a = __classPrivateFieldGet(this, _LifecycleWatcher_navigationRequest, "f")) === null || _a === void 0 ? void 0 : _a._requestId) !== response.request()._requestId) {
@@ -39572,12 +42994,12 @@ var _NetworkManager_instances, _NetworkManager_client, _NetworkManager_ignoreHTT
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.NetworkManager = exports.NetworkManagerEmittedEvents = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
+const DebuggableDeferredPromise_js_1 = __nccwpck_require__(7454);
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 const HTTPRequest_js_1 = __nccwpck_require__(3780);
 const HTTPResponse_js_1 = __nccwpck_require__(4410);
 const NetworkEventManager_js_1 = __nccwpck_require__(9739);
 const util_js_1 = __nccwpck_require__(8274);
-const DebuggableDeferredPromise_js_1 = __nccwpck_require__(7454);
 /**
  * We use symbols to prevent any external parties listening to these events.
  * They are internal to Puppeteer.
@@ -40030,6 +43452,23 @@ const version_js_1 = __nccwpck_require__(6210);
  * @internal
  */
 class NodeWebSocketTransport {
+    static create(url, headers) {
+        return new Promise((resolve, reject) => {
+            const ws = new ws_1.default(url, [], {
+                followRedirects: true,
+                perMessageDeflate: false,
+                maxPayload: 256 * 1024 * 1024,
+                headers: {
+                    'User-Agent': `Puppeteer ${version_js_1.packageVersion}`,
+                    ...headers,
+                },
+            });
+            ws.addEventListener('open', () => {
+                return resolve(new NodeWebSocketTransport(ws));
+            });
+            ws.addEventListener('error', reject);
+        });
+    }
     constructor(ws) {
         _NodeWebSocketTransport_ws.set(this, void 0);
         __classPrivateFieldSet(this, _NodeWebSocketTransport_ws, ws, "f");
@@ -40045,22 +43484,6 @@ class NodeWebSocketTransport {
         });
         // Silently ignore all errors - we don't know what to do with them.
         __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").addEventListener('error', () => { });
-    }
-    static create(url) {
-        return new Promise((resolve, reject) => {
-            const ws = new ws_1.default(url, [], {
-                followRedirects: true,
-                perMessageDeflate: false,
-                maxPayload: 256 * 1024 * 1024,
-                headers: {
-                    'User-Agent': `Puppeteer ${version_js_1.packageVersion}`,
-                },
-            });
-            ws.addEventListener('open', () => {
-                return resolve(new NodeWebSocketTransport(ws));
-            });
-            ws.addEventListener('error', reject);
-        });
     }
     send(message) {
         __classPrivateFieldGet(this, _NodeWebSocketTransport_ws, "f").send(message);
@@ -40117,6 +43540,45 @@ exports._paperFormats = {
 
 /***/ }),
 
+/***/ 3873:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PQueryHandler = void 0;
+const QueryHandler_js_1 = __nccwpck_require__(3200);
+/**
+ * @internal
+ */
+class PQueryHandler extends QueryHandler_js_1.QueryHandler {
+}
+exports.PQueryHandler = PQueryHandler;
+PQueryHandler.querySelectorAll = (element, selector, { pQuerySelectorAll }) => {
+    return pQuerySelectorAll(element, selector);
+};
+PQueryHandler.querySelector = (element, selector, { pQuerySelector }) => {
+    return pQuerySelector(element, selector);
+};
+//# sourceMappingURL=PQueryHandler.js.map
+
+/***/ }),
+
 /***/ 8763:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -40137,18 +43599,18 @@ exports._paperFormats = {
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
     return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
 };
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _CDPPage_instances, _CDPPage_closed, _CDPPage_client, _CDPPage_target, _CDPPage_keyboard, _CDPPage_mouse, _CDPPage_timeoutSettings, _CDPPage_touchscreen, _CDPPage_accessibility, _CDPPage_frameManager, _CDPPage_emulationManager, _CDPPage_tracing, _CDPPage_pageBindings, _CDPPage_coverage, _CDPPage_javascriptEnabled, _CDPPage_viewport, _CDPPage_screenshotTaskQueue, _CDPPage_workers, _CDPPage_fileChooserPromises, _CDPPage_disconnectPromise, _CDPPage_userDragInterceptionEnabled, _CDPPage_onDetachedFromTarget, _CDPPage_onAttachedToTarget, _CDPPage_initialize, _CDPPage_onFileChooser, _CDPPage_onTargetCrashed, _CDPPage_onLogEntryAdded, _CDPPage_emitMetrics, _CDPPage_buildMetricsObject, _CDPPage_handleException, _CDPPage_onConsoleAPI, _CDPPage_onBindingCalled, _CDPPage_addConsoleMessage, _CDPPage_onDialog, _CDPPage_resetDefaultBackgroundColor, _CDPPage_setTransparentBackgroundColor, _CDPPage_sessionClosePromise, _CDPPage_go, _CDPPage_screenshotTask;
+var _CDPPage_instances, _CDPPage_closed, _CDPPage_client, _CDPPage_target, _CDPPage_keyboard, _CDPPage_mouse, _CDPPage_timeoutSettings, _CDPPage_touchscreen, _CDPPage_accessibility, _CDPPage_frameManager, _CDPPage_emulationManager, _CDPPage_tracing, _CDPPage_bindings, _CDPPage_coverage, _CDPPage_javascriptEnabled, _CDPPage_viewport, _CDPPage_screenshotTaskQueue, _CDPPage_workers, _CDPPage_fileChooserPromises, _CDPPage_disconnectPromise, _CDPPage_userDragInterceptionEnabled, _CDPPage_onDetachedFromTarget, _CDPPage_onAttachedToTarget, _CDPPage_initialize, _CDPPage_onFileChooser, _CDPPage_onTargetCrashed, _CDPPage_onLogEntryAdded, _CDPPage_emitMetrics, _CDPPage_buildMetricsObject, _CDPPage_handleException, _CDPPage_onConsoleAPI, _CDPPage_onBindingCalled, _CDPPage_addConsoleMessage, _CDPPage_onDialog, _CDPPage_resetDefaultBackgroundColor, _CDPPage_setTransparentBackgroundColor, _CDPPage_sessionClosePromise, _CDPPage_go, _CDPPage_screenshotTask;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CDPPage = void 0;
 const Page_js_1 = __nccwpck_require__(2194);
@@ -40156,6 +43618,7 @@ const assert_js_1 = __nccwpck_require__(7729);
 const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
 const Accessibility_js_1 = __nccwpck_require__(7473);
+const Binding_js_1 = __nccwpck_require__(1518);
 const Connection_js_1 = __nccwpck_require__(370);
 const ConsoleMessage_js_1 = __nccwpck_require__(1167);
 const Coverage_js_1 = __nccwpck_require__(9321);
@@ -40164,7 +43627,7 @@ const EmulationManager_js_1 = __nccwpck_require__(8392);
 const FileChooser_js_1 = __nccwpck_require__(8450);
 const FrameManager_js_1 = __nccwpck_require__(490);
 const Input_js_1 = __nccwpck_require__(7773);
-const IsolatedWorld_js_1 = __nccwpck_require__(5651);
+const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
 const NetworkManager_js_1 = __nccwpck_require__(5381);
 const PDFOptions_js_1 = __nccwpck_require__(4302);
 const TimeoutSettings_js_1 = __nccwpck_require__(7258);
@@ -40175,6 +43638,27 @@ const WebWorker_js_1 = __nccwpck_require__(4878);
  * @internal
  */
 class CDPPage extends Page_js_1.Page {
+    /**
+     * @internal
+     */
+    static async _create(client, target, ignoreHTTPSErrors, defaultViewport, screenshotTaskQueue) {
+        const page = new CDPPage(client, target, ignoreHTTPSErrors, screenshotTaskQueue);
+        await __classPrivateFieldGet(page, _CDPPage_instances, "m", _CDPPage_initialize).call(page);
+        if (defaultViewport) {
+            try {
+                await page.setViewport(defaultViewport);
+            }
+            catch (err) {
+                if ((0, ErrorLike_js_1.isErrorLike)(err) && (0, Connection_js_1.isTargetClosedError)(err)) {
+                    (0, util_js_1.debugError)(err);
+                }
+                else {
+                    throw err;
+                }
+            }
+        }
+        return page;
+    }
     /**
      * @internal
      */
@@ -40192,7 +43676,7 @@ class CDPPage extends Page_js_1.Page {
         _CDPPage_frameManager.set(this, void 0);
         _CDPPage_emulationManager.set(this, void 0);
         _CDPPage_tracing.set(this, void 0);
-        _CDPPage_pageBindings.set(this, new Map());
+        _CDPPage_bindings.set(this, new Map());
         _CDPPage_coverage.set(this, void 0);
         _CDPPage_javascriptEnabled.set(this, true);
         _CDPPage_viewport.set(this, void 0);
@@ -40204,7 +43688,6 @@ class CDPPage extends Page_js_1.Page {
         _CDPPage_onDetachedFromTarget.set(this, (target) => {
             var _a;
             const sessionId = (_a = target._session()) === null || _a === void 0 ? void 0 : _a.id();
-            __classPrivateFieldGet(this, _CDPPage_frameManager, "f").onDetachedFromTarget(target);
             const worker = __classPrivateFieldGet(this, _CDPPage_workers, "f").get(sessionId);
             if (!worker) {
                 return;
@@ -40212,7 +43695,7 @@ class CDPPage extends Page_js_1.Page {
             __classPrivateFieldGet(this, _CDPPage_workers, "f").delete(sessionId);
             this.emit("workerdestroyed" /* PageEmittedEvents.WorkerDestroyed */, worker);
         });
-        _CDPPage_onAttachedToTarget.set(this, async (createdTarget) => {
+        _CDPPage_onAttachedToTarget.set(this, (createdTarget) => {
             __classPrivateFieldGet(this, _CDPPage_frameManager, "f").onAttachedToTarget(createdTarget);
             if (createdTarget._getTargetInfo().type === 'worker') {
                 const session = createdTarget._session();
@@ -40314,64 +43797,15 @@ class CDPPage extends Page_js_1.Page {
     /**
      * @internal
      */
-    static async _create(client, target, ignoreHTTPSErrors, defaultViewport, screenshotTaskQueue) {
-        const page = new CDPPage(client, target, ignoreHTTPSErrors, screenshotTaskQueue);
-        await __classPrivateFieldGet(page, _CDPPage_instances, "m", _CDPPage_initialize).call(page);
-        if (defaultViewport) {
-            try {
-                await page.setViewport(defaultViewport);
-            }
-            catch (err) {
-                if ((0, ErrorLike_js_1.isErrorLike)(err) && (0, Connection_js_1.isTargetClosedError)(err)) {
-                    (0, util_js_1.debugError)(err);
-                }
-                else {
-                    throw err;
-                }
-            }
-        }
-        return page;
+    _client() {
+        return __classPrivateFieldGet(this, _CDPPage_client, "f");
     }
-    /**
-     * @returns `true` if drag events are being intercepted, `false` otherwise.
-     */
     isDragInterceptionEnabled() {
         return __classPrivateFieldGet(this, _CDPPage_userDragInterceptionEnabled, "f");
     }
-    /**
-     * @returns `true` if the page has JavaScript enabled, `false` otherwise.
-     */
     isJavaScriptEnabled() {
         return __classPrivateFieldGet(this, _CDPPage_javascriptEnabled, "f");
     }
-    /**
-     * This method is typically coupled with an action that triggers file
-     * choosing.
-     *
-     * :::caution
-     *
-     * This must be called before the file chooser is launched. It will not return
-     * a currently active file chooser.
-     *
-     * :::
-     *
-     * @remarks
-     * In non-headless Chromium, this method results in the native file picker
-     * dialog `not showing up` for the user.
-     *
-     * @example
-     * The following example clicks a button that issues a file chooser
-     * and then responds with `/tmp/myfile.pdf` as if a user has selected this file.
-     *
-     * ```ts
-     * const [fileChooser] = await Promise.all([
-     *   page.waitForFileChooser(),
-     *   page.click('#upload-file-button'),
-     *   // some button that triggers file selection
-     * ]);
-     * await fileChooser.accept(['/tmp/myfile.pdf']);
-     * ```
-     */
     waitForFileChooser(options = {}) {
         const needsEnable = __classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f").size === 0;
         const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
@@ -40395,19 +43829,6 @@ class CDPPage extends Page_js_1.Page {
             throw error;
         });
     }
-    /**
-     * Sets the page's geolocation.
-     *
-     * @remarks
-     * Consider using {@link BrowserContext.overridePermissions} to grant
-     * permissions for the page to read its geolocation.
-     *
-     * @example
-     *
-     * ```ts
-     * await page.setGeolocation({latitude: 59.95, longitude: 30.31667});
-     * ```
-     */
     async setGeolocation(options) {
         const { longitude, latitude, accuracy = 0 } = options;
         if (longitude < -180 || longitude > 180) {
@@ -40425,36 +43846,15 @@ class CDPPage extends Page_js_1.Page {
             accuracy,
         });
     }
-    /**
-     * @returns A target this page was created from.
-     */
     target() {
         return __classPrivateFieldGet(this, _CDPPage_target, "f");
     }
-    /**
-     * @internal
-     */
-    _client() {
-        return __classPrivateFieldGet(this, _CDPPage_client, "f");
-    }
-    /**
-     * Get the browser the page belongs to.
-     */
     browser() {
         return __classPrivateFieldGet(this, _CDPPage_target, "f").browser();
     }
-    /**
-     * Get the browser context that the page belongs to.
-     */
     browserContext() {
         return __classPrivateFieldGet(this, _CDPPage_target, "f").browserContext();
     }
-    /**
-     * @returns The page's main frame.
-     *
-     * @remarks
-     * Page is guaranteed to have a main frame which persists during navigations.
-     */
     mainFrame() {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame();
     }
@@ -40473,72 +43873,15 @@ class CDPPage extends Page_js_1.Page {
     get accessibility() {
         return __classPrivateFieldGet(this, _CDPPage_accessibility, "f");
     }
-    /**
-     * @returns An array of all frames attached to the page.
-     */
     frames() {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").frames();
     }
-    /**
-     * @returns all of the dedicated {@link
-     * https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API |
-     * WebWorkers} associated with the page.
-     *
-     * @remarks
-     * This does not contain ServiceWorkers
-     */
     workers() {
         return Array.from(__classPrivateFieldGet(this, _CDPPage_workers, "f").values());
     }
-    /**
-     * Activating request interception enables {@link HTTPRequest.abort},
-     * {@link HTTPRequest.continue} and {@link HTTPRequest.respond} methods. This
-     * provides the capability to modify network requests that are made by a page.
-     *
-     * Once request interception is enabled, every request will stall unless it's
-     * continued, responded or aborted; or completed using the browser cache.
-     *
-     * Enabling request interception disables page caching.
-     *
-     * See the
-     * {@link https://pptr.dev/next/guides/request-interception|Request interception guide}
-     * for more details.
-     *
-     * @example
-     * An example of a naïve request interceptor that aborts all image requests:
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   await page.setRequestInterception(true);
-     *   page.on('request', interceptedRequest => {
-     *     if (
-     *       interceptedRequest.url().endsWith('.png') ||
-     *       interceptedRequest.url().endsWith('.jpg')
-     *     )
-     *       interceptedRequest.abort();
-     *     else interceptedRequest.continue();
-     *   });
-     *   await page.goto('https://example.com');
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @param value - Whether to enable request interception.
-     */
     async setRequestInterception(value) {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setRequestInterception(value);
     }
-    /**
-     * @param enabled - Whether to enable drag interception.
-     *
-     * @remarks
-     * Activating drag interception enables the `Input.drag`,
-     * methods This provides the capability to capture drag events emitted
-     * on the page, which can then be used to simulate drag-and-drop.
-     */
     async setDragInterception(enabled) {
         __classPrivateFieldSet(this, _CDPPage_userDragInterceptionEnabled, enabled, "f");
         return __classPrivateFieldGet(this, _CDPPage_client, "f").send('Input.setInterceptDrags', { enabled });
@@ -40549,300 +43892,43 @@ class CDPPage extends Page_js_1.Page {
     emulateNetworkConditions(networkConditions) {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.emulateNetworkConditions(networkConditions);
     }
-    /**
-     * This setting will change the default maximum navigation time for the
-     * following methods and related shortcuts:
-     *
-     * - {@link Page.goBack | page.goBack(options)}
-     *
-     * - {@link Page.goForward | page.goForward(options)}
-     *
-     * - {@link Page.goto | page.goto(url,options)}
-     *
-     * - {@link Page.reload | page.reload(options)}
-     *
-     * - {@link Page.setContent | page.setContent(html,options)}
-     *
-     * - {@link Page.waitForNavigation | page.waitForNavigation(options)}
-     *   @param timeout - Maximum navigation time in milliseconds.
-     */
     setDefaultNavigationTimeout(timeout) {
         __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").setDefaultNavigationTimeout(timeout);
     }
-    /**
-     * @param timeout - Maximum time in milliseconds.
-     */
     setDefaultTimeout(timeout) {
         __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").setDefaultTimeout(timeout);
     }
-    /**
-     * @returns Maximum time in milliseconds.
-     */
     getDefaultTimeout() {
         return __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout();
     }
-    /**
-     * Runs `document.querySelector` within the page. If no element matches the
-     * selector, the return value resolves to `null`.
-     *
-     * @param selector - A `selector` to query page for
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | selector}
-     * to query page for.
-     */
     async $(selector) {
         return this.mainFrame().$(selector);
     }
-    /**
-     * The method runs `document.querySelectorAll` within the page. If no elements
-     * match the selector, the return value resolves to `[]`.
-     * @remarks
-     * Shortcut for {@link Frame.$$ | Page.mainFrame().$$(selector) }.
-     * @param selector - A `selector` to query page for
-     */
     async $$(selector) {
         return this.mainFrame().$$(selector);
     }
-    /**
-     * @remarks
-     *
-     * The only difference between {@link Page.evaluate | page.evaluate} and
-     * `page.evaluateHandle` is that `evaluateHandle` will return the value
-     * wrapped in an in-page object.
-     *
-     * If the function passed to `page.evaluteHandle` returns a Promise, the
-     * function will wait for the promise to resolve and return its value.
-     *
-     * You can pass a string instead of a function (although functions are
-     * recommended as they are easier to debug and use with TypeScript):
-     *
-     * @example
-     *
-     * ```ts
-     * const aHandle = await page.evaluateHandle('document');
-     * ```
-     *
-     * @example
-     * {@link JSHandle} instances can be passed as arguments to the `pageFunction`:
-     *
-     * ```ts
-     * const aHandle = await page.evaluateHandle(() => document.body);
-     * const resultHandle = await page.evaluateHandle(
-     *   body => body.innerHTML,
-     *   aHandle
-     * );
-     * console.log(await resultHandle.jsonValue());
-     * await resultHandle.dispose();
-     * ```
-     *
-     * Most of the time this function returns a {@link JSHandle},
-     * but if `pageFunction` returns a reference to an element,
-     * you instead get an {@link ElementHandle} back:
-     *
-     * @example
-     *
-     * ```ts
-     * const button = await page.evaluateHandle(() =>
-     *   document.querySelector('button')
-     * );
-     * // can call `click` because `button` is an `ElementHandle`
-     * await button.click();
-     * ```
-     *
-     * The TypeScript definitions assume that `evaluateHandle` returns
-     * a `JSHandle`, but if you know it's going to return an
-     * `ElementHandle`, pass it as the generic argument:
-     *
-     * ```ts
-     * const button = await page.evaluateHandle<ElementHandle>(...);
-     * ```
-     *
-     * @param pageFunction - a function that is run within the page
-     * @param args - arguments to be passed to the pageFunction
-     */
     async evaluateHandle(pageFunction, ...args) {
         const context = await this.mainFrame().executionContext();
         return context.evaluateHandle(pageFunction, ...args);
     }
-    /**
-     * This method iterates the JavaScript heap and finds all objects with the
-     * given prototype.
-     *
-     * @example
-     *
-     * ```ts
-     * // Create a Map object
-     * await page.evaluate(() => (window.map = new Map()));
-     * // Get a handle to the Map object prototype
-     * const mapPrototype = await page.evaluateHandle(() => Map.prototype);
-     * // Query all map instances into an array
-     * const mapInstances = await page.queryObjects(mapPrototype);
-     * // Count amount of map objects in heap
-     * const count = await page.evaluate(maps => maps.length, mapInstances);
-     * await mapInstances.dispose();
-     * await mapPrototype.dispose();
-     * ```
-     *
-     * @param prototypeHandle - a handle to the object prototype.
-     * @returns Promise which resolves to a handle to an array of objects with
-     * this prototype.
-     */
     async queryObjects(prototypeHandle) {
         const context = await this.mainFrame().executionContext();
         (0, assert_js_1.assert)(!prototypeHandle.disposed, 'Prototype JSHandle is disposed!');
-        const remoteObject = prototypeHandle.remoteObject();
-        (0, assert_js_1.assert)(remoteObject.objectId, 'Prototype JSHandle must not be referencing primitive value');
+        (0, assert_js_1.assert)(prototypeHandle.id, 'Prototype JSHandle must not be referencing primitive value');
         const response = await context._client.send('Runtime.queryObjects', {
-            prototypeObjectId: remoteObject.objectId,
+            prototypeObjectId: prototypeHandle.id,
         });
         return (0, util_js_1.createJSHandle)(context, response.objects);
     }
-    /**
-     * This method runs `document.querySelector` within the page and passes the
-     * result as the first argument to the `pageFunction`.
-     *
-     * @remarks
-     *
-     * If no element is found matching `selector`, the method will throw an error.
-     *
-     * If `pageFunction` returns a promise `$eval` will wait for the promise to
-     * resolve and then return its value.
-     *
-     * @example
-     *
-     * ```ts
-     * const searchValue = await page.$eval('#search', el => el.value);
-     * const preloadHref = await page.$eval('link[rel=preload]', el => el.href);
-     * const html = await page.$eval('.main-container', el => el.outerHTML);
-     * ```
-     *
-     * If you are using TypeScript, you may have to provide an explicit type to the
-     * first argument of the `pageFunction`.
-     * By default it is typed as `Element`, but you may need to provide a more
-     * specific sub-type:
-     *
-     * @example
-     *
-     * ```ts
-     * // if you don't provide HTMLInputElement here, TS will error
-     * // as `value` is not on `Element`
-     * const searchValue = await page.$eval(
-     *   '#search',
-     *   (el: HTMLInputElement) => el.value
-     * );
-     * ```
-     *
-     * The compiler should be able to infer the return type
-     * from the `pageFunction` you provide. If it is unable to, you can use the generic
-     * type to tell the compiler what return type you expect from `$eval`:
-     *
-     * @example
-     *
-     * ```ts
-     * // The compiler can infer the return type in this case, but if it can't
-     * // or if you want to be more explicit, provide it as the generic type.
-     * const searchValue = await page.$eval<string>(
-     *   '#search',
-     *   (el: HTMLInputElement) => el.value
-     * );
-     * ```
-     *
-     * @param selector - the
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | selector}
-     * to query for
-     * @param pageFunction - the function to be evaluated in the page context.
-     * Will be passed the result of `document.querySelector(selector)` as its
-     * first argument.
-     * @param args - any additional arguments to pass through to `pageFunction`.
-     *
-     * @returns The result of calling `pageFunction`. If it returns an element it
-     * is wrapped in an {@link ElementHandle}, else the raw value itself is
-     * returned.
-     */
     async $eval(selector, pageFunction, ...args) {
         return this.mainFrame().$eval(selector, pageFunction, ...args);
     }
-    /**
-     * This method runs `Array.from(document.querySelectorAll(selector))` within
-     * the page and passes the result as the first argument to the `pageFunction`.
-     *
-     * @remarks
-     * If `pageFunction` returns a promise `$$eval` will wait for the promise to
-     * resolve and then return its value.
-     *
-     * @example
-     *
-     * ```ts
-     * // get the amount of divs on the page
-     * const divCount = await page.$$eval('div', divs => divs.length);
-     *
-     * // get the text content of all the `.options` elements:
-     * const options = await page.$$eval('div > span.options', options => {
-     *   return options.map(option => option.textContent);
-     * });
-     * ```
-     *
-     * If you are using TypeScript, you may have to provide an explicit type to the
-     * first argument of the `pageFunction`.
-     * By default it is typed as `Element[]`, but you may need to provide a more
-     * specific sub-type:
-     *
-     * @example
-     *
-     * ```ts
-     * // if you don't provide HTMLInputElement here, TS will error
-     * // as `value` is not on `Element`
-     * await page.$$eval('input', (elements: HTMLInputElement[]) => {
-     *   return elements.map(e => e.value);
-     * });
-     * ```
-     *
-     * The compiler should be able to infer the return type
-     * from the `pageFunction` you provide. If it is unable to, you can use the generic
-     * type to tell the compiler what return type you expect from `$$eval`:
-     *
-     * @example
-     *
-     * ```ts
-     * // The compiler can infer the return type in this case, but if it can't
-     * // or if you want to be more explicit, provide it as the generic type.
-     * const allInputValues = await page.$$eval<string[]>(
-     *   'input',
-     *   (elements: HTMLInputElement[]) => elements.map(e => e.textContent)
-     * );
-     * ```
-     *
-     * @param selector - the
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | selector}
-     * to query for
-     * @param pageFunction - the function to be evaluated in the page context.
-     * Will be passed the result of
-     * `Array.from(document.querySelectorAll(selector))` as its first argument.
-     * @param args - any additional arguments to pass through to `pageFunction`.
-     *
-     * @returns The result of calling `pageFunction`. If it returns an element it
-     * is wrapped in an {@link ElementHandle}, else the raw value itself is
-     * returned.
-     */
     async $$eval(selector, pageFunction, ...args) {
         return this.mainFrame().$$eval(selector, pageFunction, ...args);
     }
-    /**
-     * The method evaluates the XPath expression relative to the page document as
-     * its context node. If there are no such elements, the method resolves to an
-     * empty array.
-     *
-     * @remarks
-     * Shortcut for {@link Frame.$x | Page.mainFrame().$x(expression) }.
-     *
-     * @param expression - Expression to evaluate
-     */
     async $x(expression) {
         return this.mainFrame().$x(expression);
     }
-    /**
-     * If no URLs are specified, this method returns cookies for the current page
-     * URL. If URLs are specified, only cookies for those URLs are returned.
-     */
     async cookies(...urls) {
         const originalCookies = (await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Network.getCookies', {
             urls: urls.length ? urls : [this.url()],
@@ -40866,13 +43952,6 @@ class CDPPage extends Page_js_1.Page {
             await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Network.deleteCookies', item);
         }
     }
-    /**
-     * @example
-     *
-     * ```ts
-     * await page.setCookie(cookieObject1, cookieObject2);
-     * ```
-     */
     async setCookie(...cookies) {
         const pageURL = this.url();
         const startsWithHTTP = pageURL.startsWith('http');
@@ -40890,107 +43969,26 @@ class CDPPage extends Page_js_1.Page {
             await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Network.setCookies', { cookies: items });
         }
     }
-    /**
-     * Adds a `<script>` tag into the page with the desired URL or content.
-     *
-     * @remarks
-     * Shortcut for
-     * {@link Frame.addScriptTag | page.mainFrame().addScriptTag(options)}.
-     *
-     * @param options - Options for the script.
-     * @returns An {@link ElementHandle | element handle} to the injected
-     * `<script>` element.
-     */
     async addScriptTag(options) {
         return this.mainFrame().addScriptTag(options);
     }
     async addStyleTag(options) {
         return this.mainFrame().addStyleTag(options);
     }
-    /**
-     * The method adds a function called `name` on the page's `window` object.
-     * When called, the function executes `puppeteerFunction` in node.js and
-     * returns a `Promise` which resolves to the return value of
-     * `puppeteerFunction`.
-     *
-     * If the puppeteerFunction returns a `Promise`, it will be awaited.
-     *
-     * :::note
-     *
-     * Functions installed via `page.exposeFunction` survive navigations.
-     *
-     * :::note
-     *
-     * @example
-     * An example of adding an `md5` function into the page:
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * const crypto = require('crypto');
-     *
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   page.on('console', msg => console.log(msg.text()));
-     *   await page.exposeFunction('md5', text =>
-     *     crypto.createHash('md5').update(text).digest('hex')
-     *   );
-     *   await page.evaluate(async () => {
-     *     // use window.md5 to compute hashes
-     *     const myString = 'PUPPETEER';
-     *     const myHash = await window.md5(myString);
-     *     console.log(`md5 of ${myString} is ${myHash}`);
-     *   });
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @example
-     * An example of adding a `window.readfile` function into the page:
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * const fs = require('fs');
-     *
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   page.on('console', msg => console.log(msg.text()));
-     *   await page.exposeFunction('readfile', async filePath => {
-     *     return new Promise((resolve, reject) => {
-     *       fs.readFile(filePath, 'utf8', (err, text) => {
-     *         if (err) reject(err);
-     *         else resolve(text);
-     *       });
-     *     });
-     *   });
-     *   await page.evaluate(async () => {
-     *     // use window.readfile to read contents of a file
-     *     const content = await window.readfile('/etc/hosts');
-     *     console.log(content);
-     *   });
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @param name - Name of the function on the window object
-     * @param pptrFunction - Callback function which will be called in Puppeteer's
-     * context.
-     */
     async exposeFunction(name, pptrFunction) {
-        if (__classPrivateFieldGet(this, _CDPPage_pageBindings, "f").has(name)) {
+        if (__classPrivateFieldGet(this, _CDPPage_bindings, "f").has(name)) {
             throw new Error(`Failed to add page binding with name ${name}: window['${name}'] already exists!`);
         }
-        let exposedFunction;
+        let binding;
         switch (typeof pptrFunction) {
             case 'function':
-                exposedFunction = pptrFunction;
+                binding = new Binding_js_1.Binding(name, pptrFunction);
                 break;
             default:
-                exposedFunction = pptrFunction.default;
+                binding = new Binding_js_1.Binding(name, pptrFunction.default);
                 break;
         }
-        __classPrivateFieldGet(this, _CDPPage_pageBindings, "f").set(name, exposedFunction);
+        __classPrivateFieldGet(this, _CDPPage_bindings, "f").set(name, binding);
         const expression = (0, util_js_1.pageBindingInitString)('exposedFun', name);
         await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Runtime.addBinding', { name: name });
         await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.addScriptToEvaluateOnNewDocument', {
@@ -41000,207 +43998,31 @@ class CDPPage extends Page_js_1.Page {
             return frame.evaluate(expression).catch(util_js_1.debugError);
         }));
     }
-    /**
-     * Provide credentials for `HTTP authentication`.
-     *
-     * @remarks
-     * To disable authentication, pass `null`.
-     */
     async authenticate(credentials) {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.authenticate(credentials);
     }
-    /**
-     * The extra HTTP headers will be sent with every request the page initiates.
-     *
-     * :::tip
-     *
-     * All HTTP header names are lowercased. (HTTP headers are
-     * case-insensitive, so this shouldn’t impact your server code.)
-     *
-     * :::
-     *
-     * :::note
-     *
-     * page.setExtraHTTPHeaders does not guarantee the order of headers in
-     * the outgoing requests.
-     *
-     * :::
-     *
-     * @param headers - An object containing additional HTTP headers to be sent
-     * with every request. All header values must be strings.
-     */
     async setExtraHTTPHeaders(headers) {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setExtraHTTPHeaders(headers);
     }
-    /**
-     * @param userAgent - Specific user agent to use in this page
-     * @param userAgentData - Specific user agent client hint data to use in this
-     * page
-     * @returns Promise which resolves when the user agent is set.
-     */
     async setUserAgent(userAgent, userAgentMetadata) {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setUserAgent(userAgent, userAgentMetadata);
     }
-    /**
-     * @returns Object containing metrics as key/value pairs.
-     *
-     * - `Timestamp` : The timestamp when the metrics sample was taken.
-     *
-     * - `Documents` : Number of documents in the page.
-     *
-     * - `Frames` : Number of frames in the page.
-     *
-     * - `JSEventListeners` : Number of events in the page.
-     *
-     * - `Nodes` : Number of DOM nodes in the page.
-     *
-     * - `LayoutCount` : Total number of full or partial page layout.
-     *
-     * - `RecalcStyleCount` : Total number of page style recalculations.
-     *
-     * - `LayoutDuration` : Combined durations of all page layouts.
-     *
-     * - `RecalcStyleDuration` : Combined duration of all page style
-     *   recalculations.
-     *
-     * - `ScriptDuration` : Combined duration of JavaScript execution.
-     *
-     * - `TaskDuration` : Combined duration of all tasks performed by the browser.
-     *
-     * - `JSHeapUsedSize` : Used JavaScript heap size.
-     *
-     * - `JSHeapTotalSize` : Total JavaScript heap size.
-     *
-     * @remarks
-     * All timestamps are in monotonic time: monotonically increasing time
-     * in seconds since an arbitrary point in the past.
-     */
     async metrics() {
         const response = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Performance.getMetrics');
         return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_buildMetricsObject).call(this, response.metrics);
     }
-    /**
-     *
-     * @returns
-     * @remarks Shortcut for
-     * {@link Frame.url | page.mainFrame().url()}.
-     */
     url() {
         return this.mainFrame().url();
     }
     async content() {
         return await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().content();
     }
-    /**
-     * @param html - HTML markup to assign to the page.
-     * @param options - Parameters that has some properties.
-     * @remarks
-     * The parameter `options` might have the following options.
-     *
-     * - `timeout` : Maximum time in milliseconds for resources to load, defaults
-     *   to 30 seconds, pass `0` to disable timeout. The default value can be
-     *   changed by using the {@link Page.setDefaultNavigationTimeout} or
-     *   {@link Page.setDefaultTimeout} methods.
-     *
-     * - `waitUntil`: When to consider setting markup succeeded, defaults to
-     *   `load`. Given an array of event strings, setting content is considered
-     *   to be successful after all events have been fired. Events can be
-     *   either:<br/>
-     * - `load` : consider setting content to be finished when the `load` event
-     *   is fired.<br/>
-     * - `domcontentloaded` : consider setting content to be finished when the
-     *   `DOMContentLoaded` event is fired.<br/>
-     * - `networkidle0` : consider setting content to be finished when there are
-     *   no more than 0 network connections for at least `500` ms.<br/>
-     * - `networkidle2` : consider setting content to be finished when there are
-     *   no more than 2 network connections for at least `500` ms.
-     */
     async setContent(html, options = {}) {
         await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().setContent(html, options);
     }
-    /**
-     * @param url - URL to navigate page to. The URL should include scheme, e.g.
-     * `https://`
-     * @param options - Navigation Parameter
-     * @returns Promise which resolves to the main resource response. In case of
-     * multiple redirects, the navigation will resolve with the response of the
-     * last redirect.
-     * @remarks
-     * The argument `options` might have the following properties:
-     *
-     * - `timeout` : Maximum navigation time in milliseconds, defaults to 30
-     *   seconds, pass 0 to disable timeout. The default value can be changed by
-     *   using the {@link Page.setDefaultNavigationTimeout} or
-     *   {@link Page.setDefaultTimeout} methods.
-     *
-     * - `waitUntil`:When to consider navigation succeeded, defaults to `load`.
-     *   Given an array of event strings, navigation is considered to be
-     *   successful after all events have been fired. Events can be either:<br/>
-     * - `load` : consider navigation to be finished when the load event is
-     *   fired.<br/>
-     * - `domcontentloaded` : consider navigation to be finished when the
-     *   DOMContentLoaded event is fired.<br/>
-     * - `networkidle0` : consider navigation to be finished when there are no
-     *   more than 0 network connections for at least `500` ms.<br/>
-     * - `networkidle2` : consider navigation to be finished when there are no
-     *   more than 2 network connections for at least `500` ms.
-     *
-     * - `referer` : Referer header value. If provided it will take preference
-     *   over the referer header value set by
-     *   {@link Page.setExtraHTTPHeaders |page.setExtraHTTPHeaders()}.
-     *
-     * `page.goto` will throw an error if:
-     *
-     * - there's an SSL error (e.g. in case of self-signed certificates).
-     * - target URL is invalid.
-     * - the timeout is exceeded during navigation.
-     * - the remote server does not respond or is unreachable.
-     * - the main resource failed to load.
-     *
-     * `page.goto` will not throw an error when any valid HTTP status code is
-     * returned by the remote server, including 404 "Not Found" and 500
-     * "Internal Server Error". The status code for such responses can be
-     * retrieved by calling response.status().
-     *
-     * NOTE: `page.goto` either throws an error or returns a main resource
-     * response. The only exceptions are navigation to about:blank or navigation
-     * to the same URL with a different hash, which would succeed and return null.
-     *
-     * NOTE: Headless mode doesn't support navigation to a PDF document. See the
-     * {@link https://bugs.chromium.org/p/chromium/issues/detail?id=761295 |
-     * upstream issue}.
-     *
-     * Shortcut for {@link Frame.goto | page.mainFrame().goto(url, options)}.
-     */
     async goto(url, options = {}) {
         return await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().goto(url, options);
     }
-    /**
-     * @param options - Navigation parameters which might have the following
-     * properties:
-     * @returns Promise which resolves to the main resource response. In case of
-     * multiple redirects, the navigation will resolve with the response of the
-     * last redirect.
-     * @remarks
-     * The argument `options` might have the following properties:
-     *
-     * - `timeout` : Maximum navigation time in milliseconds, defaults to 30
-     *   seconds, pass 0 to disable timeout. The default value can be changed by
-     *   using the {@link Page.setDefaultNavigationTimeout} or
-     *   {@link Page.setDefaultTimeout} methods.
-     *
-     * - `waitUntil`: When to consider navigation succeeded, defaults to `load`.
-     *   Given an array of event strings, navigation is considered to be
-     *   successful after all events have been fired. Events can be either:<br/>
-     * - `load` : consider navigation to be finished when the load event is
-     *   fired.<br/>
-     * - `domcontentloaded` : consider navigation to be finished when the
-     *   DOMContentLoaded event is fired.<br/>
-     * - `networkidle0` : consider navigation to be finished when there are no
-     *   more than 0 network connections for at least `500` ms.<br/>
-     * - `networkidle2` : consider navigation to be finished when there are no
-     *   more than 2 network connections for at least `500` ms.
-     */
     async reload(options) {
         const result = await Promise.all([
             this.waitForNavigation(options),
@@ -41208,63 +44030,9 @@ class CDPPage extends Page_js_1.Page {
         ]);
         return result[0];
     }
-    /**
-     * Waits for the page to navigate to a new URL or to reload. It is useful when
-     * you run code that will indirectly cause the page to navigate.
-     *
-     * @example
-     *
-     * ```ts
-     * const [response] = await Promise.all([
-     *   page.waitForNavigation(), // The promise resolves after navigation has finished
-     *   page.click('a.my-link'), // Clicking the link will indirectly cause a navigation
-     * ]);
-     * ```
-     *
-     * @remarks
-     * Usage of the
-     * {@link https://developer.mozilla.org/en-US/docs/Web/API/History_API | History API}
-     * to change the URL is considered a navigation.
-     *
-     * @param options - Navigation parameters which might have the following
-     * properties:
-     * @returns A `Promise` which resolves to the main resource response.
-     *
-     * - In case of multiple redirects, the navigation will resolve with the
-     *   response of the last redirect.
-     * - In case of navigation to a different anchor or navigation due to History
-     *   API usage, the navigation will resolve with `null`.
-     */
     async waitForNavigation(options = {}) {
         return await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().waitForNavigation(options);
     }
-    /**
-     * @param urlOrPredicate - A URL or predicate to wait for
-     * @param options - Optional waiting parameters
-     * @returns Promise which resolves to the matched response
-     * @example
-     *
-     * ```ts
-     * const firstResponse = await page.waitForResponse(
-     *   'https://example.com/resource'
-     * );
-     * const finalResponse = await page.waitForResponse(
-     *   response =>
-     *     response.url() === 'https://example.com' && response.status() === 200
-     * );
-     * const finalResponse = await page.waitForResponse(async response => {
-     *   return (await response.text()).includes('<html>');
-     * });
-     * return finalResponse.ok();
-     * ```
-     *
-     * @remarks
-     * Optional Waiting Parameters have:
-     *
-     * - `timeout`: Maximum wait time in milliseconds, defaults to `30` seconds, pass
-     *   `0` to disable the timeout. The default value can be changed by using the
-     *   {@link Page.setDefaultTimeout} method.
-     */
     async waitForRequest(urlOrPredicate, options = {}) {
         const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
         return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Request, async (request) => {
@@ -41277,33 +44045,6 @@ class CDPPage extends Page_js_1.Page {
             return false;
         }, timeout, __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this));
     }
-    /**
-     * @param urlOrPredicate - A URL or predicate to wait for.
-     * @param options - Optional waiting parameters
-     * @returns Promise which resolves to the matched response.
-     * @example
-     *
-     * ```ts
-     * const firstResponse = await page.waitForResponse(
-     *   'https://example.com/resource'
-     * );
-     * const finalResponse = await page.waitForResponse(
-     *   response =>
-     *     response.url() === 'https://example.com' && response.status() === 200
-     * );
-     * const finalResponse = await page.waitForResponse(async response => {
-     *   return (await response.text()).includes('<html>');
-     * });
-     * return finalResponse.ok();
-     * ```
-     *
-     * @remarks
-     * Optional Parameter have:
-     *
-     * - `timeout`: Maximum wait time in milliseconds, defaults to `30` seconds,
-     *   pass `0` to disable the timeout. The default value can be changed by using
-     *   the {@link Page.setDefaultTimeout} method.
-     */
     async waitForResponse(urlOrPredicate, options = {}) {
         const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
         return (0, util_js_1.waitForEvent)(__classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager, NetworkManager_js_1.NetworkManagerEmittedEvents.Response, async (response) => {
@@ -41316,10 +44057,6 @@ class CDPPage extends Page_js_1.Page {
             return false;
         }, timeout, __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_sessionClosePromise).call(this));
     }
-    /**
-     * @param options - Optional waiting parameters
-     * @returns Promise which resolves when network is idle
-     */
     async waitForNetworkIdle(options = {}) {
         const { idleTime = 500, timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
         const networkManager = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager;
@@ -41369,25 +44106,6 @@ class CDPPage extends Page_js_1.Page {
             throw error;
         });
     }
-    /**
-     * @param urlOrPredicate - A URL or predicate to wait for.
-     * @param options - Optional waiting parameters
-     * @returns Promise which resolves to the matched frame.
-     * @example
-     *
-     * ```ts
-     * const frame = await page.waitForFrame(async frame => {
-     *   return frame.name() === 'Test';
-     * });
-     * ```
-     *
-     * @remarks
-     * Optional Parameter have:
-     *
-     * - `timeout`: Maximum wait time in milliseconds, defaults to `30` seconds,
-     *   pass `0` to disable the timeout. The default value can be changed by using
-     *   the {@link Page.setDefaultTimeout} method.
-     */
     async waitForFrame(urlOrPredicate, options = {}) {
         const { timeout = __classPrivateFieldGet(this, _CDPPage_timeoutSettings, "f").timeout() } = options;
         let predicate;
@@ -41417,77 +44135,15 @@ class CDPPage extends Page_js_1.Page {
         ]);
         return eventRace;
     }
-    /**
-     * This method navigate to the previous page in history.
-     * @param options - Navigation parameters
-     * @returns Promise which resolves to the main resource response. In case of
-     * multiple redirects, the navigation will resolve with the response of the
-     * last redirect. If can not go back, resolves to `null`.
-     * @remarks
-     * The argument `options` might have the following properties:
-     *
-     * - `timeout` : Maximum navigation time in milliseconds, defaults to 30
-     *   seconds, pass 0 to disable timeout. The default value can be changed by
-     *   using the {@link Page.setDefaultNavigationTimeout} or
-     *   {@link Page.setDefaultTimeout} methods.
-     *
-     * - `waitUntil` : When to consider navigation succeeded, defaults to `load`.
-     *   Given an array of event strings, navigation is considered to be
-     *   successful after all events have been fired. Events can be either:<br/>
-     * - `load` : consider navigation to be finished when the load event is
-     *   fired.<br/>
-     * - `domcontentloaded` : consider navigation to be finished when the
-     *   DOMContentLoaded event is fired.<br/>
-     * - `networkidle0` : consider navigation to be finished when there are no
-     *   more than 0 network connections for at least `500` ms.<br/>
-     * - `networkidle2` : consider navigation to be finished when there are no
-     *   more than 2 network connections for at least `500` ms.
-     */
     async goBack(options = {}) {
         return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_go).call(this, -1, options);
     }
-    /**
-     * This method navigate to the next page in history.
-     * @param options - Navigation Parameter
-     * @returns Promise which resolves to the main resource response. In case of
-     * multiple redirects, the navigation will resolve with the response of the
-     * last redirect. If can not go forward, resolves to `null`.
-     * @remarks
-     * The argument `options` might have the following properties:
-     *
-     * - `timeout` : Maximum navigation time in milliseconds, defaults to 30
-     *   seconds, pass 0 to disable timeout. The default value can be changed by
-     *   using the {@link Page.setDefaultNavigationTimeout} or
-     *   {@link Page.setDefaultTimeout} methods.
-     *
-     * - `waitUntil`: When to consider navigation succeeded, defaults to `load`.
-     *   Given an array of event strings, navigation is considered to be
-     *   successful after all events have been fired. Events can be either:<br/>
-     * - `load` : consider navigation to be finished when the load event is
-     *   fired.<br/>
-     * - `domcontentloaded` : consider navigation to be finished when the
-     *   DOMContentLoaded event is fired.<br/>
-     * - `networkidle0` : consider navigation to be finished when there are no
-     *   more than 0 network connections for at least `500` ms.<br/>
-     * - `networkidle2` : consider navigation to be finished when there are no
-     *   more than 2 network connections for at least `500` ms.
-     */
     async goForward(options = {}) {
         return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_go).call(this, +1, options);
     }
-    /**
-     * Brings page to front (activates tab).
-     */
     async bringToFront() {
         await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.bringToFront');
     }
-    /**
-     * @param enabled - Whether or not to enable JavaScript on the page.
-     * @returns
-     * @remarks
-     * NOTE: changing this value won't affect scripts that have already been run.
-     * It will take full effect on the next navigation.
-     */
     async setJavaScriptEnabled(enabled) {
         if (__classPrivateFieldGet(this, _CDPPage_javascriptEnabled, "f") === enabled) {
             return;
@@ -41497,42 +44153,9 @@ class CDPPage extends Page_js_1.Page {
             value: !enabled,
         });
     }
-    /**
-     * Toggles bypassing page's Content-Security-Policy.
-     * @param enabled - sets bypassing of page's Content-Security-Policy.
-     * @remarks
-     * NOTE: CSP bypassing happens at the moment of CSP initialization rather than
-     * evaluation. Usually, this means that `page.setBypassCSP` should be called
-     * before navigating to the domain.
-     */
     async setBypassCSP(enabled) {
         await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.setBypassCSP', { enabled });
     }
-    /**
-     * @param type - Changes the CSS media type of the page. The only allowed
-     * values are `screen`, `print` and `null`. Passing `null` disables CSS media
-     * emulation.
-     * @example
-     *
-     * ```ts
-     * await page.evaluate(() => matchMedia('screen').matches);
-     * // → true
-     * await page.evaluate(() => matchMedia('print').matches);
-     * // → false
-     *
-     * await page.emulateMediaType('print');
-     * await page.evaluate(() => matchMedia('screen').matches);
-     * // → false
-     * await page.evaluate(() => matchMedia('print').matches);
-     * // → true
-     *
-     * await page.emulateMediaType(null);
-     * await page.evaluate(() => matchMedia('screen').matches);
-     * // → true
-     * await page.evaluate(() => matchMedia('print').matches);
-     * // → false
-     * ```
-     */
     async emulateMediaType(type) {
         (0, assert_js_1.assert)(type === 'screen' ||
             type === 'print' ||
@@ -41541,77 +44164,12 @@ class CDPPage extends Page_js_1.Page {
             media: type || '',
         });
     }
-    /**
-     * Enables CPU throttling to emulate slow CPUs.
-     * @param factor - slowdown factor (1 is no throttle, 2 is 2x slowdown, etc).
-     */
     async emulateCPUThrottling(factor) {
         (0, assert_js_1.assert)(factor === null || factor >= 1, 'Throttling rate should be greater or equal to 1');
         await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setCPUThrottlingRate', {
             rate: factor !== null ? factor : 1,
         });
     }
-    /**
-     * @param features - `<?Array<Object>>` Given an array of media feature
-     * objects, emulates CSS media features on the page. Each media feature object
-     * must have the following properties:
-     * @example
-     *
-     * ```ts
-     * await page.emulateMediaFeatures([
-     *   {name: 'prefers-color-scheme', value: 'dark'},
-     * ]);
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-color-scheme: dark)').matches
-     * );
-     * // → true
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-color-scheme: light)').matches
-     * );
-     * // → false
-     *
-     * await page.emulateMediaFeatures([
-     *   {name: 'prefers-reduced-motion', value: 'reduce'},
-     * ]);
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-reduced-motion: reduce)').matches
-     * );
-     * // → true
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-reduced-motion: no-preference)').matches
-     * );
-     * // → false
-     *
-     * await page.emulateMediaFeatures([
-     *   {name: 'prefers-color-scheme', value: 'dark'},
-     *   {name: 'prefers-reduced-motion', value: 'reduce'},
-     * ]);
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-color-scheme: dark)').matches
-     * );
-     * // → true
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-color-scheme: light)').matches
-     * );
-     * // → false
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-reduced-motion: reduce)').matches
-     * );
-     * // → true
-     * await page.evaluate(
-     *   () => matchMedia('(prefers-reduced-motion: no-preference)').matches
-     * );
-     * // → false
-     *
-     * await page.emulateMediaFeatures([{name: 'color-gamut', value: 'p3'}]);
-     * await page.evaluate(() => matchMedia('(color-gamut: srgb)').matches);
-     * // → true
-     * await page.evaluate(() => matchMedia('(color-gamut: p3)').matches);
-     * // → true
-     * await page.evaluate(() => matchMedia('(color-gamut: rec2020)').matches);
-     * // → false
-     * ```
-     */
     async emulateMediaFeatures(features) {
         if (!features) {
             await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setEmulatedMedia', {});
@@ -41626,12 +44184,6 @@ class CDPPage extends Page_js_1.Page {
             });
         }
     }
-    /**
-     * @param timezoneId - Changes the timezone of the page. See
-     * {@link https://source.chromium.org/chromium/chromium/deps/icu.git/+/faee8bc70570192d82d2978a71e2a615788597d1:source/data/misc/metaZones.txt | ICU’s metaZones.txt}
-     * for a list of supported timezone IDs. Passing
-     * `null` disables timezone emulation.
-     */
     async emulateTimezone(timezoneId) {
         try {
             await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setTimezoneOverride', {
@@ -41645,25 +44197,6 @@ class CDPPage extends Page_js_1.Page {
             throw error;
         }
     }
-    /**
-     * Emulates the idle state.
-     * If no arguments set, clears idle state emulation.
-     *
-     * @example
-     *
-     * ```ts
-     * // set idle emulation
-     * await page.emulateIdleState({isUserActive: true, isScreenUnlocked: false});
-     *
-     * // do some checks here
-     * ...
-     *
-     * // clear idle emulation
-     * await page.emulateIdleState();
-     * ```
-     *
-     * @param overrides - Mock idle state. If not set, clears idle overrides
-     */
     async emulateIdleState(overrides) {
         if (overrides) {
             await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.setIdleOverride', {
@@ -41675,34 +44208,6 @@ class CDPPage extends Page_js_1.Page {
             await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Emulation.clearIdleOverride');
         }
     }
-    /**
-     * Simulates the given vision deficiency on the page.
-     *
-     * @example
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     *
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   await page.goto('https://v8.dev/blog/10-years');
-     *
-     *   await page.emulateVisionDeficiency('achromatopsia');
-     *   await page.screenshot({path: 'achromatopsia.png'});
-     *
-     *   await page.emulateVisionDeficiency('deuteranopia');
-     *   await page.screenshot({path: 'deuteranopia.png'});
-     *
-     *   await page.emulateVisionDeficiency('blurredVision');
-     *   await page.screenshot({path: 'blurred-vision.png'});
-     *
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @param type - the type of deficiency to simulate, or `'none'` to reset.
-     */
     async emulateVisionDeficiency(type) {
         const visionDeficiencies = new Set([
             'none',
@@ -41722,46 +44227,6 @@ class CDPPage extends Page_js_1.Page {
             throw error;
         }
     }
-    /**
-     * `page.setViewport` will resize the page. A lot of websites don't expect
-     * phones to change size, so you should set the viewport before navigating to
-     * the page.
-     *
-     * In the case of multiple pages in a single browser, each page can have its
-     * own viewport size.
-     * @example
-     *
-     * ```ts
-     * const page = await browser.newPage();
-     * await page.setViewport({
-     *   width: 640,
-     *   height: 480,
-     *   deviceScaleFactor: 1,
-     * });
-     * await page.goto('https://example.com');
-     * ```
-     *
-     * @param viewport -
-     * @remarks
-     * Argument viewport have following properties:
-     *
-     * - `width`: page width in pixels. required
-     *
-     * - `height`: page height in pixels. required
-     *
-     * - `deviceScaleFactor`: Specify device scale factor (can be thought of as
-     *   DPR). Defaults to `1`.
-     *
-     * - `isMobile`: Whether the meta viewport tag is taken into account. Defaults
-     *   to `false`.
-     *
-     * - `hasTouch`: Specifies if viewport supports touch events. Defaults to `false`
-     *
-     * - `isLandScape`: Specifies if viewport is in landscape mode. Defaults to false.
-     *
-     * NOTE: in certain cases, setting viewport will reload the page in order to
-     * set the isMobile or hasTouch properties.
-     */
     async setViewport(viewport) {
         const needsReload = await __classPrivateFieldGet(this, _CDPPage_emulationManager, "f").emulateViewport(viewport);
         __classPrivateFieldSet(this, _CDPPage_viewport, viewport, "f");
@@ -41769,173 +44234,21 @@ class CDPPage extends Page_js_1.Page {
             await this.reload();
         }
     }
-    /**
-     * @returns
-     *
-     * - `width`: page's width in pixels
-     *
-     * - `height`: page's height in pixels
-     *
-     * - `deviceScalarFactor`: Specify device scale factor (can be though of as
-     *   dpr). Defaults to `1`.
-     *
-     * - `isMobile`: Whether the meta viewport tag is taken into account. Defaults
-     *   to `false`.
-     *
-     * - `hasTouch`: Specifies if viewport supports touch events. Defaults to
-     *   `false`.
-     *
-     * - `isLandScape`: Specifies if viewport is in landscape mode. Defaults to
-     *   `false`.
-     */
     viewport() {
         return __classPrivateFieldGet(this, _CDPPage_viewport, "f");
     }
-    /**
-     * Evaluates a function in the page's context and returns the result.
-     *
-     * If the function passed to `page.evaluteHandle` returns a Promise, the
-     * function will wait for the promise to resolve and return its value.
-     *
-     * @example
-     *
-     * ```ts
-     * const result = await frame.evaluate(() => {
-     *   return Promise.resolve(8 * 7);
-     * });
-     * console.log(result); // prints "56"
-     * ```
-     *
-     * You can pass a string instead of a function (although functions are
-     * recommended as they are easier to debug and use with TypeScript):
-     *
-     * @example
-     *
-     * ```ts
-     * const aHandle = await page.evaluate('1 + 2');
-     * ```
-     *
-     * To get the best TypeScript experience, you should pass in as the
-     * generic the type of `pageFunction`:
-     *
-     * ```ts
-     * const aHandle = await page.evaluate(() => 2);
-     * ```
-     *
-     * @example
-     *
-     * {@link ElementHandle} instances (including {@link JSHandle}s) can be passed
-     * as arguments to the `pageFunction`:
-     *
-     * ```ts
-     * const bodyHandle = await page.$('body');
-     * const html = await page.evaluate(body => body.innerHTML, bodyHandle);
-     * await bodyHandle.dispose();
-     * ```
-     *
-     * @param pageFunction - a function that is run within the page
-     * @param args - arguments to be passed to the pageFunction
-     *
-     * @returns the return value of `pageFunction`.
-     */
     async evaluate(pageFunction, ...args) {
         return __classPrivateFieldGet(this, _CDPPage_frameManager, "f").mainFrame().evaluate(pageFunction, ...args);
     }
-    /**
-     * Adds a function which would be invoked in one of the following scenarios:
-     *
-     * - whenever the page is navigated
-     *
-     * - whenever the child frame is attached or navigated. In this case, the
-     *   function is invoked in the context of the newly attached frame.
-     *
-     * The function is invoked after the document was created but before any of
-     * its scripts were run. This is useful to amend the JavaScript environment,
-     * e.g. to seed `Math.random`.
-     * @param pageFunction - Function to be evaluated in browser context
-     * @param args - Arguments to pass to `pageFunction`
-     * @example
-     * An example of overriding the navigator.languages property before the page loads:
-     *
-     * ```ts
-     * // preload.js
-     *
-     * // overwrite the `languages` property to use a custom getter
-     * Object.defineProperty(navigator, 'languages', {
-     *   get: function () {
-     *     return ['en-US', 'en', 'bn'];
-     *   },
-     * });
-     *
-     * // In your puppeteer script, assuming the preload.js file is
-     * // in same folder of our script.
-     * const preloadFile = fs.readFileSync('./preload.js', 'utf8');
-     * await page.evaluateOnNewDocument(preloadFile);
-     * ```
-     */
     async evaluateOnNewDocument(pageFunction, ...args) {
         const source = (0, util_js_1.evaluationString)(pageFunction, ...args);
         await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.addScriptToEvaluateOnNewDocument', {
             source,
         });
     }
-    /**
-     * Toggles ignoring cache for each request based on the enabled state. By
-     * default, caching is enabled.
-     * @param enabled - sets the `enabled` state of cache
-     */
     async setCacheEnabled(enabled = true) {
         await __classPrivateFieldGet(this, _CDPPage_frameManager, "f").networkManager.setCacheEnabled(enabled);
     }
-    /**
-     * @remarks
-     * Options object which might have the following properties:
-     *
-     * - `path` : The file path to save the image to. The screenshot type
-     *   will be inferred from file extension. If `path` is a relative path, then
-     *   it is resolved relative to
-     *   {@link https://nodejs.org/api/process.html#process_process_cwd
-     *   | current working directory}.
-     *   If no path is provided, the image won't be saved to the disk.
-     *
-     * - `type` : Specify screenshot type, can be either `jpeg` or `png`.
-     *   Defaults to 'png'.
-     *
-     * - `quality` : The quality of the image, between 0-100. Not
-     *   applicable to `png` images.
-     *
-     * - `fullPage` : When true, takes a screenshot of the full
-     *   scrollable page. Defaults to `false`.
-     *
-     * - `clip` : An object which specifies clipping region of the page.
-     *   Should have the following fields:<br/>
-     * - `x` : x-coordinate of top-left corner of clip area.<br/>
-     * - `y` : y-coordinate of top-left corner of clip area.<br/>
-     * - `width` : width of clipping area.<br/>
-     * - `height` : height of clipping area.
-     *
-     * - `omitBackground` : Hides default white background and allows
-     *   capturing screenshots with transparency. Defaults to `false`.
-     *
-     * - `encoding` : The encoding of the image, can be either base64 or
-     *   binary. Defaults to `binary`.
-     *
-     * - `captureBeyondViewport` : When true, captures screenshot
-     *   {@link https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot
-     *   | beyond the viewport}. When false, falls back to old behaviour,
-     *   and cuts the screenshot by the viewport size. Defaults to `true`.
-     *
-     * - `fromSurface` : When true, captures screenshot
-     *   {@link https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot
-     *   | from the surface rather than the view}. When false, works only in
-     *   headful mode and ignores page viewport (but not browser window's
-     *   bounds). Defaults to `true`.
-     *
-     * NOTE: Screenshots take at least 1/6 second on OS X. See
-     * {@link https://crbug.com/741689} for discussion.
-     * @returns Promise which resolves to buffer or a base64 string (depending on
-     * the value of `encoding`) with captured screenshot.
-     */
     async screenshot(options = {}) {
         let screenshotType = "png" /* Protocol.Page.CaptureScreenshotRequestFormat.Png */;
         // options.type takes precedence over inferring the type from options.path
@@ -41993,23 +44306,6 @@ class CDPPage extends Page_js_1.Page {
             return __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_screenshotTask).call(this, screenshotType, options);
         });
     }
-    /**
-     * Generates a PDF of the page with the `print` CSS media type.
-     * @remarks
-     *
-     * NOTE: PDF generation is only supported in Chrome headless mode.
-     *
-     * To generate a PDF with the `screen` media type, call
-     * {@link Page.emulateMediaType | `page.emulateMediaType('screen')`} before
-     * calling `page.pdf()`.
-     *
-     * By default, `page.pdf()` generates a pdf with modified colors for printing.
-     * Use the
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/-webkit-print-color-adjust | `-webkit-print-color-adjust`}
-     * property to force rendering of exact colors.
-     *
-     * @param options - options for generating the PDF.
-     */
     async createPDFStream(options = {}) {
         const { scale = 1, displayHeaderFooter = false, headerTemplate = '', footerTemplate = '', printBackground = false, landscape = false, pageRanges = '', preferCSSPageSize = false, margin = {}, omitBackground = false, timeout = 30000, } = options;
         let paperWidth = 8.5;
@@ -42056,10 +44352,6 @@ class CDPPage extends Page_js_1.Page {
         (0, assert_js_1.assert)(result.stream, '`stream` is missing from `Page.printToPDF');
         return (0, util_js_1.getReadableFromProtocolStream)(__classPrivateFieldGet(this, _CDPPage_client, "f"), result.stream);
     }
-    /**
-     * @param options -
-     * @returns
-     */
     async pdf(options = {}) {
         const { path = undefined } = options;
         const readable = await this.createPDFStream(options);
@@ -42067,11 +44359,6 @@ class CDPPage extends Page_js_1.Page {
         (0, assert_js_1.assert)(buffer, 'Could not create buffer');
         return buffer;
     }
-    /**
-     * @returns The page's title
-     * @remarks
-     * Shortcut for {@link Frame.title | page.mainFrame().title()}.
-     */
     async title() {
         return this.mainFrame().title();
     }
@@ -42089,337 +44376,45 @@ class CDPPage extends Page_js_1.Page {
             await __classPrivateFieldGet(this, _CDPPage_target, "f")._isClosedPromise;
         }
     }
-    /**
-     * Indicates that the page has been closed.
-     * @returns
-     */
     isClosed() {
         return __classPrivateFieldGet(this, _CDPPage_closed, "f");
     }
     get mouse() {
         return __classPrivateFieldGet(this, _CDPPage_mouse, "f");
     }
-    /**
-     * This method fetches an element with `selector`, scrolls it into view if
-     * needed, and then uses {@link Page.mouse} to click in the center of the
-     * element. If there's no element matching `selector`, the method throws an
-     * error.
-     * @remarks Bear in mind that if `click()` triggers a navigation event and
-     * there's a separate `page.waitForNavigation()` promise to be resolved, you
-     * may end up with a race condition that yields unexpected results. The
-     * correct pattern for click and wait for navigation is the following:
-     *
-     * ```ts
-     * const [response] = await Promise.all([
-     *   page.waitForNavigation(waitOptions),
-     *   page.click(selector, clickOptions),
-     * ]);
-     * ```
-     *
-     * Shortcut for {@link Frame.click | page.mainFrame().click(selector[, options]) }.
-     * @param selector - A `selector` to search for element to click. If there are
-     * multiple elements satisfying the `selector`, the first will be clicked
-     * @param options - `Object`
-     * @returns Promise which resolves when the element matching `selector` is
-     * successfully clicked. The Promise will be rejected if there is no element
-     * matching `selector`.
-     */
     click(selector, options = {}) {
         return this.mainFrame().click(selector, options);
     }
-    /**
-     * This method fetches an element with `selector` and focuses it. If there's no
-     * element matching `selector`, the method throws an error.
-     * @param selector - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | selector }
-     * of an element to focus. If there are multiple elements satisfying the
-     * selector, the first will be focused.
-     * @returns Promise which resolves when the element matching selector is
-     * successfully focused. The promise will be rejected if there is no element
-     * matching selector.
-     * @remarks
-     * Shortcut for {@link Frame.focus | page.mainFrame().focus(selector)}.
-     */
     focus(selector) {
         return this.mainFrame().focus(selector);
     }
-    /**
-     * This method fetches an element with `selector`, scrolls it into view if
-     * needed, and then uses {@link Page.mouse} to hover over the center of the element.
-     * If there's no element matching `selector`, the method throws an error.
-     * @param selector - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | selector}
-     * to search for element to hover. If there are multiple elements satisfying
-     * the selector, the first will be hovered.
-     * @returns Promise which resolves when the element matching `selector` is
-     * successfully hovered. Promise gets rejected if there's no element matching
-     * `selector`.
-     * @remarks
-     * Shortcut for {@link Page.hover | page.mainFrame().hover(selector)}.
-     */
     hover(selector) {
         return this.mainFrame().hover(selector);
     }
-    /**
-     * Triggers a `change` and `input` event once all the provided options have been
-     * selected. If there's no `<select>` element matching `selector`, the method
-     * throws an error.
-     *
-     * @example
-     *
-     * ```ts
-     * page.select('select#colors', 'blue'); // single selection
-     * page.select('select#colors', 'red', 'green', 'blue'); // multiple selections
-     * ```
-     *
-     * @param selector - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | Selector}
-     * to query the page for
-     * @param values - Values of options to select. If the `<select>` has the
-     * `multiple` attribute, all values are considered, otherwise only the first one
-     * is taken into account.
-     * @returns
-     *
-     * @remarks
-     * Shortcut for {@link Frame.select | page.mainFrame().select()}
-     */
     select(selector, ...values) {
         return this.mainFrame().select(selector, ...values);
     }
-    /**
-     * This method fetches an element with `selector`, scrolls it into view if
-     * needed, and then uses {@link Page.touchscreen} to tap in the center of the element.
-     * If there's no element matching `selector`, the method throws an error.
-     * @param selector - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | Selector}
-     * to search for element to tap. If there are multiple elements satisfying the
-     * selector, the first will be tapped.
-     * @returns
-     * @remarks
-     * Shortcut for {@link Frame.tap | page.mainFrame().tap(selector)}.
-     */
     tap(selector) {
         return this.mainFrame().tap(selector);
     }
-    /**
-     * Sends a `keydown`, `keypress/input`, and `keyup` event for each character
-     * in the text.
-     *
-     * To press a special key, like `Control` or `ArrowDown`, use {@link Keyboard.press}.
-     * @example
-     *
-     * ```ts
-     * await page.type('#mytextarea', 'Hello');
-     * // Types instantly
-     * await page.type('#mytextarea', 'World', {delay: 100});
-     * // Types slower, like a user
-     * ```
-     *
-     * @param selector - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | selector}
-     * of an element to type into. If there are multiple elements satisfying the
-     * selector, the first will be used.
-     * @param text - A text to type into a focused element.
-     * @param options - have property `delay` which is the Time to wait between
-     * key presses in milliseconds. Defaults to `0`.
-     * @returns
-     * @remarks
-     */
     type(selector, text, options) {
         return this.mainFrame().type(selector, text, options);
     }
-    /**
-     * @deprecated Replace with `new Promise(r => setTimeout(r, milliseconds));`.
-     *
-     * Causes your script to wait for the given number of milliseconds.
-     *
-     * @remarks
-     * It's generally recommended to not wait for a number of seconds, but instead
-     * use {@link Frame.waitForSelector}, {@link Frame.waitForXPath} or
-     * {@link Frame.waitForFunction} to wait for exactly the conditions you want.
-     *
-     * @example
-     *
-     * Wait for 1 second:
-     *
-     * ```ts
-     * await page.waitForTimeout(1000);
-     * ```
-     *
-     * @param milliseconds - the number of milliseconds to wait.
-     */
     waitForTimeout(milliseconds) {
         return this.mainFrame().waitForTimeout(milliseconds);
     }
-    /**
-     * Wait for the `selector` to appear in page. If at the moment of calling the
-     * method the `selector` already exists, the method will return immediately. If
-     * the `selector` doesn't appear after the `timeout` milliseconds of waiting, the
-     * function will throw.
-     *
-     * This method works across navigations:
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   let currentURL;
-     *   page
-     *     .waitForSelector('img')
-     *     .then(() => console.log('First URL with image: ' + currentURL));
-     *   for (currentURL of [
-     *     'https://example.com',
-     *     'https://google.com',
-     *     'https://bbc.com',
-     *   ]) {
-     *     await page.goto(currentURL);
-     *   }
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @param selector - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors | selector}
-     * of an element to wait for
-     * @param options - Optional waiting parameters
-     * @returns Promise which resolves when element specified by selector string
-     * is added to DOM. Resolves to `null` if waiting for hidden: `true` and
-     * selector is not found in DOM.
-     * @remarks
-     * The optional Parameter in Arguments `options` are :
-     *
-     * - `Visible`: A boolean wait for element to be present in DOM and to be
-     *   visible, i.e. to not have `display: none` or `visibility: hidden` CSS
-     *   properties. Defaults to `false`.
-     *
-     * - `hidden`: Wait for element to not be found in the DOM or to be hidden,
-     *   i.e. have `display: none` or `visibility: hidden` CSS properties. Defaults to
-     *   `false`.
-     *
-     * - `timeout`: maximum time to wait for in milliseconds. Defaults to `30000`
-     *   (30 seconds). Pass `0` to disable timeout. The default value can be changed
-     *   by using the {@link Page.setDefaultTimeout} method.
-     */
     async waitForSelector(selector, options = {}) {
         return await this.mainFrame().waitForSelector(selector, options);
     }
-    /**
-     * Wait for the `xpath` to appear in page. If at the moment of calling the
-     * method the `xpath` already exists, the method will return immediately. If
-     * the `xpath` doesn't appear after the `timeout` milliseconds of waiting, the
-     * function will throw.
-     *
-     * This method works across navigation
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   let currentURL;
-     *   page
-     *     .waitForXPath('//img')
-     *     .then(() => console.log('First URL with image: ' + currentURL));
-     *   for (currentURL of [
-     *     'https://example.com',
-     *     'https://google.com',
-     *     'https://bbc.com',
-     *   ]) {
-     *     await page.goto(currentURL);
-     *   }
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @param xpath - A
-     * {@link https://developer.mozilla.org/en-US/docs/Web/XPath | xpath} of an
-     * element to wait for
-     * @param options - Optional waiting parameters
-     * @returns Promise which resolves when element specified by xpath string is
-     * added to DOM. Resolves to `null` if waiting for `hidden: true` and xpath is
-     * not found in DOM.
-     * @remarks
-     * The optional Argument `options` have properties:
-     *
-     * - `visible`: A boolean to wait for element to be present in DOM and to be
-     *   visible, i.e. to not have `display: none` or `visibility: hidden` CSS
-     *   properties. Defaults to `false`.
-     *
-     * - `hidden`: A boolean wait for element to not be found in the DOM or to be
-     *   hidden, i.e. have `display: none` or `visibility: hidden` CSS properties.
-     *   Defaults to `false`.
-     *
-     * - `timeout`: A number which is maximum time to wait for in milliseconds.
-     *   Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default
-     *   value can be changed by using the {@link Page.setDefaultTimeout} method.
-     */
     waitForXPath(xpath, options = {}) {
         return this.mainFrame().waitForXPath(xpath, options);
     }
-    /**
-     * Waits for a function to finish evaluating in the page's context.
-     *
-     * @example
-     * The {@link Page.waitForFunction} can be used to observe viewport size change:
-     *
-     * ```ts
-     * const puppeteer = require('puppeteer');
-     * (async () => {
-     *   const browser = await puppeteer.launch();
-     *   const page = await browser.newPage();
-     *   const watchDog = page.waitForFunction('window.innerWidth < 100');
-     *   await page.setViewport({width: 50, height: 50});
-     *   await watchDog;
-     *   await browser.close();
-     * })();
-     * ```
-     *
-     * @example
-     * To pass arguments from node.js to the predicate of
-     * {@link Page.waitForFunction} function:
-     *
-     * ```ts
-     * const selector = '.foo';
-     * await page.waitForFunction(
-     *   selector => !!document.querySelector(selector),
-     *   {},
-     *   selector
-     * );
-     * ```
-     *
-     * @example
-     * The predicate of {@link Page.waitForFunction} can be asynchronous too:
-     *
-     * ```ts
-     * const username = 'github-username';
-     * await page.waitForFunction(
-     *   async username => {
-     *     const githubResponse = await fetch(
-     *       `https://api.github.com/users/${username}`
-     *     );
-     *     const githubUser = await githubResponse.json();
-     *     // show the avatar
-     *     const img = document.createElement('img');
-     *     img.src = githubUser.avatar_url;
-     *     // wait 3 seconds
-     *     await new Promise((resolve, reject) => setTimeout(resolve, 3000));
-     *     img.remove();
-     *   },
-     *   {},
-     *   username
-     * );
-     * ```
-     *
-     * @param pageFunction - Function to be evaluated in browser context
-     * @param options - Options for configuring waiting behavior.
-     */
     waitForFunction(pageFunction, options = {}, ...args) {
         return this.mainFrame().waitForFunction(pageFunction, options, ...args);
     }
 }
 exports.CDPPage = CDPPage;
-_CDPPage_closed = new WeakMap(), _CDPPage_client = new WeakMap(), _CDPPage_target = new WeakMap(), _CDPPage_keyboard = new WeakMap(), _CDPPage_mouse = new WeakMap(), _CDPPage_timeoutSettings = new WeakMap(), _CDPPage_touchscreen = new WeakMap(), _CDPPage_accessibility = new WeakMap(), _CDPPage_frameManager = new WeakMap(), _CDPPage_emulationManager = new WeakMap(), _CDPPage_tracing = new WeakMap(), _CDPPage_pageBindings = new WeakMap(), _CDPPage_coverage = new WeakMap(), _CDPPage_javascriptEnabled = new WeakMap(), _CDPPage_viewport = new WeakMap(), _CDPPage_screenshotTaskQueue = new WeakMap(), _CDPPage_workers = new WeakMap(), _CDPPage_fileChooserPromises = new WeakMap(), _CDPPage_disconnectPromise = new WeakMap(), _CDPPage_userDragInterceptionEnabled = new WeakMap(), _CDPPage_onDetachedFromTarget = new WeakMap(), _CDPPage_onAttachedToTarget = new WeakMap(), _CDPPage_instances = new WeakSet(), _CDPPage_initialize = async function _CDPPage_initialize() {
+_CDPPage_closed = new WeakMap(), _CDPPage_client = new WeakMap(), _CDPPage_target = new WeakMap(), _CDPPage_keyboard = new WeakMap(), _CDPPage_mouse = new WeakMap(), _CDPPage_timeoutSettings = new WeakMap(), _CDPPage_touchscreen = new WeakMap(), _CDPPage_accessibility = new WeakMap(), _CDPPage_frameManager = new WeakMap(), _CDPPage_emulationManager = new WeakMap(), _CDPPage_tracing = new WeakMap(), _CDPPage_bindings = new WeakMap(), _CDPPage_coverage = new WeakMap(), _CDPPage_javascriptEnabled = new WeakMap(), _CDPPage_viewport = new WeakMap(), _CDPPage_screenshotTaskQueue = new WeakMap(), _CDPPage_workers = new WeakMap(), _CDPPage_fileChooserPromises = new WeakMap(), _CDPPage_disconnectPromise = new WeakMap(), _CDPPage_userDragInterceptionEnabled = new WeakMap(), _CDPPage_onDetachedFromTarget = new WeakMap(), _CDPPage_onAttachedToTarget = new WeakMap(), _CDPPage_instances = new WeakSet(), _CDPPage_initialize = async function _CDPPage_initialize() {
     try {
         await Promise.all([
             __classPrivateFieldGet(this, _CDPPage_frameManager, "f").initialize(),
@@ -42442,7 +44437,7 @@ _CDPPage_closed = new WeakMap(), _CDPPage_client = new WeakMap(), _CDPPage_targe
     const frame = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").frame(event.frameId);
     (0, assert_js_1.assert)(frame, 'This should never happen.');
     // This is guaranteed to be an HTMLInputElement handle by the event.
-    const handle = (await frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].adoptBackendNode(event.backendNodeId));
+    const handle = (await frame.worlds[IsolatedWorlds_js_1.MAIN_WORLD].adoptBackendNode(event.backendNodeId));
     const fileChooser = new FileChooser_js_1.FileChooser(handle, event);
     for (const promise of __classPrivateFieldGet(this, _CDPPage_fileChooserPromises, "f")) {
         promise.resolve(fileChooser);
@@ -42495,7 +44490,11 @@ _CDPPage_closed = new WeakMap(), _CDPPage_client = new WeakMap(), _CDPPage_targe
         // @see https://github.com/puppeteer/puppeteer/issues/3865
         return;
     }
-    const context = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").executionContextById(event.executionContextId, __classPrivateFieldGet(this, _CDPPage_client, "f"));
+    const context = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").getExecutionContextById(event.executionContextId, __classPrivateFieldGet(this, _CDPPage_client, "f"));
+    if (!context) {
+        (0, util_js_1.debugError)(new Error(`ExecutionContext not found for a console message: ${JSON.stringify(event)}`));
+        return;
+    }
     const values = event.args.map(arg => {
         return (0, util_js_1.createJSHandle)(context, arg);
     });
@@ -42510,31 +44509,16 @@ _CDPPage_closed = new WeakMap(), _CDPPage_client = new WeakMap(), _CDPPage_targe
         // called before our wrapper was initialized.
         return;
     }
-    const { type, name, seq, args } = payload;
-    if (type !== 'exposedFun' || !__classPrivateFieldGet(this, _CDPPage_pageBindings, "f").has(name)) {
+    const { type, name, seq, args, isTrivial } = payload;
+    if (type !== 'exposedFun') {
         return;
     }
-    let expression = null;
-    try {
-        const pageBinding = __classPrivateFieldGet(this, _CDPPage_pageBindings, "f").get(name);
-        (0, assert_js_1.assert)(pageBinding);
-        const result = await pageBinding(...args);
-        expression = (0, util_js_1.pageBindingDeliverResultString)(name, seq, result);
+    const context = __classPrivateFieldGet(this, _CDPPage_frameManager, "f").executionContextById(event.executionContextId, __classPrivateFieldGet(this, _CDPPage_client, "f"));
+    if (!context) {
+        return;
     }
-    catch (error) {
-        if ((0, ErrorLike_js_1.isErrorLike)(error)) {
-            expression = (0, util_js_1.pageBindingDeliverErrorString)(name, seq, error.message, error.stack);
-        }
-        else {
-            expression = (0, util_js_1.pageBindingDeliverErrorValueString)(name, seq, error);
-        }
-    }
-    __classPrivateFieldGet(this, _CDPPage_client, "f")
-        .send('Runtime.evaluate', {
-        expression,
-        contextId: event.executionContextId,
-    })
-        .catch(util_js_1.debugError);
+    const binding = __classPrivateFieldGet(this, _CDPPage_bindings, "f").get(name);
+    await (binding === null || binding === void 0 ? void 0 : binding.run(context, seq, args, isTrivial));
 }, _CDPPage_addConsoleMessage = function _CDPPage_addConsoleMessage(eventType, args, stackTrace) {
     if (!this.listenerCount("console" /* PageEmittedEvents.Console */)) {
         args.forEach(arg => {
@@ -42613,23 +44597,20 @@ async function _CDPPage_setTransparentBackgroundColor() {
     ]);
     return result[0];
 }, _CDPPage_screenshotTask = async function _CDPPage_screenshotTask(format, options = {}) {
+    var _a, _b;
     await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Target.activateTarget', {
         targetId: __classPrivateFieldGet(this, _CDPPage_target, "f")._targetId,
     });
     let clip = options.clip ? processClip(options.clip) : undefined;
-    const captureBeyondViewport = typeof options.captureBeyondViewport === 'boolean'
-        ? options.captureBeyondViewport
-        : true;
-    const fromSurface = typeof options.fromSurface === 'boolean'
-        ? options.fromSurface
-        : undefined;
+    let captureBeyondViewport = (_a = options.captureBeyondViewport) !== null && _a !== void 0 ? _a : true;
+    const fromSurface = options.fromSurface;
     if (options.fullPage) {
-        const metrics = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.getLayoutMetrics');
-        // Fallback to `contentSize` in case of using Firefox.
-        const { width, height } = metrics.cssContentSize || metrics.contentSize;
         // Overwrite clip for full page.
-        clip = { x: 0, y: 0, width, height, scale: 1 };
+        clip = undefined;
         if (!captureBeyondViewport) {
+            const metrics = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.getLayoutMetrics');
+            // Fallback to `contentSize` in case of using Firefox.
+            const { width, height } = metrics.cssContentSize || metrics.contentSize;
             const { isMobile = false, deviceScaleFactor = 1, isLandscape = false, } = __classPrivateFieldGet(this, _CDPPage_viewport, "f") || {};
             const screenOrientation = isLandscape
                 ? { angle: 90, type: 'landscapePrimary' }
@@ -42643,6 +44624,9 @@ async function _CDPPage_setTransparentBackgroundColor() {
             });
         }
     }
+    else if (!clip) {
+        captureBeyondViewport = false;
+    }
     const shouldSetDefaultBackground = options.omitBackground && (format === 'png' || format === 'webp');
     if (shouldSetDefaultBackground) {
         await __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_setTransparentBackgroundColor).call(this);
@@ -42650,12 +44634,10 @@ async function _CDPPage_setTransparentBackgroundColor() {
     const result = await __classPrivateFieldGet(this, _CDPPage_client, "f").send('Page.captureScreenshot', {
         format,
         quality: options.quality,
-        clip: clip
-            ? {
-                ...clip,
-                scale: clip.scale === undefined ? 1 : clip.scale,
-            }
-            : undefined,
+        clip: clip && {
+            ...clip,
+            scale: (_b = clip.scale) !== null && _b !== void 0 ? _b : 1,
+        },
         captureBeyondViewport,
         fromSurface,
     });
@@ -42745,6 +44727,45 @@ function convertPrintParameterToInches(parameter) {
 
 /***/ }),
 
+/***/ 8198:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PierceQueryHandler = void 0;
+const QueryHandler_js_1 = __nccwpck_require__(3200);
+/**
+ * @internal
+ */
+class PierceQueryHandler extends QueryHandler_js_1.QueryHandler {
+}
+exports.PierceQueryHandler = PierceQueryHandler;
+PierceQueryHandler.querySelector = (element, selector, { pierceQuerySelector }) => {
+    return pierceQuerySelector(element, selector);
+};
+PierceQueryHandler.querySelectorAll = (element, selector, { pierceQuerySelectorAll }) => {
+    return pierceQuerySelectorAll(element, selector);
+};
+//# sourceMappingURL=PierceQueryHandler.js.map
+
+/***/ }),
+
 /***/ 3768:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -42811,15 +44832,55 @@ exports.networkConditions = exports.PredefinedNetworkConditions;
 
 /***/ }),
 
+/***/ 7023:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2020 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=Product.js.map
+
+/***/ }),
+
 /***/ 8435:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
+/**
+ * Copyright 2017 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Puppeteer = void 0;
 const BrowserConnector_js_1 = __nccwpck_require__(1365);
-const QueryHandler_js_1 = __nccwpck_require__(3200);
+const CustomQueryHandler_js_1 = __nccwpck_require__(5057);
 /**
  * The main Puppeteer class.
  *
@@ -42827,20 +44888,10 @@ const QueryHandler_js_1 = __nccwpck_require__(3200);
  * instance of {@link PuppeteerNode} when you import or require `puppeteer`.
  * That class extends `Puppeteer`, so has all the methods documented below as
  * well as all that are defined on {@link PuppeteerNode}.
+ *
  * @public
  */
 class Puppeteer {
-    /**
-     * @internal
-     */
-    constructor(settings) {
-        /**
-         * @internal
-         */
-        this._changedProduct = false;
-        this._isPuppeteerCore = settings.isPuppeteerCore;
-        this.connect = this.connect.bind(this);
-    }
     /**
      * Registers a {@link CustomQueryHandler | custom query handler}.
      *
@@ -42864,25 +44915,36 @@ class Puppeteer {
      * @public
      */
     static registerCustomQueryHandler(name, queryHandler) {
-        return (0, QueryHandler_js_1.registerCustomQueryHandler)(name, queryHandler);
+        return this.customQueryHandlers.register(name, queryHandler);
     }
     /**
      * Unregisters a custom query handler for a given name.
      */
     static unregisterCustomQueryHandler(name) {
-        return (0, QueryHandler_js_1.unregisterCustomQueryHandler)(name);
+        return this.customQueryHandlers.unregister(name);
     }
     /**
      * Gets the names of all custom query handlers.
      */
     static customQueryHandlerNames() {
-        return (0, QueryHandler_js_1.customQueryHandlerNames)();
+        return this.customQueryHandlers.names();
     }
     /**
      * Unregisters all custom query handlers.
      */
     static clearCustomQueryHandlers() {
-        return (0, QueryHandler_js_1.clearCustomQueryHandlers)();
+        return this.customQueryHandlers.clear();
+    }
+    /**
+     * @internal
+     */
+    constructor(settings) {
+        /**
+         * @internal
+         */
+        this._changedProduct = false;
+        this._isPuppeteerCore = settings.isPuppeteerCore;
+        this.connect = this.connect.bind(this);
     }
     /**
      * This method attaches Puppeteer to an existing browser instance.
@@ -42897,7 +44959,24 @@ class Puppeteer {
     }
 }
 exports.Puppeteer = Puppeteer;
+/**
+ * Operations for {@link CustomQueryHandler | custom query handlers}. See
+ * {@link CustomQueryHandlerRegistry}.
+ *
+ * @internal
+ */
+Puppeteer.customQueryHandlers = CustomQueryHandler_js_1.customQueryHandlers;
 //# sourceMappingURL=Puppeteer.js.map
+
+/***/ }),
+
+/***/ 4291:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=PuppeteerViewport.js.map
 
 /***/ }),
 
@@ -42907,7 +44986,7 @@ exports.Puppeteer = Puppeteer;
 "use strict";
 
 /**
- * Copyright 2020 Google Inc. All rights reserved.
+ * Copyright 2023 Google Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42922,186 +45001,202 @@ exports.Puppeteer = Puppeteer;
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getQueryHandlerAndSelector = exports.clearCustomQueryHandlers = exports.customQueryHandlerNames = exports.unregisterCustomQueryHandler = exports.registerCustomQueryHandler = void 0;
-const AriaQueryHandler_js_1 = __nccwpck_require__(3082);
-const ElementHandle_js_1 = __nccwpck_require__(865);
-const Frame_js_1 = __nccwpck_require__(1106);
-const IsolatedWorld_js_1 = __nccwpck_require__(5651);
-function createPuppeteerQueryHandler(handler) {
-    const internalHandler = {};
-    if (handler.queryOne) {
-        const queryOne = handler.queryOne;
-        internalHandler.queryOne = async (element, selector) => {
-            const jsHandle = await element.evaluateHandle(queryOne, selector, await element.executionContext()._world.puppeteerUtil);
-            const elementHandle = jsHandle.asElement();
-            if (elementHandle) {
-                return elementHandle;
-            }
-            await jsHandle.dispose();
-            return null;
-        };
-        internalHandler.waitFor = async (elementOrFrame, selector, options) => {
-            let frame;
-            let element;
-            if (elementOrFrame instanceof Frame_js_1.Frame) {
-                frame = elementOrFrame;
-            }
-            else {
-                frame = elementOrFrame.frame;
-                element = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD].adoptHandle(elementOrFrame);
-            }
-            const result = await frame.worlds[IsolatedWorld_js_1.PUPPETEER_WORLD]._waitForSelectorInPage(queryOne, element, selector, options);
-            if (element) {
-                await element.dispose();
-            }
-            if (!result) {
-                return null;
-            }
-            if (!(result instanceof ElementHandle_js_1.ElementHandle)) {
-                await result.dispose();
-                return null;
-            }
-            return frame.worlds[IsolatedWorld_js_1.MAIN_WORLD].transferHandle(result);
-        };
-    }
-    if (handler.queryAll) {
-        const queryAll = handler.queryAll;
-        internalHandler.queryAll = async (element, selector) => {
-            const jsHandle = await element.evaluateHandle(queryAll, selector, await element.executionContext()._world.puppeteerUtil);
-            const properties = await jsHandle.getProperties();
-            await jsHandle.dispose();
-            const result = [];
-            for (const property of properties.values()) {
-                const elementHandle = property.asElement();
-                if (elementHandle) {
-                    result.push(elementHandle);
-                }
-            }
-            return result;
-        };
-    }
-    return internalHandler;
-}
-const defaultHandler = createPuppeteerQueryHandler({
-    queryOne: (element, selector) => {
-        if (!('querySelector' in element)) {
-            throw new Error(`Could not invoke \`querySelector\` on node of type ${element.nodeName}.`);
-        }
-        return element.querySelector(selector);
-    },
-    queryAll: (element, selector) => {
-        if (!('querySelectorAll' in element)) {
-            throw new Error(`Could not invoke \`querySelectorAll\` on node of type ${element.nodeName}.`);
-        }
-        return [
-            ...element.querySelectorAll(selector),
-        ];
-    },
-});
-const pierceHandler = createPuppeteerQueryHandler({
-    queryOne: (element, selector, { pierceQuerySelector }) => {
-        return pierceQuerySelector(element, selector);
-    },
-    queryAll: (element, selector, { pierceQuerySelectorAll }) => {
-        return pierceQuerySelectorAll(element, selector);
-    },
-});
-const xpathHandler = createPuppeteerQueryHandler({
-    queryOne: (element, selector, { xpathQuerySelector }) => {
-        return xpathQuerySelector(element, selector);
-    },
-    queryAll: (element, selector, { xpathQuerySelectorAll }) => {
-        return xpathQuerySelectorAll(element, selector);
-    },
-});
-const textQueryHandler = createPuppeteerQueryHandler({
-    queryOne: (element, selector, { textQuerySelector }) => {
-        return textQuerySelector(element, selector);
-    },
-    queryAll: (element, selector, { textQuerySelectorAll }) => {
-        return textQuerySelectorAll(element, selector);
-    },
-});
-const INTERNAL_QUERY_HANDLERS = new Map([
-    ['aria', { handler: AriaQueryHandler_js_1.ariaHandler }],
-    ['pierce', { handler: pierceHandler }],
-    ['xpath', { handler: xpathHandler }],
-    ['text', { handler: textQueryHandler }],
-]);
-const QUERY_HANDLERS = new Map();
-/**
- * @deprecated Import {@link Puppeteer} and use the static method
- * {@link Puppeteer.registerCustomQueryHandler}
- *
- * @public
- */
-function registerCustomQueryHandler(name, handler) {
-    if (INTERNAL_QUERY_HANDLERS.has(name)) {
-        throw new Error(`A query handler named "${name}" already exists`);
-    }
-    if (QUERY_HANDLERS.has(name)) {
-        throw new Error(`A custom query handler named "${name}" already exists`);
-    }
-    const isValidName = /^[a-zA-Z]+$/.test(name);
-    if (!isValidName) {
-        throw new Error(`Custom query handler names may only contain [a-zA-Z]`);
-    }
-    QUERY_HANDLERS.set(name, { handler: createPuppeteerQueryHandler(handler) });
-}
-exports.registerCustomQueryHandler = registerCustomQueryHandler;
-/**
- * @deprecated Import {@link Puppeteer} and use the static method
- * {@link Puppeteer.unregisterCustomQueryHandler}
- *
- * @public
- */
-function unregisterCustomQueryHandler(name) {
-    QUERY_HANDLERS.delete(name);
-}
-exports.unregisterCustomQueryHandler = unregisterCustomQueryHandler;
-/**
- * @deprecated Import {@link Puppeteer} and use the static method
- * {@link Puppeteer.customQueryHandlerNames}
- *
- * @public
- */
-function customQueryHandlerNames() {
-    return [...QUERY_HANDLERS.keys()];
-}
-exports.customQueryHandlerNames = customQueryHandlerNames;
-/**
- * @deprecated Import {@link Puppeteer} and use the static method
- * {@link Puppeteer.clearCustomQueryHandlers}
- *
- * @public
- */
-function clearCustomQueryHandlers() {
-    QUERY_HANDLERS.clear();
-}
-exports.clearCustomQueryHandlers = clearCustomQueryHandlers;
-const CUSTOM_QUERY_SEPARATORS = ['=', '/'];
+exports.QueryHandler = void 0;
+const ElementHandle_js_1 = __nccwpck_require__(3839);
+const assert_js_1 = __nccwpck_require__(7729);
+const ErrorLike_js_1 = __nccwpck_require__(2937);
+const Function_js_1 = __nccwpck_require__(2329);
+const HandleIterator_js_1 = __nccwpck_require__(5718);
+const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
+const LazyArg_js_1 = __nccwpck_require__(4897);
 /**
  * @internal
  */
-function getQueryHandlerAndSelector(selector) {
-    for (const handlerMap of [QUERY_HANDLERS, INTERNAL_QUERY_HANDLERS]) {
-        for (const [name, { handler: queryHandler, transformSelector },] of handlerMap) {
-            for (const separator of CUSTOM_QUERY_SEPARATORS) {
-                const prefix = `${name}${separator}`;
-                if (selector.startsWith(prefix)) {
-                    selector = selector.slice(prefix.length);
-                    if (transformSelector) {
-                        selector = transformSelector(selector);
-                    }
-                    return { updatedSelector: selector, queryHandler };
-                }
+class QueryHandler {
+    static get _querySelector() {
+        if (this.querySelector) {
+            return this.querySelector;
+        }
+        if (!this.querySelectorAll) {
+            throw new Error('Cannot create default `querySelector`.');
+        }
+        return (this.querySelector = (0, Function_js_1.interpolateFunction)(async (node, selector, PuppeteerUtil) => {
+            const querySelectorAll = PLACEHOLDER('querySelectorAll');
+            const results = querySelectorAll(node, selector, PuppeteerUtil);
+            for await (const result of results) {
+                return result;
+            }
+            return null;
+        }, {
+            querySelectorAll: (0, Function_js_1.stringifyFunction)(this.querySelectorAll),
+        }));
+    }
+    static get _querySelectorAll() {
+        if (this.querySelectorAll) {
+            return this.querySelectorAll;
+        }
+        if (!this.querySelector) {
+            throw new Error('Cannot create default `querySelectorAll`.');
+        }
+        return (this.querySelectorAll = (0, Function_js_1.interpolateFunction)(async function* (node, selector, PuppeteerUtil) {
+            const querySelector = PLACEHOLDER('querySelector');
+            const result = await querySelector(node, selector, PuppeteerUtil);
+            if (result) {
+                yield result;
+            }
+        }, {
+            querySelector: (0, Function_js_1.stringifyFunction)(this.querySelector),
+        }));
+    }
+    /**
+     * Queries for multiple nodes given a selector and {@link ElementHandle}.
+     *
+     * Akin to {@link Document.prototype.querySelectorAll}.
+     */
+    static async *queryAll(element, selector) {
+        const world = element.executionContext()._world;
+        (0, assert_js_1.assert)(world);
+        const handle = await element.evaluateHandle(this._querySelectorAll, selector, LazyArg_js_1.LazyArg.create(context => {
+            return context.puppeteerUtil;
+        }));
+        yield* (0, HandleIterator_js_1.transposeIterableHandle)(handle);
+    }
+    /**
+     * Queries for a single node given a selector and {@link ElementHandle}.
+     *
+     * Akin to {@link Document.prototype.querySelector}.
+     */
+    static async queryOne(element, selector) {
+        const world = element.executionContext()._world;
+        (0, assert_js_1.assert)(world);
+        const result = await element.evaluateHandle(this._querySelector, selector, LazyArg_js_1.LazyArg.create(context => {
+            return context.puppeteerUtil;
+        }));
+        if (!(result instanceof ElementHandle_js_1.ElementHandle)) {
+            await result.dispose();
+            return null;
+        }
+        return result;
+    }
+    /**
+     * Waits until a single node appears for a given selector and
+     * {@link ElementHandle}.
+     *
+     * This will always query the handle in the Puppeteer world and migrate the
+     * result to the main world.
+     */
+    static async waitFor(elementOrFrame, selector, options) {
+        let frame;
+        let element;
+        if (!(elementOrFrame instanceof ElementHandle_js_1.ElementHandle)) {
+            frame = elementOrFrame;
+        }
+        else {
+            frame = elementOrFrame.frame;
+            element = await frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].adoptHandle(elementOrFrame);
+        }
+        const { visible = false, hidden = false, timeout } = options;
+        try {
+            const handle = await frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].waitForFunction(async (PuppeteerUtil, query, selector, root, visible) => {
+                const querySelector = PuppeteerUtil.createFunction(query);
+                const node = await querySelector(root !== null && root !== void 0 ? root : document, selector, PuppeteerUtil);
+                return PuppeteerUtil.checkVisibility(node, visible);
+            }, {
+                polling: visible || hidden ? 'raf' : 'mutation',
+                root: element,
+                timeout,
+            }, LazyArg_js_1.LazyArg.create(context => {
+                return context.puppeteerUtil;
+            }), (0, Function_js_1.stringifyFunction)(this._querySelector), selector, element, visible ? true : hidden ? false : undefined);
+            if (!(handle instanceof ElementHandle_js_1.ElementHandle)) {
+                await handle.dispose();
+                return null;
+            }
+            return frame.worlds[IsolatedWorlds_js_1.MAIN_WORLD].transferHandle(handle);
+        }
+        catch (error) {
+            if (!(0, ErrorLike_js_1.isErrorLike)(error)) {
+                throw error;
+            }
+            error.message = `Waiting for selector \`${selector}\` failed: ${error.message}`;
+            throw error;
+        }
+        finally {
+            if (element) {
+                await element.dispose();
             }
         }
     }
-    return { updatedSelector: selector, queryHandler: defaultHandler };
 }
-exports.getQueryHandlerAndSelector = getQueryHandlerAndSelector;
+exports.QueryHandler = QueryHandler;
 //# sourceMappingURL=QueryHandler.js.map
+
+/***/ }),
+
+/***/ 2379:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var _ScriptInjector_instances, _ScriptInjector_updated, _ScriptInjector_amendments, _ScriptInjector_update, _ScriptInjector_get;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.scriptInjector = void 0;
+const injected_js_1 = __nccwpck_require__(8153);
+class ScriptInjector {
+    constructor() {
+        _ScriptInjector_instances.add(this);
+        _ScriptInjector_updated.set(this, false);
+        _ScriptInjector_amendments.set(this, new Set());
+    }
+    // Appends a statement of the form `(PuppeteerUtil) => {...}`.
+    append(statement) {
+        __classPrivateFieldGet(this, _ScriptInjector_instances, "m", _ScriptInjector_update).call(this, () => {
+            __classPrivateFieldGet(this, _ScriptInjector_amendments, "f").add(statement);
+        });
+    }
+    pop(statement) {
+        __classPrivateFieldGet(this, _ScriptInjector_instances, "m", _ScriptInjector_update).call(this, () => {
+            __classPrivateFieldGet(this, _ScriptInjector_amendments, "f").delete(statement);
+        });
+    }
+    inject(inject, force = false) {
+        if (__classPrivateFieldGet(this, _ScriptInjector_updated, "f") || force) {
+            inject(__classPrivateFieldGet(this, _ScriptInjector_instances, "m", _ScriptInjector_get).call(this));
+        }
+        __classPrivateFieldSet(this, _ScriptInjector_updated, false, "f");
+    }
+}
+_ScriptInjector_updated = new WeakMap(), _ScriptInjector_amendments = new WeakMap(), _ScriptInjector_instances = new WeakSet(), _ScriptInjector_update = function _ScriptInjector_update(callback) {
+    callback();
+    __classPrivateFieldSet(this, _ScriptInjector_updated, true, "f");
+}, _ScriptInjector_get = function _ScriptInjector_get() {
+    return `(() => {
+      const module = {};
+      ${injected_js_1.source}
+      ${[...__classPrivateFieldGet(this, _ScriptInjector_amendments, "f")]
+        .map(statement => {
+        return `(${statement})(module.exports.default);`;
+    })
+        .join('')}
+      return module.exports.default;
+    })()`;
+};
+/**
+ * @internal
+ */
+exports.scriptInjector = new ScriptInjector();
+//# sourceMappingURL=ScriptInjector.js.map
 
 /***/ }),
 
@@ -43242,9 +45337,14 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _Target_browserContext, _Target_session, _Target_targetInfo, _Target_sessionFactory, _Target_ignoreHTTPSErrors, _Target_defaultViewport, _Target_pagePromise, _Target_workerPromise, _Target_screenshotTaskQueue, _Target_targetManager;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Target = void 0;
-const WebWorker_js_1 = __nccwpck_require__(4878);
 const Page_js_1 = __nccwpck_require__(8763);
+const WebWorker_js_1 = __nccwpck_require__(4878);
 /**
+ * Target represents a
+ * {@link https://chromedevtools.github.io/devtools-protocol/tot/Target/ | CDP target}.
+ * In CDP a target is something that can be debugged such a frame, a page or a
+ * worker.
+ *
  * @public
  */
 class Target {
@@ -43421,6 +45521,31 @@ _Target_browserContext = new WeakMap(), _Target_session = new WeakMap(), _Target
 
 /***/ }),
 
+/***/ 2364:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=TargetManager.js.map
+
+/***/ }),
+
 /***/ 2967:
 /***/ (function(__unused_webpack_module, exports) {
 
@@ -43476,6 +45601,42 @@ class TaskQueue {
 exports.TaskQueue = TaskQueue;
 _TaskQueue_chain = new WeakMap();
 //# sourceMappingURL=TaskQueue.js.map
+
+/***/ }),
+
+/***/ 9374:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TextQueryHandler = void 0;
+const QueryHandler_js_1 = __nccwpck_require__(3200);
+/**
+ * @internal
+ */
+class TextQueryHandler extends QueryHandler_js_1.QueryHandler {
+}
+exports.TextQueryHandler = TextQueryHandler;
+TextQueryHandler.querySelectorAll = (element, selector, { textQuerySelectorAll }) => {
+    return textQuerySelectorAll(element, selector);
+};
+//# sourceMappingURL=TextQueryHandler.js.map
 
 /***/ }),
 
@@ -43587,8 +45748,8 @@ exports.Tracing = void 0;
  * limitations under the License.
  */
 const assert_js_1 = __nccwpck_require__(7729);
-const util_js_1 = __nccwpck_require__(8274);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
+const util_js_1 = __nccwpck_require__(8274);
 /**
  * The Tracing class exposes the tracing audit interface.
  * @remarks
@@ -44143,19 +46304,19 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _WaitTask_world, _WaitTask_bindings, _WaitTask_polling, _WaitTask_root, _WaitTask_fn, _WaitTask_args, _WaitTask_timeout, _WaitTask_result, _WaitTask_poller, _TaskManager_tasks;
+var _WaitTask_world, _WaitTask_polling, _WaitTask_root, _WaitTask_fn, _WaitTask_args, _WaitTask_timeout, _WaitTask_result, _WaitTask_poller, _TaskManager_tasks;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TaskManager = exports.WaitTask = void 0;
 const DeferredPromise_js_1 = __nccwpck_require__(7015);
+const Function_js_1 = __nccwpck_require__(2329);
 const Errors_js_1 = __nccwpck_require__(6315);
+const LazyArg_js_1 = __nccwpck_require__(4897);
 /**
  * @internal
  */
 class WaitTask {
     constructor(world, options, fn, ...args) {
-        var _a;
         _WaitTask_world.set(this, void 0);
-        _WaitTask_bindings.set(this, void 0);
         _WaitTask_polling.set(this, void 0);
         _WaitTask_root.set(this, void 0);
         _WaitTask_fn.set(this, void 0);
@@ -44164,7 +46325,6 @@ class WaitTask {
         _WaitTask_result.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _WaitTask_poller.set(this, void 0);
         __classPrivateFieldSet(this, _WaitTask_world, world, "f");
-        __classPrivateFieldSet(this, _WaitTask_bindings, (_a = options.bindings) !== null && _a !== void 0 ? _a : new Map(), "f");
         __classPrivateFieldSet(this, _WaitTask_polling, options.polling, "f");
         __classPrivateFieldSet(this, _WaitTask_root, options.root, "f");
         switch (typeof fn) {
@@ -44172,7 +46332,7 @@ class WaitTask {
                 __classPrivateFieldSet(this, _WaitTask_fn, `() => {return (${fn});}`, "f");
                 break;
             default:
-                __classPrivateFieldSet(this, _WaitTask_fn, fn.toString(), "f");
+                __classPrivateFieldSet(this, _WaitTask_fn, (0, Function_js_1.stringifyFunction)(fn), "f");
                 break;
         }
         __classPrivateFieldSet(this, _WaitTask_args, args, "f");
@@ -44182,11 +46342,6 @@ class WaitTask {
                 this.terminate(new Errors_js_1.TimeoutError(`Waiting failed: ${options.timeout}ms exceeded`));
             }, options.timeout), "f");
         }
-        if (__classPrivateFieldGet(this, _WaitTask_bindings, "f").size !== 0) {
-            for (const [name, fn] of __classPrivateFieldGet(this, _WaitTask_bindings, "f")) {
-                __classPrivateFieldGet(this, _WaitTask_world, "f")._boundFunctions.set(name, fn);
-            }
-        }
         this.rerun();
     }
     get result() {
@@ -44194,12 +46349,6 @@ class WaitTask {
     }
     async rerun() {
         try {
-            if (__classPrivateFieldGet(this, _WaitTask_bindings, "f").size !== 0) {
-                const context = await __classPrivateFieldGet(this, _WaitTask_world, "f").executionContext();
-                await Promise.all([...__classPrivateFieldGet(this, _WaitTask_bindings, "f")].map(async ([name]) => {
-                    return await __classPrivateFieldGet(this, _WaitTask_world, "f")._addBindingToContext(context, name);
-                }));
-            }
             switch (__classPrivateFieldGet(this, _WaitTask_polling, "f")) {
                 case 'raf':
                     __classPrivateFieldSet(this, _WaitTask_poller, await __classPrivateFieldGet(this, _WaitTask_world, "f").evaluateHandle(({ RAFPoller, createFunction }, fn, ...args) => {
@@ -44207,7 +46356,9 @@ class WaitTask {
                         return new RAFPoller(() => {
                             return fun(...args);
                         });
-                    }, await __classPrivateFieldGet(this, _WaitTask_world, "f").puppeteerUtil, __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
+                    }, LazyArg_js_1.LazyArg.create(context => {
+                        return context.puppeteerUtil;
+                    }), __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
                     break;
                 case 'mutation':
                     __classPrivateFieldSet(this, _WaitTask_poller, await __classPrivateFieldGet(this, _WaitTask_world, "f").evaluateHandle(({ MutationPoller, createFunction }, root, fn, ...args) => {
@@ -44215,7 +46366,9 @@ class WaitTask {
                         return new MutationPoller(() => {
                             return fun(...args);
                         }, root || document);
-                    }, await __classPrivateFieldGet(this, _WaitTask_world, "f").puppeteerUtil, __classPrivateFieldGet(this, _WaitTask_root, "f"), __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
+                    }, LazyArg_js_1.LazyArg.create(context => {
+                        return context.puppeteerUtil;
+                    }), __classPrivateFieldGet(this, _WaitTask_root, "f"), __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
                     break;
                 default:
                     __classPrivateFieldSet(this, _WaitTask_poller, await __classPrivateFieldGet(this, _WaitTask_world, "f").evaluateHandle(({ IntervalPoller, createFunction }, ms, fn, ...args) => {
@@ -44223,7 +46376,9 @@ class WaitTask {
                         return new IntervalPoller(() => {
                             return fun(...args);
                         }, ms);
-                    }, await __classPrivateFieldGet(this, _WaitTask_world, "f").puppeteerUtil, __classPrivateFieldGet(this, _WaitTask_polling, "f"), __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
+                    }, LazyArg_js_1.LazyArg.create(context => {
+                        return context.puppeteerUtil;
+                    }), __classPrivateFieldGet(this, _WaitTask_polling, "f"), __classPrivateFieldGet(this, _WaitTask_fn, "f"), ...__classPrivateFieldGet(this, _WaitTask_args, "f")), "f");
                     break;
             }
             await __classPrivateFieldGet(this, _WaitTask_poller, "f").evaluate(poller => {
@@ -44291,7 +46446,7 @@ class WaitTask {
     }
 }
 exports.WaitTask = WaitTask;
-_WaitTask_world = new WeakMap(), _WaitTask_bindings = new WeakMap(), _WaitTask_polling = new WeakMap(), _WaitTask_root = new WeakMap(), _WaitTask_fn = new WeakMap(), _WaitTask_args = new WeakMap(), _WaitTask_timeout = new WeakMap(), _WaitTask_result = new WeakMap(), _WaitTask_poller = new WeakMap();
+_WaitTask_world = new WeakMap(), _WaitTask_polling = new WeakMap(), _WaitTask_root = new WeakMap(), _WaitTask_fn = new WeakMap(), _WaitTask_args = new WeakMap(), _WaitTask_timeout = new WeakMap(), _WaitTask_result = new WeakMap(), _WaitTask_poller = new WeakMap();
 /**
  * @internal
  */
@@ -44342,11 +46497,11 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _WebWorker_executionContext, _WebWorker_client, _WebWorker_url;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.WebWorker = void 0;
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 const ExecutionContext_js_1 = __nccwpck_require__(8272);
 const JSHandle_js_1 = __nccwpck_require__(2045);
 const util_js_1 = __nccwpck_require__(8274);
-const DeferredPromise_js_1 = __nccwpck_require__(7015);
 /**
  * This class represents a
  * {@link https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API | WebWorker}.
@@ -44391,7 +46546,7 @@ class WebWorker extends EventEmitter_js_1.EventEmitter {
         __classPrivateFieldGet(this, _WebWorker_client, "f").on('Runtime.consoleAPICalled', async (event) => {
             const context = await __classPrivateFieldGet(this, _WebWorker_executionContext, "f");
             return consoleAPICalled(event.type, event.args.map((object) => {
-                return new JSHandle_js_1.JSHandle(context, object);
+                return new JSHandle_js_1.CDPJSHandle(context, object);
             }), event.stackTrace);
         });
         __classPrivateFieldGet(this, _WebWorker_client, "f").on('Runtime.exceptionThrown', exception => {
@@ -44453,6 +46608,218 @@ _WebWorker_executionContext = new WeakMap(), _WebWorker_client = new WeakMap(), 
 
 /***/ }),
 
+/***/ 2578:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.XPathQueryHandler = void 0;
+const QueryHandler_js_1 = __nccwpck_require__(3200);
+/**
+ * @internal
+ */
+class XPathQueryHandler extends QueryHandler_js_1.QueryHandler {
+}
+exports.XPathQueryHandler = XPathQueryHandler;
+XPathQueryHandler.querySelectorAll = (element, selector, { xpathQuerySelectorAll }) => {
+    return xpathQuerySelectorAll(element, selector);
+};
+//# sourceMappingURL=XPathQueryHandler.js.map
+
+/***/ }),
+
+/***/ 2698:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _CDPConnectionAdapter_cdp, _CDPConnectionAdapter_adapters, _CDPConnectionAdapter_browser, _CDPClientAdapter_closed, _CDPClientAdapter_client, _CDPClientAdapter_forwardMessage, _NoOpTransport_onMessage;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.connectBidiOverCDP = void 0;
+const BidiMapper = __importStar(__nccwpck_require__(1796));
+const Connection_js_1 = __nccwpck_require__(5916);
+/**
+ * @internal
+ */
+async function connectBidiOverCDP(cdp) {
+    const transportBiDi = new NoOpTransport();
+    const cdpConnectionAdapter = new CDPConnectionAdapter(cdp);
+    const pptrTransport = {
+        send(message) {
+            // Forwards a BiDi command sent by Puppeteer to the input of the BidiServer.
+            transportBiDi.emitMessage(JSON.parse(message));
+        },
+        close() {
+            bidiServer.close();
+            cdpConnectionAdapter.close();
+        },
+        onmessage(_message) {
+            // The method is overridden by the Connection.
+        },
+    };
+    transportBiDi.on('bidiResponse', (message) => {
+        // Forwards a BiDi event sent by BidiServer to Puppeteer.
+        pptrTransport.onmessage(JSON.stringify(message));
+    });
+    const pptrBiDiConnection = new Connection_js_1.Connection(pptrTransport);
+    const bidiServer = await BidiMapper.BidiServer.createAndStart(transportBiDi, cdpConnectionAdapter, '');
+    return pptrBiDiConnection;
+}
+exports.connectBidiOverCDP = connectBidiOverCDP;
+/**
+ * Manages CDPSessions for BidiServer.
+ * @internal
+ */
+class CDPConnectionAdapter {
+    constructor(cdp) {
+        _CDPConnectionAdapter_cdp.set(this, void 0);
+        _CDPConnectionAdapter_adapters.set(this, new Map());
+        _CDPConnectionAdapter_browser.set(this, void 0);
+        __classPrivateFieldSet(this, _CDPConnectionAdapter_cdp, cdp, "f");
+        __classPrivateFieldSet(this, _CDPConnectionAdapter_browser, new CDPClientAdapter(cdp), "f");
+    }
+    browserClient() {
+        return __classPrivateFieldGet(this, _CDPConnectionAdapter_browser, "f");
+    }
+    getCdpClient(id) {
+        const session = __classPrivateFieldGet(this, _CDPConnectionAdapter_cdp, "f").session(id);
+        if (!session) {
+            throw new Error('Unknown CDP session with id' + id);
+        }
+        if (!__classPrivateFieldGet(this, _CDPConnectionAdapter_adapters, "f").has(session)) {
+            const adapter = new CDPClientAdapter(session);
+            __classPrivateFieldGet(this, _CDPConnectionAdapter_adapters, "f").set(session, adapter);
+            return adapter;
+        }
+        return __classPrivateFieldGet(this, _CDPConnectionAdapter_adapters, "f").get(session);
+    }
+    close() {
+        __classPrivateFieldGet(this, _CDPConnectionAdapter_browser, "f").close();
+        for (const adapter of __classPrivateFieldGet(this, _CDPConnectionAdapter_adapters, "f").values()) {
+            adapter.close();
+        }
+    }
+}
+_CDPConnectionAdapter_cdp = new WeakMap(), _CDPConnectionAdapter_adapters = new WeakMap(), _CDPConnectionAdapter_browser = new WeakMap();
+/**
+ * Wrapper on top of CDPSession/CDPConnection to satisfy CDP interface that
+ * BidiServer needs.
+ *
+ * @internal
+ */
+class CDPClientAdapter extends BidiMapper.EventEmitter {
+    constructor(client) {
+        super();
+        _CDPClientAdapter_closed.set(this, false);
+        _CDPClientAdapter_client.set(this, void 0);
+        _CDPClientAdapter_forwardMessage.set(this, (method, event) => {
+            this.emit(method, event);
+        });
+        __classPrivateFieldSet(this, _CDPClientAdapter_client, client, "f");
+        __classPrivateFieldGet(this, _CDPClientAdapter_client, "f").on('*', __classPrivateFieldGet(this, _CDPClientAdapter_forwardMessage, "f"));
+    }
+    async sendCommand(method, ...params) {
+        if (__classPrivateFieldGet(this, _CDPClientAdapter_closed, "f")) {
+            return;
+        }
+        try {
+            return await __classPrivateFieldGet(this, _CDPClientAdapter_client, "f").send(method, ...params);
+        }
+        catch (err) {
+            if (__classPrivateFieldGet(this, _CDPClientAdapter_closed, "f")) {
+                return;
+            }
+            throw err;
+        }
+    }
+    close() {
+        __classPrivateFieldGet(this, _CDPClientAdapter_client, "f").off('*', __classPrivateFieldGet(this, _CDPClientAdapter_forwardMessage, "f"));
+        __classPrivateFieldSet(this, _CDPClientAdapter_closed, true, "f");
+    }
+}
+_CDPClientAdapter_closed = new WeakMap(), _CDPClientAdapter_client = new WeakMap(), _CDPClientAdapter_forwardMessage = new WeakMap();
+/**
+ * This transport is given to the BiDi server instance and allows Puppeteer
+ * to send and receive commands to the BiDiServer.
+ * @internal
+ */
+class NoOpTransport extends BidiMapper.EventEmitter {
+    constructor() {
+        super(...arguments);
+        _NoOpTransport_onMessage.set(this, async (_m) => {
+            return;
+        });
+    }
+    emitMessage(message) {
+        __classPrivateFieldGet(this, _NoOpTransport_onMessage, "f").call(this, message);
+    }
+    setOnMessage(onMessage) {
+        __classPrivateFieldSet(this, _NoOpTransport_onMessage, onMessage, "f");
+    }
+    async sendMessage(message) {
+        this.emit('bidiResponse', message);
+    }
+    close() {
+        __classPrivateFieldSet(this, _NoOpTransport_onMessage, async (_m) => {
+            return;
+        }, "f");
+    }
+}
+_NoOpTransport_onMessage = new WeakMap();
+//# sourceMappingURL=BidiOverCDP.js.map
+
+/***/ }),
+
 /***/ 6070:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -44496,6 +46863,17 @@ class Browser extends Browser_js_1.Browser {
     /**
      * @internal
      */
+    static async create(opts) {
+        // TODO: await until the connection is established.
+        try {
+            await opts.connection.send('session.new', {});
+        }
+        catch { }
+        return new Browser(opts);
+    }
+    /**
+     * @internal
+     */
     constructor(opts) {
         super();
         _Browser_process.set(this, void 0);
@@ -44505,18 +46883,10 @@ class Browser extends Browser_js_1.Browser {
         __classPrivateFieldSet(this, _Browser_closeCallback, opts.closeCallback, "f");
         __classPrivateFieldSet(this, _Browser_connection, opts.connection, "f");
     }
-    /**
-     * @internal
-     */
-    static async create(opts) {
-        // TODO: await until the connection is established.
-        (await opts.connection.send('session.new', {}));
-        return new Browser(opts);
-    }
     async close() {
         var _a;
-        await ((_a = __classPrivateFieldGet(this, _Browser_closeCallback, "f")) === null || _a === void 0 ? void 0 : _a.call(null));
         __classPrivateFieldGet(this, _Browser_connection, "f").dispose();
+        await ((_a = __classPrivateFieldGet(this, _Browser_closeCallback, "f")) === null || _a === void 0 ? void 0 : _a.call(null));
     }
     isConnected() {
         return !__classPrivateFieldGet(this, _Browser_connection, "f").closed;
@@ -44569,22 +46939,22 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _BrowserContext_connection;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BrowserContext = void 0;
-const Browser_js_1 = __nccwpck_require__(3469);
+const BrowserContext_js_1 = __nccwpck_require__(2185);
 const Page_js_1 = __nccwpck_require__(2951);
 /**
  * @internal
  */
-class BrowserContext extends Browser_js_1.BrowserContext {
+class BrowserContext extends BrowserContext_js_1.BrowserContext {
     constructor(connection) {
         super();
         _BrowserContext_connection.set(this, void 0);
         __classPrivateFieldSet(this, _BrowserContext_connection, connection, "f");
     }
     async newPage() {
-        const result = (await __classPrivateFieldGet(this, _BrowserContext_connection, "f").send('browsingContext.create', {
+        const response = await __classPrivateFieldGet(this, _BrowserContext_connection, "f").send('browsingContext.create', {
             type: 'tab',
-        }));
-        return new Page_js_1.Page(__classPrivateFieldGet(this, _BrowserContext_connection, "f"), result.context);
+        });
+        return new Page_js_1.Page(__classPrivateFieldGet(this, _BrowserContext_connection, "f"), response.result.context);
     }
     async close() { }
 }
@@ -44628,11 +46998,12 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var _Connection_instances, _Connection_transport, _Connection_delay, _Connection_lastId, _Connection_closed, _Connection_callbacks, _Connection_onClose;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Connection = void 0;
+/* eslint-disable import/order */
 const Debug_js_1 = __nccwpck_require__(4090);
 const debugProtocolSend = (0, Debug_js_1.debug)('puppeteer:webDriverBiDi:SEND ►');
 const debugProtocolReceive = (0, Debug_js_1.debug)('puppeteer:webDriverBiDi:RECV ◀');
-const EventEmitter_js_1 = __nccwpck_require__(7692);
 const Errors_js_1 = __nccwpck_require__(6315);
+const EventEmitter_js_1 = __nccwpck_require__(7692);
 /**
  * @internal
  */
@@ -44692,7 +47063,7 @@ class Connection extends EventEmitter_js_1.EventEmitter {
                     callback.reject(createProtocolError(callback.error, callback.method, object));
                 }
                 else {
-                    callback.resolve(object.result);
+                    callback.resolve(object);
                 }
             }
         }
@@ -44723,6 +47094,9 @@ function rewriteError(error, message, originalMessage) {
     error.originalMessage = originalMessage !== null && originalMessage !== void 0 ? originalMessage : error.originalMessage;
     return error;
 }
+/**
+ * @internal
+ */
 function createProtocolError(error, method, object) {
     let message = `Protocol error (${method}): ${object.error} ${object.message}`;
     if (object.stacktrace) {
@@ -44731,6 +47105,141 @@ function createProtocolError(error, method, object) {
     return rewriteError(error, message, object.message);
 }
 //# sourceMappingURL=Connection.js.map
+
+/***/ }),
+
+/***/ 436:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _JSHandle_disposed, _JSHandle_context, _JSHandle_remoteValue;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.JSHandle = void 0;
+const JSHandle_js_1 = __nccwpck_require__(882);
+const Serializer_js_1 = __nccwpck_require__(3928);
+const utils_js_1 = __nccwpck_require__(6633);
+class JSHandle extends JSHandle_js_1.JSHandle {
+    constructor(context, remoteValue) {
+        super();
+        _JSHandle_disposed.set(this, false);
+        _JSHandle_context.set(this, void 0);
+        _JSHandle_remoteValue.set(this, void 0);
+        __classPrivateFieldSet(this, _JSHandle_context, context, "f");
+        __classPrivateFieldSet(this, _JSHandle_remoteValue, remoteValue, "f");
+    }
+    context() {
+        return __classPrivateFieldGet(this, _JSHandle_context, "f");
+    }
+    get connecton() {
+        return __classPrivateFieldGet(this, _JSHandle_context, "f").connection;
+    }
+    get disposed() {
+        return __classPrivateFieldGet(this, _JSHandle_disposed, "f");
+    }
+    async evaluate(pageFunction, ...args) {
+        return await this.context().evaluate(pageFunction, this, ...args);
+    }
+    async evaluateHandle(pageFunction, ...args) {
+        return await this.context().evaluateHandle(pageFunction, this, ...args);
+    }
+    async getProperty(propertyName) {
+        return await this.evaluateHandle((object, propertyName) => {
+            return object[propertyName];
+        }, propertyName);
+    }
+    async getProperties() {
+        // TODO(lightning00blade): Either include return of depth Handles in RemoteValue
+        // or new BiDi command that returns array of remote value
+        const keys = await this.evaluate(object => {
+            return Object.getOwnPropertyNames(object);
+        });
+        const map = new Map();
+        const results = await Promise.all(keys.map(key => {
+            return this.getProperty(key);
+        }));
+        for (const [key, value] of Object.entries(keys)) {
+            const handle = results[key];
+            if (handle) {
+                map.set(value, handle);
+            }
+        }
+        return map;
+    }
+    async jsonValue() {
+        const value = Serializer_js_1.BidiSerializer.deserialize(__classPrivateFieldGet(this, _JSHandle_remoteValue, "f"));
+        if (__classPrivateFieldGet(this, _JSHandle_remoteValue, "f").type !== 'undefined' && value === undefined) {
+            throw new Error('Could not serialize referenced object');
+        }
+        return value;
+    }
+    asElement() {
+        return null;
+    }
+    async dispose() {
+        if (__classPrivateFieldGet(this, _JSHandle_disposed, "f")) {
+            return;
+        }
+        __classPrivateFieldSet(this, _JSHandle_disposed, true, "f");
+        if ('handle' in __classPrivateFieldGet(this, _JSHandle_remoteValue, "f")) {
+            await (0, utils_js_1.releaseReference)(this.connecton, __classPrivateFieldGet(this, _JSHandle_remoteValue, "f"));
+        }
+    }
+    get isPrimitiveValue() {
+        switch (__classPrivateFieldGet(this, _JSHandle_remoteValue, "f").type) {
+            case 'string':
+            case 'number':
+            case 'bigint':
+            case 'boolean':
+            case 'undefined':
+            case 'null':
+                return true;
+            default:
+                return false;
+        }
+    }
+    toString() {
+        if (this.isPrimitiveValue) {
+            return 'JSHandle:' + Serializer_js_1.BidiSerializer.deserialize(__classPrivateFieldGet(this, _JSHandle_remoteValue, "f"));
+        }
+        return 'JSHandle@' + __classPrivateFieldGet(this, _JSHandle_remoteValue, "f").type;
+    }
+    get id() {
+        return 'handle' in __classPrivateFieldGet(this, _JSHandle_remoteValue, "f") ? __classPrivateFieldGet(this, _JSHandle_remoteValue, "f").handle : undefined;
+    }
+    bidiObject() {
+        return __classPrivateFieldGet(this, _JSHandle_remoteValue, "f");
+    }
+}
+exports.JSHandle = JSHandle;
+_JSHandle_disposed = new WeakMap(), _JSHandle_context = new WeakMap(), _JSHandle_remoteValue = new WeakMap();
+//# sourceMappingURL=JSHandle.js.map
 
 /***/ }),
 
@@ -44765,40 +47274,555 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _Page_connection, _Page_contextId;
+var _Page_instances, _Page_connection, _Page_subscribedEvents, _Page_onLogEntryAdded, _Page_evaluate;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Page = void 0;
+exports.getBidiHandle = exports.Page = void 0;
 const Page_js_1 = __nccwpck_require__(2194);
+const Function_js_1 = __nccwpck_require__(2329);
+const ConsoleMessage_js_1 = __nccwpck_require__(1167);
+const util_js_1 = __nccwpck_require__(8274);
+const JSHandle_js_1 = __nccwpck_require__(436);
+const Serializer_js_1 = __nccwpck_require__(3928);
 /**
  * @internal
  */
 class Page extends Page_js_1.Page {
     constructor(connection, contextId) {
         super();
+        _Page_instances.add(this);
         _Page_connection.set(this, void 0);
-        _Page_contextId.set(this, void 0);
+        _Page_subscribedEvents.set(this, [
+            'log.entryAdded',
+        ]);
         __classPrivateFieldSet(this, _Page_connection, connection, "f");
-        __classPrivateFieldSet(this, _Page_contextId, contextId, "f");
+        this._contextId = contextId;
+        // TODO: Investigate an implementation similar to CDPSession
+        this.connection.send('session.subscribe', {
+            events: __classPrivateFieldGet(this, _Page_subscribedEvents, "f"),
+            contexts: [this._contextId],
+        });
+        this.connection.on('log.entryAdded', __classPrivateFieldGet(this, _Page_instances, "m", _Page_onLogEntryAdded).bind(this));
     }
     async close() {
         await __classPrivateFieldGet(this, _Page_connection, "f").send('browsingContext.close', {
-            context: __classPrivateFieldGet(this, _Page_contextId, "f"),
+            context: this._contextId,
         });
+        this.connection.send('session.unsubscribe', {
+            events: __classPrivateFieldGet(this, _Page_subscribedEvents, "f"),
+            contexts: [this._contextId],
+        });
+        this.connection.off('log.entryAdded', __classPrivateFieldGet(this, _Page_instances, "m", _Page_onLogEntryAdded).bind(this));
     }
-    async evaluate(pageFunction, ..._args) {
-        // TODO: re-use evaluate logic from Execution context.
-        const str = `(${pageFunction.toString()})()`;
-        const result = (await __classPrivateFieldGet(this, _Page_connection, "f").send('script.evaluate', {
-            expression: str,
-            target: { context: __classPrivateFieldGet(this, _Page_contextId, "f") },
-            awaitPromise: true,
-        }));
-        return result.result.value;
+    get connection() {
+        return __classPrivateFieldGet(this, _Page_connection, "f");
+    }
+    async evaluateHandle(pageFunction, ...args) {
+        return __classPrivateFieldGet(this, _Page_instances, "m", _Page_evaluate).call(this, false, pageFunction, ...args);
+    }
+    async evaluate(pageFunction, ...args) {
+        return __classPrivateFieldGet(this, _Page_instances, "m", _Page_evaluate).call(this, true, pageFunction, ...args);
     }
 }
 exports.Page = Page;
-_Page_connection = new WeakMap(), _Page_contextId = new WeakMap();
+_Page_connection = new WeakMap(), _Page_subscribedEvents = new WeakMap(), _Page_instances = new WeakSet(), _Page_onLogEntryAdded = function _Page_onLogEntryAdded(event) {
+    var _a;
+    if (isConsoleLogEntry(event)) {
+        const args = event.args.map(arg => {
+            return getBidiHandle(this, arg);
+        });
+        const text = args
+            .reduce((value, arg) => {
+            const parsedValue = arg.isPrimitiveValue
+                ? Serializer_js_1.BidiSerializer.deserialize(arg.bidiObject())
+                : arg.toString();
+            return `${value} ${parsedValue}`;
+        }, '')
+            .slice(1);
+        this.emit("console" /* PageEmittedEvents.Console */, new ConsoleMessage_js_1.ConsoleMessage(event.method, text, args, getStackTraceLocations(event.stackTrace)));
+    }
+    else if (isJavaScriptLogEntry(event)) {
+        this.emit("console" /* PageEmittedEvents.Console */, new ConsoleMessage_js_1.ConsoleMessage(event.level, (_a = event.text) !== null && _a !== void 0 ? _a : '', [], getStackTraceLocations(event.stackTrace)));
+    }
+}, _Page_evaluate = async function _Page_evaluate(returnByValue, pageFunction, ...args) {
+    let responsePromise;
+    const resultOwnership = returnByValue ? 'none' : 'root';
+    if ((0, util_js_1.isString)(pageFunction)) {
+        responsePromise = __classPrivateFieldGet(this, _Page_connection, "f").send('script.evaluate', {
+            expression: pageFunction,
+            target: { context: this._contextId },
+            resultOwnership,
+            awaitPromise: true,
+        });
+    }
+    else {
+        responsePromise = __classPrivateFieldGet(this, _Page_connection, "f").send('script.callFunction', {
+            functionDeclaration: (0, Function_js_1.stringifyFunction)(pageFunction),
+            arguments: await Promise.all(args.map(arg => {
+                return Serializer_js_1.BidiSerializer.serialize(arg, this);
+            })),
+            target: { context: this._contextId },
+            resultOwnership,
+            awaitPromise: true,
+        });
+    }
+    const { result } = await responsePromise;
+    if ('type' in result && result.type === 'exception') {
+        throw new Error(result.exceptionDetails.text);
+    }
+    return returnByValue
+        ? Serializer_js_1.BidiSerializer.deserialize(result.result)
+        : getBidiHandle(this, result.result);
+};
+/**
+ * @internal
+ */
+function getBidiHandle(context, result) {
+    if ((result.type === 'node' || result.type === 'window') &&
+        context._contextId) {
+        // TODO: Implement ElementHandle
+        return new JSHandle_js_1.JSHandle(context, result);
+    }
+    return new JSHandle_js_1.JSHandle(context, result);
+}
+exports.getBidiHandle = getBidiHandle;
+function isConsoleLogEntry(event) {
+    return event.type === 'console';
+}
+function isJavaScriptLogEntry(event) {
+    return event.type === 'javascript';
+}
+function getStackTraceLocations(stackTrace) {
+    const stackTraceLocations = [];
+    if (stackTrace) {
+        for (const callFrame of stackTrace.callFrames) {
+            stackTraceLocations.push({
+                url: callFrame.url,
+                lineNumber: callFrame.lineNumber,
+                columnNumber: callFrame.columnNumber,
+            });
+        }
+    }
+    return stackTraceLocations;
+}
 //# sourceMappingURL=Page.js.map
+
+/***/ }),
+
+/***/ 3928:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BidiSerializer = void 0;
+const util_js_1 = __nccwpck_require__(8274);
+const JSHandle_js_1 = __nccwpck_require__(436);
+/**
+ * @internal
+ */
+class UnserializableError extends Error {
+}
+/**
+ * @internal
+ */
+class BidiSerializer {
+    static serializeNumber(arg) {
+        let value;
+        if (Object.is(arg, -0)) {
+            value = '-0';
+        }
+        else if (Object.is(arg, Infinity)) {
+            value = 'Infinity';
+        }
+        else if (Object.is(arg, -Infinity)) {
+            value = '-Infinity';
+        }
+        else if (Object.is(arg, NaN)) {
+            value = 'NaN';
+        }
+        else {
+            value = arg;
+        }
+        return {
+            type: 'number',
+            value,
+        };
+    }
+    static serializeObject(arg) {
+        if (arg === null) {
+            return {
+                type: 'null',
+            };
+        }
+        else if (Array.isArray(arg)) {
+            const parsedArray = arg.map(subArg => {
+                return BidiSerializer.serializeRemoveValue(subArg);
+            });
+            return {
+                type: 'array',
+                value: parsedArray,
+            };
+        }
+        else if ((0, util_js_1.isPlainObject)(arg)) {
+            try {
+                JSON.stringify(arg);
+            }
+            catch (error) {
+                if (error instanceof TypeError &&
+                    error.message.startsWith('Converting circular structure to JSON')) {
+                    error.message += ' Recursive objects are not allowed.';
+                }
+                throw error;
+            }
+            const parsedObject = [];
+            for (const key in arg) {
+                parsedObject.push([
+                    BidiSerializer.serializeRemoveValue(key),
+                    BidiSerializer.serializeRemoveValue(arg[key]),
+                ]);
+            }
+            return {
+                type: 'object',
+                value: parsedObject,
+            };
+        }
+        else if ((0, util_js_1.isRegExp)(arg)) {
+            return {
+                type: 'regexp',
+                value: {
+                    pattern: arg.source,
+                    flags: arg.flags,
+                },
+            };
+        }
+        else if ((0, util_js_1.isDate)(arg)) {
+            return {
+                type: 'date',
+                value: arg.toISOString(),
+            };
+        }
+        throw new UnserializableError('Custom object sterilization not possible. Use plain objects instead.');
+    }
+    static serializeRemoveValue(arg) {
+        switch (typeof arg) {
+            case 'symbol':
+            case 'function':
+                throw new UnserializableError(`Unable to serializable ${typeof arg}`);
+            case 'object':
+                return BidiSerializer.serializeObject(arg);
+            case 'undefined':
+                return {
+                    type: 'undefined',
+                };
+            case 'number':
+                return BidiSerializer.serializeNumber(arg);
+            case 'bigint':
+                return {
+                    type: 'bigint',
+                    value: arg.toString(),
+                };
+            case 'string':
+                return {
+                    type: 'string',
+                    value: arg,
+                };
+            case 'boolean':
+                return {
+                    type: 'boolean',
+                    value: arg,
+                };
+        }
+    }
+    static serialize(arg, context) {
+        // TODO: See use case of LazyArgs
+        const objectHandle = arg && arg instanceof JSHandle_js_1.JSHandle ? arg : null;
+        if (objectHandle) {
+            if (objectHandle.context() !== context) {
+                throw new Error('JSHandles can be evaluated only in the context they were created!');
+            }
+            if (objectHandle.disposed) {
+                throw new Error('JSHandle is disposed!');
+            }
+            return objectHandle.bidiObject();
+        }
+        return BidiSerializer.serializeRemoveValue(arg);
+    }
+    static deserializeNumber(value) {
+        switch (value) {
+            case '-0':
+                return -0;
+            case 'NaN':
+                return NaN;
+            case 'Infinity':
+            case '+Infinity':
+                return Infinity;
+            case '-Infinity':
+                return -Infinity;
+            default:
+                return value;
+        }
+    }
+    static deserializeLocalValue(result) {
+        var _a;
+        switch (result.type) {
+            case 'array':
+                // TODO: Check expected output when value is undefined
+                return (_a = result.value) === null || _a === void 0 ? void 0 : _a.map(value => {
+                    return BidiSerializer.deserializeLocalValue(value);
+                });
+            case 'set':
+                // TODO: Check expected output when value is undefined
+                return result.value.reduce((acc, value) => {
+                    return acc.add(BidiSerializer.deserializeLocalValue(value));
+                }, new Set());
+            case 'object':
+                if (result.value) {
+                    return result.value.reduce((acc, tuple) => {
+                        const { key, value } = BidiSerializer.deserializeTuple(tuple);
+                        acc[key] = value;
+                        return acc;
+                    }, {});
+                }
+                break;
+            case 'map':
+                return result.value.reduce((acc, tuple) => {
+                    const { key, value } = BidiSerializer.deserializeTuple(tuple);
+                    return acc.set(key, value);
+                }, new Map());
+            case 'promise':
+                return {};
+            case 'regexp':
+                return new RegExp(result.value.pattern, result.value.flags);
+            case 'date':
+                return new Date(result.value);
+            case 'undefined':
+                return undefined;
+            case 'null':
+                return null;
+            case 'number':
+                return BidiSerializer.deserializeNumber(result.value);
+            case 'bigint':
+                return BigInt(result.value);
+            case 'boolean':
+                return Boolean(result.value);
+            case 'string':
+                return result.value;
+        }
+        throw new UnserializableError(`Deserialization of type ${result.type} not supported.`);
+    }
+    static deserializeTuple([serializedKey, serializedValue]) {
+        const key = typeof serializedKey === 'string'
+            ? serializedKey
+            : BidiSerializer.deserializeLocalValue(serializedKey);
+        const value = BidiSerializer.deserializeLocalValue(serializedValue);
+        return { key, value };
+    }
+    static deserialize(result) {
+        if (!result) {
+            (0, util_js_1.debugError)('Service did not produce a result.');
+            return undefined;
+        }
+        try {
+            return BidiSerializer.deserializeLocalValue(result);
+        }
+        catch (error) {
+            if (error instanceof UnserializableError) {
+                (0, util_js_1.debugError)(error.message);
+                return undefined;
+            }
+            throw error;
+        }
+    }
+}
+exports.BidiSerializer = BidiSerializer;
+//# sourceMappingURL=Serializer.js.map
+
+/***/ }),
+
+/***/ 845:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+__exportStar(__nccwpck_require__(6070), exports);
+__exportStar(__nccwpck_require__(5135), exports);
+__exportStar(__nccwpck_require__(2951), exports);
+__exportStar(__nccwpck_require__(5916), exports);
+__exportStar(__nccwpck_require__(2698), exports);
+//# sourceMappingURL=bidi.js.map
+
+/***/ }),
+
+/***/ 6633:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.releaseReference = exports.debugError = void 0;
+const Debug_js_1 = __nccwpck_require__(4090);
+/**
+ * @internal
+ */
+exports.debugError = (0, Debug_js_1.debug)('puppeteer:error');
+/**
+ * @internal
+ */
+async function releaseReference(client, remoteReference) {
+    if (!remoteReference.handle) {
+        return;
+    }
+    await client
+        .send('script.disown', {
+        target: { realm: '', context: '' },
+        handles: [remoteReference.handle],
+    })
+        .catch((error) => {
+        // Exceptions might happen in case of a page been navigated or closed.
+        // Swallow these since they are harmless and we don't leak anything in this case.
+        (0, exports.debugError)(error);
+    });
+}
+exports.releaseReference = releaseReference;
+//# sourceMappingURL=utils.js.map
+
+/***/ }),
+
+/***/ 3031:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+__exportStar(__nccwpck_require__(7473), exports);
+__exportStar(__nccwpck_require__(3082), exports);
+__exportStar(__nccwpck_require__(2087), exports);
+__exportStar(__nccwpck_require__(1365), exports);
+__exportStar(__nccwpck_require__(7795), exports);
+__exportStar(__nccwpck_require__(2264), exports);
+__exportStar(__nccwpck_require__(3110), exports);
+__exportStar(__nccwpck_require__(370), exports);
+__exportStar(__nccwpck_require__(1153), exports);
+__exportStar(__nccwpck_require__(1167), exports);
+__exportStar(__nccwpck_require__(9321), exports);
+__exportStar(__nccwpck_require__(5057), exports);
+__exportStar(__nccwpck_require__(4090), exports);
+__exportStar(__nccwpck_require__(1626), exports);
+__exportStar(__nccwpck_require__(7859), exports);
+__exportStar(__nccwpck_require__(865), exports);
+__exportStar(__nccwpck_require__(8392), exports);
+__exportStar(__nccwpck_require__(6315), exports);
+__exportStar(__nccwpck_require__(7692), exports);
+__exportStar(__nccwpck_require__(8272), exports);
+__exportStar(__nccwpck_require__(9831), exports);
+__exportStar(__nccwpck_require__(8450), exports);
+__exportStar(__nccwpck_require__(9806), exports);
+__exportStar(__nccwpck_require__(1106), exports);
+__exportStar(__nccwpck_require__(490), exports);
+__exportStar(__nccwpck_require__(3751), exports);
+__exportStar(__nccwpck_require__(3780), exports);
+__exportStar(__nccwpck_require__(4410), exports);
+__exportStar(__nccwpck_require__(7773), exports);
+__exportStar(__nccwpck_require__(5651), exports);
+__exportStar(__nccwpck_require__(2296), exports);
+__exportStar(__nccwpck_require__(2045), exports);
+__exportStar(__nccwpck_require__(4897), exports);
+__exportStar(__nccwpck_require__(2169), exports);
+__exportStar(__nccwpck_require__(9739), exports);
+__exportStar(__nccwpck_require__(5381), exports);
+__exportStar(__nccwpck_require__(4098), exports);
+__exportStar(__nccwpck_require__(8763), exports);
+__exportStar(__nccwpck_require__(4302), exports);
+__exportStar(__nccwpck_require__(3768), exports);
+__exportStar(__nccwpck_require__(7023), exports);
+__exportStar(__nccwpck_require__(8435), exports);
+__exportStar(__nccwpck_require__(4291), exports);
+__exportStar(__nccwpck_require__(8762), exports);
+__exportStar(__nccwpck_require__(7005), exports);
+__exportStar(__nccwpck_require__(2364), exports);
+__exportStar(__nccwpck_require__(2967), exports);
+__exportStar(__nccwpck_require__(7258), exports);
+__exportStar(__nccwpck_require__(5321), exports);
+__exportStar(__nccwpck_require__(6828), exports);
+__exportStar(__nccwpck_require__(9931), exports);
+__exportStar(__nccwpck_require__(8274), exports);
+__exportStar(__nccwpck_require__(806), exports);
+__exportStar(__nccwpck_require__(4878), exports);
+//# sourceMappingURL=common.js.map
 
 /***/ }),
 
@@ -44860,6 +47884,31 @@ exports.getFetch = getFetch;
 
 /***/ }),
 
+/***/ 6828:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2020 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=types.js.map
+
+/***/ }),
+
 /***/ 8274:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -44904,7 +47953,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getReadableFromProtocolStream = exports.getReadableAsBuffer = exports.importFS = exports.waitWithTimeout = exports.pageBindingDeliverErrorValueString = exports.pageBindingDeliverErrorString = exports.pageBindingDeliverResultString = exports.pageBindingInitString = exports.evaluationString = exports.createJSHandle = exports.waitForEvent = exports.isNumber = exports.isString = exports.removeEventListeners = exports.addEventListener = exports.releaseObject = exports.valueFromRemoteObject = exports.getExceptionMessage = exports.debugError = void 0;
+exports.getReadableFromProtocolStream = exports.getReadableAsBuffer = exports.importFS = exports.waitWithTimeout = exports.pageBindingInitString = exports.addPageBinding = exports.evaluationString = exports.createJSHandle = exports.waitForEvent = exports.isDate = exports.isRegExp = exports.isPlainObject = exports.isNumber = exports.isString = exports.removeEventListeners = exports.addEventListener = exports.releaseObject = exports.valueFromRemoteObject = exports.getExceptionMessage = exports.debugError = void 0;
 const environment_js_1 = __nccwpck_require__(1577);
 const assert_js_1 = __nccwpck_require__(7729);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
@@ -45015,6 +48064,27 @@ exports.isNumber = isNumber;
 /**
  * @internal
  */
+const isPlainObject = (obj) => {
+    return typeof obj === 'object' && (obj === null || obj === void 0 ? void 0 : obj.constructor) === Object;
+};
+exports.isPlainObject = isPlainObject;
+/**
+ * @internal
+ */
+const isRegExp = (obj) => {
+    return typeof obj === 'object' && (obj === null || obj === void 0 ? void 0 : obj.constructor) === RegExp;
+};
+exports.isRegExp = isRegExp;
+/**
+ * @internal
+ */
+const isDate = (obj) => {
+    return typeof obj === 'object' && (obj === null || obj === void 0 ? void 0 : obj.constructor) === Date;
+};
+exports.isDate = isDate;
+/**
+ * @internal
+ */
 async function waitForEvent(emitter, eventName, predicate, timeout, abortPromise) {
     let eventTimeout;
     let resolveCallback;
@@ -45056,9 +48126,9 @@ exports.waitForEvent = waitForEvent;
  */
 function createJSHandle(context, remoteObject) {
     if (remoteObject.subtype === 'node' && context._world) {
-        return new ElementHandle_js_1.ElementHandle(context, remoteObject, context._world.frame());
+        return new ElementHandle_js_1.CDPElementHandle(context, remoteObject, context._world.frame());
     }
-    return new JSHandle_js_1.JSHandle(context, remoteObject);
+    return new JSHandle_js_1.CDPJSHandle(context, remoteObject);
 }
 exports.createJSHandle = createJSHandle;
 /**
@@ -45081,66 +48151,54 @@ exports.evaluationString = evaluationString;
 /**
  * @internal
  */
-function pageBindingInitString(type, name) {
-    function addPageBinding(type, name) {
-        // This is the CDP binding.
-        // @ts-expect-error: In a different context.
-        const callCDP = self[name];
-        // We replace the CDP binding with a Puppeteer binding.
-        Object.assign(self, {
-            [name](...args) {
-                var _a, _b;
-                // This is the Puppeteer binding.
-                // @ts-expect-error: In a different context.
-                const callPuppeteer = self[name];
-                (_a = callPuppeteer.callbacks) !== null && _a !== void 0 ? _a : (callPuppeteer.callbacks = new Map());
-                const seq = ((_b = callPuppeteer.lastSeq) !== null && _b !== void 0 ? _b : 0) + 1;
-                callPuppeteer.lastSeq = seq;
-                callCDP(JSON.stringify({ type, name, seq, args }));
-                return new Promise((resolve, reject) => {
-                    callPuppeteer.callbacks.set(seq, { resolve, reject });
+function addPageBinding(type, name) {
+    // This is the CDP binding.
+    // @ts-expect-error: In a different context.
+    const callCDP = globalThis[name];
+    // We replace the CDP binding with a Puppeteer binding.
+    Object.assign(globalThis, {
+        [name](...args) {
+            var _a, _b, _c;
+            // This is the Puppeteer binding.
+            // @ts-expect-error: In a different context.
+            const callPuppeteer = globalThis[name];
+            (_a = callPuppeteer.args) !== null && _a !== void 0 ? _a : (callPuppeteer.args = new Map());
+            (_b = callPuppeteer.callbacks) !== null && _b !== void 0 ? _b : (callPuppeteer.callbacks = new Map());
+            const seq = ((_c = callPuppeteer.lastSeq) !== null && _c !== void 0 ? _c : 0) + 1;
+            callPuppeteer.lastSeq = seq;
+            callPuppeteer.args.set(seq, args);
+            callCDP(JSON.stringify({
+                type,
+                name,
+                seq,
+                args,
+                isTrivial: !args.some(value => {
+                    return value instanceof Node;
+                }),
+            }));
+            return new Promise((resolve, reject) => {
+                callPuppeteer.callbacks.set(seq, {
+                    resolve(value) {
+                        callPuppeteer.args.delete(seq);
+                        resolve(value);
+                    },
+                    reject(value) {
+                        callPuppeteer.args.delete(seq);
+                        reject(value);
+                    },
                 });
-            },
-        });
-    }
+            });
+        },
+    });
+}
+exports.addPageBinding = addPageBinding;
+/**
+ * @internal
+ */
+function pageBindingInitString(type, name) {
     return evaluationString(addPageBinding, type, name);
 }
 exports.pageBindingInitString = pageBindingInitString;
-/**
- * @internal
- */
-function pageBindingDeliverResultString(name, seq, result) {
-    function deliverResult(name, seq, result) {
-        window[name].callbacks.get(seq).resolve(result);
-        window[name].callbacks.delete(seq);
-    }
-    return evaluationString(deliverResult, name, seq, result);
-}
-exports.pageBindingDeliverResultString = pageBindingDeliverResultString;
-/**
- * @internal
- */
-function pageBindingDeliverErrorString(name, seq, message, stack) {
-    function deliverError(name, seq, message, stack) {
-        const error = new Error(message);
-        error.stack = stack;
-        window[name].callbacks.get(seq).reject(error);
-        window[name].callbacks.delete(seq);
-    }
-    return evaluationString(deliverError, name, seq, message, stack);
-}
-exports.pageBindingDeliverErrorString = pageBindingDeliverErrorString;
-/**
- * @internal
- */
-function pageBindingDeliverErrorValueString(name, seq, value) {
-    function deliverErrorValue(name, seq, value) {
-        window[name].callbacks.get(seq).reject(value);
-        window[name].callbacks.delete(seq);
-    }
-    return evaluationString(deliverErrorValue, name, seq, value);
-}
-exports.pageBindingDeliverErrorValueString = pageBindingDeliverErrorValueString;
 /**
  * @internal
  */
@@ -45247,39 +48305,6 @@ exports.getReadableFromProtocolStream = getReadableFromProtocolStream;
 
 /***/ }),
 
-/***/ 442:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-/**
- * Copyright 2022 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-var _a;
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.PUPPETEER_CACHE_DIR = void 0;
-const os_1 = __nccwpck_require__(2037);
-const path_1 = __nccwpck_require__(1017);
-/**
- * @internal
- */
-exports.PUPPETEER_CACHE_DIR = (_a = process.env['PUPPETEER_CACHE_DIR']) !== null && _a !== void 0 ? _a : (0, path_1.join)((0, os_1.homedir)(), '.cache', 'puppeteer');
-//# sourceMappingURL=constants.js.map
-
-/***/ }),
-
 /***/ 1577:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -45331,7 +48356,7 @@ exports.source = void 0;
  *
  * @internal
  */
-exports.source = "\"use strict\";\nvar __defProp = Object.defineProperty;\nvar __getOwnPropDesc = Object.getOwnPropertyDescriptor;\nvar __getOwnPropNames = Object.getOwnPropertyNames;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __export = (target, all) => {\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\nvar __copyProps = (to, from, except, desc) => {\n  if (from && typeof from === \"object\" || typeof from === \"function\") {\n    for (let key of __getOwnPropNames(from))\n      if (!__hasOwnProp.call(to, key) && key !== except)\n        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n  }\n  return to;\n};\nvar __toCommonJS = (mod) => __copyProps(__defProp({}, \"__esModule\", { value: true }), mod);\n\n// src/injected/injected.ts\nvar injected_exports = {};\n__export(injected_exports, {\n  default: () => injected_default\n});\nmodule.exports = __toCommonJS(injected_exports);\n\n// src/common/Errors.ts\nvar CustomError = class extends Error {\n  constructor(message) {\n    super(message);\n    this.name = this.constructor.name;\n    Error.captureStackTrace(this, this.constructor);\n  }\n};\nvar TimeoutError = class extends CustomError {\n};\nvar ProtocolError = class extends CustomError {\n  #code;\n  #originalMessage = \"\";\n  set code(code) {\n    this.#code = code;\n  }\n  get code() {\n    return this.#code;\n  }\n  set originalMessage(originalMessage) {\n    this.#originalMessage = originalMessage;\n  }\n  get originalMessage() {\n    return this.#originalMessage;\n  }\n};\nvar errors = Object.freeze({\n  TimeoutError,\n  ProtocolError\n});\n\n// src/util/DeferredPromise.ts\nfunction createDeferredPromise(opts) {\n  let isResolved = false;\n  let isRejected = false;\n  let resolver;\n  let rejector;\n  const taskPromise = new Promise((resolve, reject) => {\n    resolver = resolve;\n    rejector = reject;\n  });\n  const timeoutId = opts && opts.timeout > 0 ? setTimeout(() => {\n    isRejected = true;\n    rejector(new TimeoutError(opts.message));\n  }, opts.timeout) : void 0;\n  return Object.assign(taskPromise, {\n    resolved: () => {\n      return isResolved;\n    },\n    finished: () => {\n      return isResolved || isRejected;\n    },\n    resolve: (value) => {\n      if (timeoutId) {\n        clearTimeout(timeoutId);\n      }\n      isResolved = true;\n      resolver(value);\n    },\n    reject: (err) => {\n      clearTimeout(timeoutId);\n      isRejected = true;\n      rejector(err);\n    }\n  });\n}\n\n// src/util/assert.ts\nvar assert = (value, message) => {\n  if (!value) {\n    throw new Error(message);\n  }\n};\n\n// src/injected/Poller.ts\nvar MutationPoller = class {\n  #fn;\n  #root;\n  #observer;\n  #promise;\n  constructor(fn, root) {\n    this.#fn = fn;\n    this.#root = root;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    this.#observer = new MutationObserver(async () => {\n      const result2 = await this.#fn();\n      if (!result2) {\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    });\n    this.#observer.observe(this.#root, {\n      childList: true,\n      subtree: true,\n      attributes: true\n    });\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n    if (this.#observer) {\n      this.#observer.disconnect();\n      this.#observer = void 0;\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\nvar RAFPoller = class {\n  #fn;\n  #promise;\n  constructor(fn) {\n    this.#fn = fn;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    const poll = async () => {\n      if (promise.finished()) {\n        return;\n      }\n      const result2 = await this.#fn();\n      if (!result2) {\n        window.requestAnimationFrame(poll);\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    };\n    window.requestAnimationFrame(poll);\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\nvar IntervalPoller = class {\n  #fn;\n  #ms;\n  #interval;\n  #promise;\n  constructor(fn, ms) {\n    this.#fn = fn;\n    this.#ms = ms;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    this.#interval = setInterval(async () => {\n      const result2 = await this.#fn();\n      if (!result2) {\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    }, this.#ms);\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n    if (this.#interval) {\n      clearInterval(this.#interval);\n      this.#interval = void 0;\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\n\n// src/injected/TextContent.ts\nvar TRIVIAL_VALUE_INPUT_TYPES = /* @__PURE__ */ new Set([\"checkbox\", \"image\", \"radio\"]);\nvar isNonTrivialValueNode = (node) => {\n  if (node instanceof HTMLSelectElement) {\n    return true;\n  }\n  if (node instanceof HTMLTextAreaElement) {\n    return true;\n  }\n  if (node instanceof HTMLInputElement && !TRIVIAL_VALUE_INPUT_TYPES.has(node.type)) {\n    return true;\n  }\n  return false;\n};\nvar UNSUITABLE_NODE_NAMES = /* @__PURE__ */ new Set([\"SCRIPT\", \"STYLE\"]);\nvar isSuitableNodeForTextMatching = (node) => {\n  return !UNSUITABLE_NODE_NAMES.has(node.nodeName) && !document.head?.contains(node);\n};\nvar textContentCache = /* @__PURE__ */ new WeakMap();\nvar eraseFromCache = (node) => {\n  while (node) {\n    textContentCache.delete(node);\n    if (node instanceof ShadowRoot) {\n      node = node.host;\n    } else {\n      node = node.parentNode;\n    }\n  }\n};\nvar observedNodes = /* @__PURE__ */ new WeakSet();\nvar textChangeObserver = new MutationObserver((mutations) => {\n  for (const mutation of mutations) {\n    eraseFromCache(mutation.target);\n  }\n});\nvar createTextContent = (root) => {\n  let value = textContentCache.get(root);\n  if (value) {\n    return value;\n  }\n  value = { full: \"\", immediate: [] };\n  if (!isSuitableNodeForTextMatching(root)) {\n    return value;\n  }\n  let currentImmediate = \"\";\n  if (isNonTrivialValueNode(root)) {\n    value.full = root.value;\n    value.immediate.push(root.value);\n    root.addEventListener(\n      \"input\",\n      (event) => {\n        eraseFromCache(event.target);\n      },\n      { once: true, capture: true }\n    );\n  } else {\n    for (let child = root.firstChild; child; child = child.nextSibling) {\n      if (child.nodeType === Node.TEXT_NODE) {\n        value.full += child.nodeValue ?? \"\";\n        currentImmediate += child.nodeValue ?? \"\";\n        continue;\n      }\n      if (currentImmediate) {\n        value.immediate.push(currentImmediate);\n      }\n      currentImmediate = \"\";\n      if (child.nodeType === Node.ELEMENT_NODE) {\n        value.full += createTextContent(child).full;\n      }\n    }\n    if (currentImmediate) {\n      value.immediate.push(currentImmediate);\n    }\n    if (root instanceof Element && root.shadowRoot) {\n      value.full += createTextContent(root.shadowRoot).full;\n    }\n    if (!observedNodes.has(root)) {\n      textChangeObserver.observe(root, {\n        childList: true,\n        characterData: true\n      });\n      observedNodes.add(root);\n    }\n  }\n  textContentCache.set(root, value);\n  return value;\n};\n\n// src/injected/TextQuerySelector.ts\nvar TextQuerySelector_exports = {};\n__export(TextQuerySelector_exports, {\n  textQuerySelector: () => textQuerySelector,\n  textQuerySelectorAll: () => textQuerySelectorAll\n});\nvar textQuerySelector = (root, selector) => {\n  for (const node of root.childNodes) {\n    if (node instanceof Element && isSuitableNodeForTextMatching(node)) {\n      let matchedNode;\n      if (node.shadowRoot) {\n        matchedNode = textQuerySelector(node.shadowRoot, selector);\n      } else {\n        matchedNode = textQuerySelector(node, selector);\n      }\n      if (matchedNode) {\n        return matchedNode;\n      }\n    }\n  }\n  if (root instanceof Element) {\n    const textContent = createTextContent(root);\n    if (textContent.full.includes(selector)) {\n      return root;\n    }\n  }\n  return null;\n};\nvar textQuerySelectorAll = (root, selector) => {\n  let results = [];\n  for (const node of root.childNodes) {\n    if (node instanceof Element) {\n      let matchedNodes;\n      if (node.shadowRoot) {\n        matchedNodes = textQuerySelectorAll(node.shadowRoot, selector);\n      } else {\n        matchedNodes = textQuerySelectorAll(node, selector);\n      }\n      results = results.concat(matchedNodes);\n    }\n  }\n  if (results.length > 0) {\n    return results;\n  }\n  if (root instanceof Element) {\n    const textContent = createTextContent(root);\n    if (textContent.full.includes(selector)) {\n      return [root];\n    }\n  }\n  return [];\n};\n\n// src/injected/XPathQuerySelector.ts\nvar XPathQuerySelector_exports = {};\n__export(XPathQuerySelector_exports, {\n  xpathQuerySelector: () => xpathQuerySelector,\n  xpathQuerySelectorAll: () => xpathQuerySelectorAll\n});\nvar xpathQuerySelector = (root, selector) => {\n  const doc = root.ownerDocument || document;\n  const result = doc.evaluate(\n    selector,\n    root,\n    null,\n    XPathResult.FIRST_ORDERED_NODE_TYPE\n  );\n  return result.singleNodeValue;\n};\nvar xpathQuerySelectorAll = (root, selector) => {\n  const doc = root.ownerDocument || document;\n  const iterator = doc.evaluate(\n    selector,\n    root,\n    null,\n    XPathResult.ORDERED_NODE_ITERATOR_TYPE\n  );\n  const array = [];\n  let item;\n  while (item = iterator.iterateNext()) {\n    array.push(item);\n  }\n  return array;\n};\n\n// src/injected/PierceQuerySelector.ts\nvar PierceQuerySelector_exports = {};\n__export(PierceQuerySelector_exports, {\n  pierceQuerySelector: () => pierceQuerySelector,\n  pierceQuerySelectorAll: () => pierceQuerySelectorAll\n});\nvar pierceQuerySelector = (root, selector) => {\n  let found = null;\n  const search = (root2) => {\n    const iter = document.createTreeWalker(root2, NodeFilter.SHOW_ELEMENT);\n    do {\n      const currentNode = iter.currentNode;\n      if (currentNode.shadowRoot) {\n        search(currentNode.shadowRoot);\n      }\n      if (currentNode instanceof ShadowRoot) {\n        continue;\n      }\n      if (currentNode !== root2 && !found && currentNode.matches(selector)) {\n        found = currentNode;\n      }\n    } while (!found && iter.nextNode());\n  };\n  if (root instanceof Document) {\n    root = root.documentElement;\n  }\n  search(root);\n  return found;\n};\nvar pierceQuerySelectorAll = (element, selector) => {\n  const result = [];\n  const collect = (root) => {\n    const iter = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);\n    do {\n      const currentNode = iter.currentNode;\n      if (currentNode.shadowRoot) {\n        collect(currentNode.shadowRoot);\n      }\n      if (currentNode instanceof ShadowRoot) {\n        continue;\n      }\n      if (currentNode !== root && currentNode.matches(selector)) {\n        result.push(currentNode);\n      }\n    } while (iter.nextNode());\n  };\n  if (element instanceof Document) {\n    element = element.documentElement;\n  }\n  collect(element);\n  return result;\n};\n\n// src/injected/util.ts\nvar util_exports = {};\n__export(util_exports, {\n  checkVisibility: () => checkVisibility,\n  createFunction: () => createFunction\n});\nvar createdFunctions = /* @__PURE__ */ new Map();\nvar createFunction = (functionValue) => {\n  let fn = createdFunctions.get(functionValue);\n  if (fn) {\n    return fn;\n  }\n  fn = new Function(`return ${functionValue}`)();\n  createdFunctions.set(functionValue, fn);\n  return fn;\n};\nvar HIDDEN_VISIBILITY_VALUES = [\"hidden\", \"collapse\"];\nvar checkVisibility = (node, visible) => {\n  if (!node) {\n    return visible === false;\n  }\n  if (visible === void 0) {\n    return node;\n  }\n  const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;\n  const style = window.getComputedStyle(element);\n  const isVisible = style && !HIDDEN_VISIBILITY_VALUES.includes(style.visibility) && isBoundingBoxVisible(element);\n  return visible === isVisible ? node : false;\n};\nfunction isBoundingBoxVisible(element) {\n  const rect = element.getBoundingClientRect();\n  return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0;\n}\n\n// src/injected/injected.ts\nvar PuppeteerUtil = Object.freeze({\n  ...util_exports,\n  ...TextQuerySelector_exports,\n  ...XPathQuerySelector_exports,\n  ...PierceQuerySelector_exports,\n  createDeferredPromise,\n  createTextContent,\n  IntervalPoller,\n  isSuitableNodeForTextMatching,\n  MutationPoller,\n  RAFPoller\n});\nvar injected_default = PuppeteerUtil;\n";
+exports.source = "\"use strict\";\nvar __defProp = Object.defineProperty;\nvar __getOwnPropDesc = Object.getOwnPropertyDescriptor;\nvar __getOwnPropNames = Object.getOwnPropertyNames;\nvar __hasOwnProp = Object.prototype.hasOwnProperty;\nvar __export = (target, all) => {\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\nvar __copyProps = (to, from, except, desc) => {\n  if (from && typeof from === \"object\" || typeof from === \"function\") {\n    for (let key of __getOwnPropNames(from))\n      if (!__hasOwnProp.call(to, key) && key !== except)\n        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n  }\n  return to;\n};\nvar __toCommonJS = (mod) => __copyProps(__defProp({}, \"__esModule\", { value: true }), mod);\n\n// src/injected/injected.ts\nvar injected_exports = {};\n__export(injected_exports, {\n  default: () => injected_default\n});\nmodule.exports = __toCommonJS(injected_exports);\n\n// src/common/Errors.ts\nvar CustomError = class extends Error {\n  constructor(message) {\n    super(message);\n    this.name = this.constructor.name;\n    Error.captureStackTrace(this, this.constructor);\n  }\n};\nvar TimeoutError = class extends CustomError {\n};\nvar ProtocolError = class extends CustomError {\n  #code;\n  #originalMessage = \"\";\n  set code(code) {\n    this.#code = code;\n  }\n  get code() {\n    return this.#code;\n  }\n  set originalMessage(originalMessage) {\n    this.#originalMessage = originalMessage;\n  }\n  get originalMessage() {\n    return this.#originalMessage;\n  }\n};\nvar errors = Object.freeze({\n  TimeoutError,\n  ProtocolError\n});\n\n// src/util/DeferredPromise.ts\nfunction createDeferredPromise(opts) {\n  let isResolved = false;\n  let isRejected = false;\n  let resolver;\n  let rejector;\n  const taskPromise = new Promise((resolve, reject) => {\n    resolver = resolve;\n    rejector = reject;\n  });\n  const timeoutId = opts && opts.timeout > 0 ? setTimeout(() => {\n    isRejected = true;\n    rejector(new TimeoutError(opts.message));\n  }, opts.timeout) : void 0;\n  return Object.assign(taskPromise, {\n    resolved: () => {\n      return isResolved;\n    },\n    finished: () => {\n      return isResolved || isRejected;\n    },\n    resolve: (value) => {\n      if (timeoutId) {\n        clearTimeout(timeoutId);\n      }\n      isResolved = true;\n      resolver(value);\n    },\n    reject: (err) => {\n      clearTimeout(timeoutId);\n      isRejected = true;\n      rejector(err);\n    }\n  });\n}\n\n// src/util/Function.ts\nvar createdFunctions = /* @__PURE__ */ new Map();\nvar createFunction = (functionValue) => {\n  let fn = createdFunctions.get(functionValue);\n  if (fn) {\n    return fn;\n  }\n  fn = new Function(`return ${functionValue}`)();\n  createdFunctions.set(functionValue, fn);\n  return fn;\n};\n\n// src/injected/ARIAQuerySelector.ts\nvar ARIAQuerySelector_exports = {};\n__export(ARIAQuerySelector_exports, {\n  ariaQuerySelector: () => ariaQuerySelector,\n  ariaQuerySelectorAll: () => ariaQuerySelectorAll\n});\nvar ariaQuerySelector = (root, selector) => {\n  return window.__ariaQuerySelector(root, selector);\n};\nvar ariaQuerySelectorAll = async function* (root, selector) {\n  yield* await window.__ariaQuerySelectorAll(root, selector);\n};\n\n// src/injected/CustomQuerySelector.ts\nvar CustomQuerySelector_exports = {};\n__export(CustomQuerySelector_exports, {\n  customQuerySelectors: () => customQuerySelectors\n});\nvar CustomQuerySelectorRegistry = class {\n  #selectors = /* @__PURE__ */ new Map();\n  register(name, handler) {\n    if (!handler.queryOne && handler.queryAll) {\n      const querySelectorAll = handler.queryAll;\n      handler.queryOne = (node, selector) => {\n        for (const result of querySelectorAll(node, selector)) {\n          return result;\n        }\n        return null;\n      };\n    } else if (handler.queryOne && !handler.queryAll) {\n      const querySelector = handler.queryOne;\n      handler.queryAll = (node, selector) => {\n        const result = querySelector(node, selector);\n        return result ? [result] : [];\n      };\n    } else if (!handler.queryOne || !handler.queryAll) {\n      throw new Error(\"At least one query method must be defined.\");\n    }\n    this.#selectors.set(name, {\n      querySelector: handler.queryOne,\n      querySelectorAll: handler.queryAll\n    });\n  }\n  unregister(name) {\n    this.#selectors.delete(name);\n  }\n  get(name) {\n    return this.#selectors.get(name);\n  }\n  clear() {\n    this.#selectors.clear();\n  }\n};\nvar customQuerySelectors = new CustomQuerySelectorRegistry();\n\n// src/injected/PierceQuerySelector.ts\nvar PierceQuerySelector_exports = {};\n__export(PierceQuerySelector_exports, {\n  pierceQuerySelector: () => pierceQuerySelector,\n  pierceQuerySelectorAll: () => pierceQuerySelectorAll\n});\nvar pierceQuerySelector = (root, selector) => {\n  let found = null;\n  const search = (root2) => {\n    const iter = document.createTreeWalker(root2, NodeFilter.SHOW_ELEMENT);\n    do {\n      const currentNode = iter.currentNode;\n      if (currentNode.shadowRoot) {\n        search(currentNode.shadowRoot);\n      }\n      if (currentNode instanceof ShadowRoot) {\n        continue;\n      }\n      if (currentNode !== root2 && !found && currentNode.matches(selector)) {\n        found = currentNode;\n      }\n    } while (!found && iter.nextNode());\n  };\n  if (root instanceof Document) {\n    root = root.documentElement;\n  }\n  search(root);\n  return found;\n};\nvar pierceQuerySelectorAll = (element, selector) => {\n  const result = [];\n  const collect = (root) => {\n    const iter = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);\n    do {\n      const currentNode = iter.currentNode;\n      if (currentNode.shadowRoot) {\n        collect(currentNode.shadowRoot);\n      }\n      if (currentNode instanceof ShadowRoot) {\n        continue;\n      }\n      if (currentNode !== root && currentNode.matches(selector)) {\n        result.push(currentNode);\n      }\n    } while (iter.nextNode());\n  };\n  if (element instanceof Document) {\n    element = element.documentElement;\n  }\n  collect(element);\n  return result;\n};\n\n// src/util/assert.ts\nvar assert = (value, message) => {\n  if (!value) {\n    throw new Error(message);\n  }\n};\n\n// src/injected/Poller.ts\nvar MutationPoller = class {\n  #fn;\n  #root;\n  #observer;\n  #promise;\n  constructor(fn, root) {\n    this.#fn = fn;\n    this.#root = root;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    this.#observer = new MutationObserver(async () => {\n      const result2 = await this.#fn();\n      if (!result2) {\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    });\n    this.#observer.observe(this.#root, {\n      childList: true,\n      subtree: true,\n      attributes: true\n    });\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n    if (this.#observer) {\n      this.#observer.disconnect();\n      this.#observer = void 0;\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\nvar RAFPoller = class {\n  #fn;\n  #promise;\n  constructor(fn) {\n    this.#fn = fn;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    const poll = async () => {\n      if (promise.finished()) {\n        return;\n      }\n      const result2 = await this.#fn();\n      if (!result2) {\n        window.requestAnimationFrame(poll);\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    };\n    window.requestAnimationFrame(poll);\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\nvar IntervalPoller = class {\n  #fn;\n  #ms;\n  #interval;\n  #promise;\n  constructor(fn, ms) {\n    this.#fn = fn;\n    this.#ms = ms;\n  }\n  async start() {\n    const promise = this.#promise = createDeferredPromise();\n    const result = await this.#fn();\n    if (result) {\n      promise.resolve(result);\n      return;\n    }\n    this.#interval = setInterval(async () => {\n      const result2 = await this.#fn();\n      if (!result2) {\n        return;\n      }\n      promise.resolve(result2);\n      await this.stop();\n    }, this.#ms);\n  }\n  async stop() {\n    assert(this.#promise, \"Polling never started.\");\n    if (!this.#promise.finished()) {\n      this.#promise.reject(new Error(\"Polling stopped\"));\n    }\n    if (this.#interval) {\n      clearInterval(this.#interval);\n      this.#interval = void 0;\n    }\n  }\n  result() {\n    assert(this.#promise, \"Polling never started.\");\n    return this.#promise;\n  }\n};\n\n// src/injected/PQuerySelector.ts\nvar PQuerySelector_exports = {};\n__export(PQuerySelector_exports, {\n  pQuerySelector: () => pQuerySelector,\n  pQuerySelectorAll: () => pQuerySelectorAll\n});\n\n// src/util/AsyncIterableUtil.ts\nvar AsyncIterableUtil = class {\n  static async *map(iterable, map) {\n    for await (const value of iterable) {\n      yield await map(value);\n    }\n  }\n  static async *flatMap(iterable, map) {\n    for await (const value of iterable) {\n      yield* map(value);\n    }\n  }\n  static async collect(iterable) {\n    const result = [];\n    for await (const value of iterable) {\n      result.push(value);\n    }\n    return result;\n  }\n  static async first(iterable) {\n    for await (const value of iterable) {\n      return value;\n    }\n    return;\n  }\n};\n\n// src/util/ErrorLike.ts\nfunction isErrorLike(obj) {\n  return typeof obj === \"object\" && obj !== null && \"name\" in obj && \"message\" in obj;\n}\n\n// src/injected/PSelectorParser.ts\nvar PUPPETEER_PSEUDO_ELEMENT = /^::-p-([-a-zA-Z_]+)\\(/;\nvar PSelectorParser = class {\n  #input;\n  #escaped = false;\n  #quoted = false;\n  #selectors = [[[]]];\n  constructor(input) {\n    this.#input = input;\n  }\n  get selectors() {\n    return this.#selectors;\n  }\n  parse() {\n    for (let i = 0; i < this.#input.length; ++i) {\n      if (this.#escaped) {\n        this.#escaped = false;\n        continue;\n      }\n      switch (this.#input[i]) {\n        case \"\\\\\": {\n          this.#escaped = true;\n          break;\n        }\n        case '\"': {\n          this.#quoted = !this.#quoted;\n          break;\n        }\n        default: {\n          if (this.#quoted) {\n            break;\n          }\n          const remainder = this.#input.slice(i);\n          if (remainder.startsWith(\">>>>\")) {\n            this.#push(this.#input.slice(0, i));\n            this.#input = remainder.slice(\">>>>\".length);\n            this.#parseDeepChild();\n          } else if (remainder.startsWith(\">>>\")) {\n            this.#push(this.#input.slice(0, i));\n            this.#input = remainder.slice(\">>>\".length);\n            this.#parseDeepDescendent();\n          } else {\n            const result = PUPPETEER_PSEUDO_ELEMENT.exec(remainder);\n            if (!result) {\n              continue;\n            }\n            const [match, name] = result;\n            this.#push(this.#input.slice(0, i));\n            this.#input = remainder.slice(match.length);\n            this.#push({\n              name,\n              value: this.#scanParameter()\n            });\n          }\n        }\n      }\n    }\n    this.#push(this.#input);\n  }\n  #push(selector) {\n    if (typeof selector === \"string\") {\n      selector = selector.trimEnd();\n      if (selector.length === 0) {\n        return;\n      }\n    }\n    const roots = this.#selectors[this.#selectors.length - 1];\n    roots[roots.length - 1].push(selector);\n  }\n  #parseDeepChild() {\n    this.#selectors[this.#selectors.length - 1].push([]);\n  }\n  #parseDeepDescendent() {\n    this.#selectors.push([[]]);\n  }\n  #scanParameter() {\n    const char = this.#input[0];\n    switch (char) {\n      case \"'\":\n      case '\"':\n        this.#input = this.#input.slice(1);\n        const parameter = this.#scanEscapedValueTill(char);\n        if (!this.#input.startsWith(\")\")) {\n          throw new Error(\"Expected ')'\");\n        }\n        this.#input = this.#input.slice(1);\n        return parameter;\n      default:\n        return this.#scanEscapedValueTill(\")\");\n    }\n  }\n  #scanEscapedValueTill(end) {\n    let string = \"\";\n    for (let i = 0; i < this.#input.length; ++i) {\n      if (this.#escaped) {\n        this.#escaped = false;\n        string += this.#input[i];\n        continue;\n      }\n      switch (this.#input[i]) {\n        case \"\\\\\": {\n          this.#escaped = true;\n          break;\n        }\n        case end: {\n          this.#input = this.#input.slice(i + 1);\n          return string;\n        }\n        default: {\n          string += this.#input[i];\n        }\n      }\n    }\n    throw new Error(`Expected \\`${end}\\``);\n  }\n};\nfunction parsePSelectors(selector) {\n  const parser = new PSelectorParser(selector);\n  parser.parse();\n  return parser.selectors;\n}\n\n// src/injected/TextQuerySelector.ts\nvar TextQuerySelector_exports = {};\n__export(TextQuerySelector_exports, {\n  textQuerySelectorAll: () => textQuerySelectorAll\n});\n\n// src/injected/TextContent.ts\nvar TRIVIAL_VALUE_INPUT_TYPES = /* @__PURE__ */ new Set([\"checkbox\", \"image\", \"radio\"]);\nvar isNonTrivialValueNode = (node) => {\n  if (node instanceof HTMLSelectElement) {\n    return true;\n  }\n  if (node instanceof HTMLTextAreaElement) {\n    return true;\n  }\n  if (node instanceof HTMLInputElement && !TRIVIAL_VALUE_INPUT_TYPES.has(node.type)) {\n    return true;\n  }\n  return false;\n};\nvar UNSUITABLE_NODE_NAMES = /* @__PURE__ */ new Set([\"SCRIPT\", \"STYLE\"]);\nvar isSuitableNodeForTextMatching = (node) => {\n  return !UNSUITABLE_NODE_NAMES.has(node.nodeName) && !document.head?.contains(node);\n};\nvar textContentCache = /* @__PURE__ */ new WeakMap();\nvar eraseFromCache = (node) => {\n  while (node) {\n    textContentCache.delete(node);\n    if (node instanceof ShadowRoot) {\n      node = node.host;\n    } else {\n      node = node.parentNode;\n    }\n  }\n};\nvar observedNodes = /* @__PURE__ */ new WeakSet();\nvar textChangeObserver = new MutationObserver((mutations) => {\n  for (const mutation of mutations) {\n    eraseFromCache(mutation.target);\n  }\n});\nvar createTextContent = (root) => {\n  let value = textContentCache.get(root);\n  if (value) {\n    return value;\n  }\n  value = { full: \"\", immediate: [] };\n  if (!isSuitableNodeForTextMatching(root)) {\n    return value;\n  }\n  let currentImmediate = \"\";\n  if (isNonTrivialValueNode(root)) {\n    value.full = root.value;\n    value.immediate.push(root.value);\n    root.addEventListener(\n      \"input\",\n      (event) => {\n        eraseFromCache(event.target);\n      },\n      { once: true, capture: true }\n    );\n  } else {\n    for (let child = root.firstChild; child; child = child.nextSibling) {\n      if (child.nodeType === Node.TEXT_NODE) {\n        value.full += child.nodeValue ?? \"\";\n        currentImmediate += child.nodeValue ?? \"\";\n        continue;\n      }\n      if (currentImmediate) {\n        value.immediate.push(currentImmediate);\n      }\n      currentImmediate = \"\";\n      if (child.nodeType === Node.ELEMENT_NODE) {\n        value.full += createTextContent(child).full;\n      }\n    }\n    if (currentImmediate) {\n      value.immediate.push(currentImmediate);\n    }\n    if (root instanceof Element && root.shadowRoot) {\n      value.full += createTextContent(root.shadowRoot).full;\n    }\n    if (!observedNodes.has(root)) {\n      textChangeObserver.observe(root, {\n        childList: true,\n        characterData: true\n      });\n      observedNodes.add(root);\n    }\n  }\n  textContentCache.set(root, value);\n  return value;\n};\n\n// src/injected/TextQuerySelector.ts\nvar textQuerySelectorAll = function* (root, selector) {\n  let yielded = false;\n  for (const node of root.childNodes) {\n    if (node instanceof Element && isSuitableNodeForTextMatching(node)) {\n      let matches;\n      if (!node.shadowRoot) {\n        matches = textQuerySelectorAll(node, selector);\n      } else {\n        matches = textQuerySelectorAll(node.shadowRoot, selector);\n      }\n      for (const match of matches) {\n        yield match;\n        yielded = true;\n      }\n    }\n  }\n  if (yielded) {\n    return;\n  }\n  if (root instanceof Element && isSuitableNodeForTextMatching(root)) {\n    const textContent = createTextContent(root);\n    if (textContent.full.includes(selector)) {\n      yield root;\n    }\n  }\n};\n\n// src/injected/util.ts\nvar util_exports = {};\n__export(util_exports, {\n  checkVisibility: () => checkVisibility,\n  deepChildren: () => deepChildren,\n  deepDescendents: () => deepDescendents\n});\nvar HIDDEN_VISIBILITY_VALUES = [\"hidden\", \"collapse\"];\nvar checkVisibility = (node, visible) => {\n  if (!node) {\n    return visible === false;\n  }\n  if (visible === void 0) {\n    return node;\n  }\n  const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;\n  const style = window.getComputedStyle(element);\n  const isVisible = style && !HIDDEN_VISIBILITY_VALUES.includes(style.visibility) && !isBoundingBoxEmpty(element);\n  return visible === isVisible ? node : false;\n};\nfunction isBoundingBoxEmpty(element) {\n  const rect = element.getBoundingClientRect();\n  return rect.width === 0 || rect.height === 0;\n}\nfunction* deepChildren(root) {\n  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);\n  let node = walker.nextNode();\n  for (; node; node = walker.nextNode()) {\n    yield node.shadowRoot ?? node;\n  }\n}\nfunction* deepDescendents(root) {\n  const walkers = [document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)];\n  let walker;\n  while (walker = walkers.shift()) {\n    for (let node = walker.nextNode(); node; node = walker.nextNode()) {\n      if (!node.shadowRoot) {\n        yield node;\n        continue;\n      }\n      walkers.push(\n        document.createTreeWalker(node.shadowRoot, NodeFilter.SHOW_ELEMENT)\n      );\n      yield node.shadowRoot;\n    }\n  }\n}\n\n// src/injected/XPathQuerySelector.ts\nvar XPathQuerySelector_exports = {};\n__export(XPathQuerySelector_exports, {\n  xpathQuerySelectorAll: () => xpathQuerySelectorAll\n});\nvar xpathQuerySelectorAll = function* (root, selector) {\n  const doc = root.ownerDocument || document;\n  const iterator = doc.evaluate(\n    selector,\n    root,\n    null,\n    XPathResult.ORDERED_NODE_ITERATOR_TYPE\n  );\n  let item;\n  while (item = iterator.iterateNext()) {\n    yield item;\n  }\n};\n\n// src/injected/PQuerySelector.ts\nvar SelectorError = class extends Error {\n  constructor(selector, message) {\n    super(`${selector} is not a valid selector: ${message}`);\n  }\n};\nvar PQueryEngine = class {\n  #input;\n  #deepShadowSelectors;\n  #shadowSelectors;\n  #selectors;\n  #selector;\n  elements;\n  constructor(element, selector) {\n    this.#input = selector.trim();\n    if (this.#input.length === 0) {\n      throw new SelectorError(this.#input, \"The provided selector is empty.\");\n    }\n    try {\n      this.#deepShadowSelectors = parsePSelectors(this.#input);\n    } catch (error) {\n      if (!isErrorLike(error)) {\n        throw new SelectorError(this.#input, String(error));\n      }\n      throw new SelectorError(this.#input, error.message);\n    }\n    if (this.#deepShadowSelectors.some((shadowSelectors) => {\n      return shadowSelectors.some((selectors) => {\n        return selectors.length === 0;\n      });\n    })) {\n      throw new SelectorError(\n        this.#input,\n        \"Multiple deep combinators found in sequence.\"\n      );\n    }\n    this.#shadowSelectors = this.#deepShadowSelectors.shift();\n    this.#selectors = this.#shadowSelectors.shift();\n    this.#selector = this.#selectors.shift();\n    this.elements = [element];\n  }\n  async run() {\n    if (typeof this.#selector === \"string\") {\n      switch (this.#selector.trimStart()) {\n        case \":scope\":\n          this.#next();\n          break;\n        default:\n          this.#selector = ` ${this.#selector}`;\n          break;\n      }\n    }\n    for (; this.#selector !== void 0; this.#next()) {\n      const selector = this.#selector;\n      const input = this.#input;\n      this.elements = AsyncIterableUtil.flatMap(\n        this.elements,\n        async function* (element) {\n          if (typeof selector === \"string\") {\n            if (!element.parentElement) {\n              yield* element.querySelectorAll(selector);\n              return;\n            }\n            let index = 0;\n            for (const child of element.parentElement.children) {\n              ++index;\n              if (child === element) {\n                break;\n              }\n            }\n            yield* element.parentElement.querySelectorAll(\n              `:scope > :nth-child(${index})${selector}`\n            );\n            return;\n          }\n          switch (selector.name) {\n            case \"text\":\n              yield* textQuerySelectorAll(element, selector.value);\n              break;\n            case \"xpath\":\n              yield* xpathQuerySelectorAll(element, selector.value);\n              break;\n            case \"aria\":\n              yield* ariaQuerySelectorAll(element, selector.value);\n              break;\n            default:\n              const querySelector = customQuerySelectors.get(selector.name);\n              if (!querySelector) {\n                throw new SelectorError(\n                  input,\n                  `Unknown selector type: ${selector.name}`\n                );\n              }\n              yield* querySelector.querySelectorAll(element, selector.value);\n          }\n        }\n      );\n    }\n  }\n  #next() {\n    if (this.#selectors.length === 0) {\n      if (this.#shadowSelectors.length === 0) {\n        if (this.#deepShadowSelectors.length === 0) {\n          this.#selector = void 0;\n          return;\n        }\n        this.elements = AsyncIterableUtil.flatMap(\n          this.elements,\n          function* (element) {\n            yield* deepDescendents(element);\n          }\n        );\n        this.#shadowSelectors = this.#deepShadowSelectors.shift();\n      }\n      this.elements = AsyncIterableUtil.flatMap(\n        this.elements,\n        function* (element) {\n          yield* deepChildren(element);\n        }\n      );\n      this.#selectors = this.#shadowSelectors.shift();\n    }\n    this.#selector = this.#selectors.shift();\n  }\n};\nvar pQuerySelectorAll = async function* (root, selector) {\n  const query = new PQueryEngine(root, selector);\n  query.run();\n  yield* query.elements;\n};\nvar pQuerySelector = async function(root, selector) {\n  for await (const element of pQuerySelectorAll(root, selector)) {\n    return element;\n  }\n  return null;\n};\n\n// src/injected/injected.ts\nvar PuppeteerUtil = Object.freeze({\n  ...ARIAQuerySelector_exports,\n  ...CustomQuerySelector_exports,\n  ...PierceQuerySelector_exports,\n  ...PQuerySelector_exports,\n  ...TextQuerySelector_exports,\n  ...util_exports,\n  ...XPathQuerySelector_exports,\n  createDeferredPromise,\n  createFunction,\n  createTextContent,\n  IntervalPoller,\n  isSuitableNodeForTextMatching,\n  MutationPoller,\n  RAFPoller\n});\nvar injected_default = PuppeteerUtil;\n";
 //# sourceMappingURL=injected.js.map
 
 /***/ }),
@@ -45346,7 +48371,7 @@ exports.packageVersion = void 0;
 /**
  * @internal
  */
-exports.packageVersion = '19.0.0';
+exports.packageVersion = '19.7.2';
 //# sourceMappingURL=version.js.map
 
 /***/ }),
@@ -45408,30 +48433,27 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-var _BrowserFetcher_instances, _BrowserFetcher_product, _BrowserFetcher_downloadFolder, _BrowserFetcher_downloadHost, _BrowserFetcher_platform, _BrowserFetcher_getFolderPath;
+var _BrowserFetcher_instances, _BrowserFetcher_product, _BrowserFetcher_downloadPath, _BrowserFetcher_downloadHost, _BrowserFetcher_platform, _BrowserFetcher_getFolderPath;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BrowserFetcher = void 0;
 const child_process_1 = __nccwpck_require__(2081);
-const extract_zip_1 = __importDefault(__nccwpck_require__(460));
 const fs_1 = __nccwpck_require__(7147);
 const promises_1 = __nccwpck_require__(3292);
 const http = __importStar(__nccwpck_require__(3685));
 const https = __importStar(__nccwpck_require__(5687));
-const https_proxy_agent_1 = __importDefault(__nccwpck_require__(7219));
 const os = __importStar(__nccwpck_require__(2037));
 const path = __importStar(__nccwpck_require__(1017));
+const URL = __importStar(__nccwpck_require__(7310));
+const util = __importStar(__nccwpck_require__(3837));
+const util_1 = __nccwpck_require__(3837);
+const extract_zip_1 = __importDefault(__nccwpck_require__(460));
+const https_proxy_agent_1 = __importDefault(__nccwpck_require__(7219));
 const proxy_from_env_1 = __nccwpck_require__(3329);
 const rimraf_1 = __importDefault(__nccwpck_require__(4959));
 const tar_fs_1 = __importDefault(__nccwpck_require__(366));
 const unbzip2_stream_1 = __importDefault(__nccwpck_require__(3467));
-const URL = __importStar(__nccwpck_require__(7310));
-const util = __importStar(__nccwpck_require__(3837));
-const util_1 = __nccwpck_require__(3837);
 const Debug_js_1 = __nccwpck_require__(4090);
-const constants_js_1 = __nccwpck_require__(442);
 const assert_js_1 = __nccwpck_require__(7729);
-const experimentalChromiumMacArm = process.env['PUPPETEER_EXPERIMENTAL_CHROMIUM_MAC_ARM'] ||
-    process.env['npm_config_puppeteer_experimental_chromium_mac_arm'];
 const debugFetcher = (0, Debug_js_1.debug)('puppeteer:fetcher');
 const downloadURLs = {
     chrome: {
@@ -45520,7 +48542,7 @@ function handleArm64() {
  * and running Puppeteer against it:
  *
  * ```ts
- * const browserFetcher = new BrowserFetcher();
+ * const browserFetcher = new BrowserFetcher({path: 'path/to/download/folder'});
  * const revisionInfo = await browserFetcher.download('533271');
  * const browser = await puppeteer.launch({
  *   executablePath: revisionInfo.executablePath,
@@ -45533,16 +48555,16 @@ class BrowserFetcher {
     /**
      * Constructs a browser fetcher for the given options.
      */
-    constructor(options = {}) {
+    constructor(options) {
+        var _a, _b;
         _BrowserFetcher_instances.add(this);
         _BrowserFetcher_product.set(this, void 0);
-        _BrowserFetcher_downloadFolder.set(this, void 0);
+        _BrowserFetcher_downloadPath.set(this, void 0);
         _BrowserFetcher_downloadHost.set(this, void 0);
         _BrowserFetcher_platform.set(this, void 0);
-        __classPrivateFieldSet(this, _BrowserFetcher_product, (options.product || 'chrome').toLowerCase(), "f");
-        (0, assert_js_1.assert)(__classPrivateFieldGet(this, _BrowserFetcher_product, "f") === 'chrome' || __classPrivateFieldGet(this, _BrowserFetcher_product, "f") === 'firefox', `Unknown product: "${options.product}"`);
-        __classPrivateFieldSet(this, _BrowserFetcher_downloadFolder, options.path || path.join(constants_js_1.PUPPETEER_CACHE_DIR, __classPrivateFieldGet(this, _BrowserFetcher_product, "f")), "f");
-        __classPrivateFieldSet(this, _BrowserFetcher_downloadHost, options.host || browserConfig[__classPrivateFieldGet(this, _BrowserFetcher_product, "f")].host, "f");
+        __classPrivateFieldSet(this, _BrowserFetcher_product, (_a = options.product) !== null && _a !== void 0 ? _a : 'chrome', "f");
+        __classPrivateFieldSet(this, _BrowserFetcher_downloadPath, options.path, "f");
+        __classPrivateFieldSet(this, _BrowserFetcher_downloadHost, (_b = options.host) !== null && _b !== void 0 ? _b : browserConfig[__classPrivateFieldGet(this, _BrowserFetcher_product, "f")].host, "f");
         if (options.platform) {
             __classPrivateFieldSet(this, _BrowserFetcher_platform, options.platform, "f");
         }
@@ -45552,7 +48574,7 @@ class BrowserFetcher {
                 case 'darwin':
                     switch (__classPrivateFieldGet(this, _BrowserFetcher_product, "f")) {
                         case 'chrome':
-                            __classPrivateFieldSet(this, _BrowserFetcher_platform, os.arch() === 'arm64' && experimentalChromiumMacArm
+                            __classPrivateFieldSet(this, _BrowserFetcher_platform, os.arch() === 'arm64' && options.useMacOSARMBinary
                                 ? 'mac_arm'
                                 : 'mac', "f");
                             break;
@@ -45631,13 +48653,13 @@ class BrowserFetcher {
         const url = downloadURL(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"), __classPrivateFieldGet(this, _BrowserFetcher_downloadHost, "f"), revision);
         const fileName = url.split('/').pop();
         (0, assert_js_1.assert)(fileName, `A malformed download URL was found: ${url}.`);
-        const archivePath = path.join(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"), fileName);
+        const archivePath = path.join(__classPrivateFieldGet(this, _BrowserFetcher_downloadPath, "f"), fileName);
         const outputPath = __classPrivateFieldGet(this, _BrowserFetcher_instances, "m", _BrowserFetcher_getFolderPath).call(this, revision);
         if ((0, fs_1.existsSync)(outputPath)) {
             return this.revisionInfo(revision);
         }
-        if (!(0, fs_1.existsSync)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"))) {
-            await (0, promises_1.mkdir)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"), { recursive: true });
+        if (!(0, fs_1.existsSync)(__classPrivateFieldGet(this, _BrowserFetcher_downloadPath, "f"))) {
+            await (0, promises_1.mkdir)(__classPrivateFieldGet(this, _BrowserFetcher_downloadPath, "f"), { recursive: true });
         }
         // Use system Chromium builds on Linux ARM devices
         if (os.platform() === 'linux' && os.arch() === 'arm64') {
@@ -45662,14 +48684,14 @@ class BrowserFetcher {
     /**
      * @remarks
      * This method is affected by the current `product`.
-     * @returns A promise with a list of all revision strings (for the current `product`)
+     * @returns A list of all revision strings (for the current `product`)
      * available locally on disk.
      */
-    async localRevisions() {
-        if (!(0, fs_1.existsSync)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"))) {
+    localRevisions() {
+        if (!(0, fs_1.existsSync)(__classPrivateFieldGet(this, _BrowserFetcher_downloadPath, "f"))) {
             return [];
         }
-        const fileNames = await (0, promises_1.readdir)(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"));
+        const fileNames = (0, fs_1.readdirSync)(__classPrivateFieldGet(this, _BrowserFetcher_downloadPath, "f"));
         return fileNames
             .map(fileName => {
             return parseFolderPath(__classPrivateFieldGet(this, _BrowserFetcher_product, "f"), fileName);
@@ -45753,10 +48775,16 @@ class BrowserFetcher {
             product: __classPrivateFieldGet(this, _BrowserFetcher_product, "f"),
         };
     }
+    /**
+     * @internal
+     */
+    getDownloadPath() {
+        return __classPrivateFieldGet(this, _BrowserFetcher_downloadPath, "f");
+    }
 }
 exports.BrowserFetcher = BrowserFetcher;
-_BrowserFetcher_product = new WeakMap(), _BrowserFetcher_downloadFolder = new WeakMap(), _BrowserFetcher_downloadHost = new WeakMap(), _BrowserFetcher_platform = new WeakMap(), _BrowserFetcher_instances = new WeakSet(), _BrowserFetcher_getFolderPath = function _BrowserFetcher_getFolderPath(revision) {
-    return path.resolve(__classPrivateFieldGet(this, _BrowserFetcher_downloadFolder, "f"), `${__classPrivateFieldGet(this, _BrowserFetcher_platform, "f")}-${revision}`);
+_BrowserFetcher_product = new WeakMap(), _BrowserFetcher_downloadPath = new WeakMap(), _BrowserFetcher_downloadHost = new WeakMap(), _BrowserFetcher_platform = new WeakMap(), _BrowserFetcher_instances = new WeakSet(), _BrowserFetcher_getFolderPath = function _BrowserFetcher_getFolderPath(revision) {
+    return path.resolve(__classPrivateFieldGet(this, _BrowserFetcher_downloadPath, "f"), `${__classPrivateFieldGet(this, _BrowserFetcher_platform, "f")}-${revision}`);
 };
 function parseFolderPath(product, folderPath) {
     const name = path.basename(folderPath);
@@ -45996,10 +49024,9 @@ const childProcess = __importStar(__nccwpck_require__(2081));
 const fs = __importStar(__nccwpck_require__(7147));
 const path = __importStar(__nccwpck_require__(1017));
 const readline = __importStar(__nccwpck_require__(4521));
-const rimraf_1 = __importDefault(__nccwpck_require__(4959));
 const util_1 = __nccwpck_require__(3837);
-const Connection_js_1 = __nccwpck_require__(5916);
-const Connection_js_2 = __nccwpck_require__(370);
+const rimraf_1 = __importDefault(__nccwpck_require__(4959));
+const Connection_js_1 = __nccwpck_require__(370);
 const Debug_js_1 = __nccwpck_require__(4090);
 const Errors_js_1 = __nccwpck_require__(6315);
 const NodeWebSocketTransport_js_1 = __nccwpck_require__(4098);
@@ -46192,7 +49219,9 @@ class BrowserRunner {
         let browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision, /^WebDriver BiDi listening on (ws:\/\/.*)$/);
         browserWSEndpoint += '/session';
         const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
-        return new Connection_js_1.Connection(transport, slowMo);
+        const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
+        /* webpackIgnore: true */ 845)));
+        return new BiDi.Connection(transport, slowMo);
     }
     async setupConnection(options) {
         (0, assert_js_1.assert)(this.proc, 'BrowserRunner not started.');
@@ -46200,14 +49229,14 @@ class BrowserRunner {
         if (!usePipe) {
             const browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision);
             const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
-            this.connection = new Connection_js_2.Connection(browserWSEndpoint, transport, slowMo);
+            this.connection = new Connection_js_1.Connection(browserWSEndpoint, transport, slowMo);
         }
         else {
             // stdio was assigned during start(), and the 'pipe' option there adds the
             // 4th and 5th items to stdio array
             const { 3: pipeWrite, 4: pipeRead } = this.proc.stdio;
             const transport = new PipeTransport_js_1.PipeTransport(pipeWrite, pipeRead);
-            this.connection = new Connection_js_2.Connection('', transport, slowMo);
+            this.connection = new Connection_js_1.Connection('', transport, slowMo);
         }
         return this.connection;
     }
@@ -46287,28 +49316,58 @@ function pidExists(pid) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
+var _ChromeLauncher_instances, _ChromeLauncher_executablePathForChannel;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ChromeLauncher = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
+const fs_1 = __nccwpck_require__(7147);
+const promises_1 = __nccwpck_require__(3292);
+const os_1 = __importDefault(__nccwpck_require__(2037));
 const path_1 = __importDefault(__nccwpck_require__(1017));
 const Browser_js_1 = __nccwpck_require__(2087);
 const assert_js_1 = __nccwpck_require__(7729);
 const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
-const util_js_1 = __nccwpck_require__(7632);
 /**
  * @internal
  */
-class ChromeLauncher {
-    constructor(preferredRevision, isPuppeteerCore) {
-        this._preferredRevision = preferredRevision;
-        this._isPuppeteerCore = isPuppeteerCore;
+class ChromeLauncher extends ProductLauncher_js_1.ProductLauncher {
+    constructor(puppeteer) {
+        super(puppeteer, 'chrome');
+        _ChromeLauncher_instances.add(this);
     }
     async launch(options = {}) {
-        const { ignoreDefaultArgs = false, args = [], dumpio = false, channel, executablePath, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, waitForInitialPage = true, debuggingPort, } = options;
+        const { ignoreDefaultArgs = false, args = [], dumpio = false, channel, executablePath, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, waitForInitialPage = true, debuggingPort, protocol, } = options;
         const chromeArguments = [];
         if (!ignoreDefaultArgs) {
             chromeArguments.push(...this.defaultArgs(options));
@@ -46340,23 +49399,15 @@ class ChromeLauncher {
         });
         if (userDataDirIndex < 0) {
             isTempUserDataDir = true;
-            chromeArguments.push(`--user-data-dir=${await fs_1.default.promises.mkdtemp(path_1.default.join((0, util_js_1.tmpdir)(), 'puppeteer_dev_chrome_profile-'))}`);
+            chromeArguments.push(`--user-data-dir=${await (0, promises_1.mkdtemp)(this.getProfilePath())}`);
             userDataDirIndex = chromeArguments.length - 1;
         }
         const userDataDir = chromeArguments[userDataDirIndex].split('=', 2)[1];
         (0, assert_js_1.assert)(typeof userDataDir === 'string', '`--user-data-dir` is malformed');
         let chromeExecutable = executablePath;
-        if (channel) {
-            // executablePath is detected by channel, so it should not be specified by user.
-            (0, assert_js_1.assert)(!chromeExecutable, '`executablePath` must not be specified when `channel` is given.');
-            chromeExecutable = (0, ProductLauncher_js_1.executablePathForChannel)(channel);
-        }
-        else if (!chromeExecutable) {
-            const { missingText, executablePath } = (0, ProductLauncher_js_1.resolveExecutablePath)(this);
-            if (missingText) {
-                throw new Error(missingText);
-            }
-            chromeExecutable = executablePath;
+        if (!chromeExecutable) {
+            (0, assert_js_1.assert)(channel || !this.puppeteer._isPuppeteerCore, `An \`executablePath\` or \`channel\` must be specified for \`puppeteer-core\``);
+            chromeExecutable = this.executablePath(channel);
         }
         const usePipe = chromeArguments.includes('--remote-debugging-pipe');
         const runner = new BrowserRunner_js_1.BrowserRunner(this.product, chromeExecutable, chromeArguments, userDataDir, isTempUserDataDir);
@@ -46374,8 +49425,25 @@ class ChromeLauncher {
                 usePipe,
                 timeout,
                 slowMo,
-                preferredRevision: this._preferredRevision,
+                preferredRevision: this.puppeteer.browserRevision,
             });
+            if (protocol === 'webDriverBiDi') {
+                try {
+                    const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
+                    /* webpackIgnore: true */ 845)));
+                    const bidiConnection = await BiDi.connectBidiOverCDP(connection);
+                    browser = await BiDi.Browser.create({
+                        connection: bidiConnection,
+                        closeCallback: runner.close.bind(runner),
+                        process: runner.proc,
+                    });
+                }
+                catch (error) {
+                    runner.kill();
+                    throw error;
+                }
+                return browser;
+            }
             browser = await Browser_js_1.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
         }
         catch (error) {
@@ -46396,38 +49464,38 @@ class ChromeLauncher {
         return browser;
     }
     defaultArgs(options = {}) {
+        // See https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
         const chromeArguments = [
             '--allow-pre-commit-input',
             '--disable-background-networking',
-            '--enable-features=NetworkServiceInProcess2',
             '--disable-background-timer-throttling',
             '--disable-backgrounding-occluded-windows',
             '--disable-breakpad',
             '--disable-client-side-phishing-detection',
             '--disable-component-extensions-with-background-pages',
+            '--disable-component-update',
             '--disable-default-apps',
             '--disable-dev-shm-usage',
             '--disable-extensions',
-            // TODO: remove AvoidUnnecessaryBeforeUnloadCheckSync below
-            // once crbug.com/1324138 is fixed and released.
             // AcceptCHFrame disabled because of crbug.com/1348106.
-            '--disable-features=Translate,BackForwardCache,AcceptCHFrame,AvoidUnnecessaryBeforeUnloadCheckSync',
+            '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
             '--disable-hang-monitor',
             '--disable-ipc-flooding-protection',
             '--disable-popup-blocking',
             '--disable-prompt-on-repost',
             '--disable-renderer-backgrounding',
             '--disable-sync',
+            '--enable-automation',
+            // TODO(sadym): remove '--enable-blink-features=IdleDetection' once
+            // IdleDetection is turned on by default.
+            '--enable-blink-features=IdleDetection',
+            '--enable-features=NetworkServiceInProcess2',
+            '--export-tagged-pdf',
             '--force-color-profile=srgb',
             '--metrics-recording-only',
             '--no-first-run',
-            '--enable-automation',
             '--password-store=basic',
             '--use-mock-keychain',
-            // TODO(sadym): remove '--enable-blink-features=IdleDetection'
-            // once IdleDetection is turned on by default.
-            '--enable-blink-features=IdleDetection',
-            '--export-tagged-pdf',
         ];
         const { devtools = false, headless = !devtools, args = [], userDataDir, } = options;
         if (userDataDir) {
@@ -46437,7 +49505,7 @@ class ChromeLauncher {
             chromeArguments.push('--auto-open-devtools-for-tabs');
         }
         if (headless) {
-            chromeArguments.push(headless === 'chrome' ? '--headless=chrome' : '--headless', '--hide-scrollbars', '--mute-audio');
+            chromeArguments.push(headless === 'new' ? '--headless=new' : '--headless', '--hide-scrollbars', '--mute-audio');
         }
         if (args.every(arg => {
             return arg.startsWith('-');
@@ -46449,18 +49517,80 @@ class ChromeLauncher {
     }
     executablePath(channel) {
         if (channel) {
-            return (0, ProductLauncher_js_1.executablePathForChannel)(channel);
+            return __classPrivateFieldGet(this, _ChromeLauncher_instances, "m", _ChromeLauncher_executablePathForChannel).call(this, channel);
         }
         else {
-            const results = (0, ProductLauncher_js_1.resolveExecutablePath)(this);
-            return results.executablePath;
+            return this.resolveExecutablePath();
         }
-    }
-    get product() {
-        return 'chrome';
     }
 }
 exports.ChromeLauncher = ChromeLauncher;
+_ChromeLauncher_instances = new WeakSet(), _ChromeLauncher_executablePathForChannel = function _ChromeLauncher_executablePathForChannel(channel) {
+    const platform = os_1.default.platform();
+    let chromePath;
+    switch (platform) {
+        case 'win32':
+            switch (channel) {
+                case 'chrome':
+                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome\\Application\\chrome.exe`;
+                    break;
+                case 'chrome-beta':
+                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome Beta\\Application\\chrome.exe`;
+                    break;
+                case 'chrome-canary':
+                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome SxS\\Application\\chrome.exe`;
+                    break;
+                case 'chrome-dev':
+                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome Dev\\Application\\chrome.exe`;
+                    break;
+            }
+            break;
+        case 'darwin':
+            switch (channel) {
+                case 'chrome':
+                    chromePath =
+                        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+                    break;
+                case 'chrome-beta':
+                    chromePath =
+                        '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta';
+                    break;
+                case 'chrome-canary':
+                    chromePath =
+                        '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary';
+                    break;
+                case 'chrome-dev':
+                    chromePath =
+                        '/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev';
+                    break;
+            }
+            break;
+        case 'linux':
+            switch (channel) {
+                case 'chrome':
+                    chromePath = '/opt/google/chrome/chrome';
+                    break;
+                case 'chrome-beta':
+                    chromePath = '/opt/google/chrome-beta/chrome';
+                    break;
+                case 'chrome-dev':
+                    chromePath = '/opt/google/chrome-unstable/chrome';
+                    break;
+            }
+            break;
+    }
+    if (!chromePath) {
+        throw new Error(`Unable to detect browser executable path for '${channel}' on ${platform}.`);
+    }
+    // Check if Chrome exists and is accessible.
+    try {
+        (0, fs_1.accessSync)(chromePath);
+    }
+    catch (error) {
+        throw new Error(`Could not find Google Chrome executable for channel '${channel}' at '${chromePath}'.`);
+    }
+    return chromePath;
+};
 //# sourceMappingURL=ChromeLauncher.js.map
 
 /***/ }),
@@ -46470,6 +49600,29 @@ exports.ChromeLauncher = ChromeLauncher;
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -46478,23 +49631,19 @@ exports.FirefoxLauncher = void 0;
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const path_1 = __importDefault(__nccwpck_require__(1017));
-const Browser_js_1 = __nccwpck_require__(6070);
-const Browser_js_2 = __nccwpck_require__(2087);
+const Browser_js_1 = __nccwpck_require__(2087);
 const assert_js_1 = __nccwpck_require__(7729);
-const BrowserFetcher_js_1 = __nccwpck_require__(6573);
 const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
-const util_js_1 = __nccwpck_require__(7632);
 /**
  * @internal
  */
-class FirefoxLauncher {
-    constructor(preferredRevision, isPuppeteerCore) {
-        this._preferredRevision = preferredRevision;
-        this._isPuppeteerCore = isPuppeteerCore;
+class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
+    constructor(puppeteer) {
+        super(puppeteer, 'firefox');
     }
     async launch(options = {}) {
-        const { ignoreDefaultArgs = false, args = [], dumpio = false, executablePath = null, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, extraPrefsFirefox = {}, waitForInitialPage = true, debuggingPort = null, protocol = 'cdp', } = options;
+        const { ignoreDefaultArgs = false, args = [], dumpio = false, executablePath, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, extraPrefsFirefox = {}, waitForInitialPage = true, debuggingPort = null, protocol = 'cdp', } = options;
         const firefoxArguments = [];
         if (!ignoreDefaultArgs) {
             firefoxArguments.push(...this.defaultArgs(options));
@@ -46538,19 +49687,13 @@ class FirefoxLauncher {
             firefoxArguments.push('--profile');
             firefoxArguments.push(userDataDir);
         }
-        if (!this._isPuppeteerCore) {
-            await this._updateRevision();
-        }
-        let firefoxExecutable = executablePath;
-        if (!executablePath) {
-            const { missingText, executablePath } = (0, ProductLauncher_js_1.resolveExecutablePath)(this);
-            if (missingText) {
-                throw new Error(missingText);
-            }
+        let firefoxExecutable;
+        if (this.puppeteer._isPuppeteerCore || executablePath) {
+            (0, assert_js_1.assert)(executablePath, `An \`executablePath\` must be specified for \`puppeteer-core\``);
             firefoxExecutable = executablePath;
         }
-        if (!firefoxExecutable) {
-            throw new Error('firefoxExecutable is not found.');
+        else {
+            firefoxExecutable = this.executablePath();
         }
         const runner = new BrowserRunner_js_1.BrowserRunner(this.product, firefoxExecutable, firefoxArguments, userDataDir, isTempUserDataDir);
         runner.start({
@@ -46567,9 +49710,11 @@ class FirefoxLauncher {
                 const connection = await runner.setupWebDriverBiDiConnection({
                     timeout,
                     slowMo,
-                    preferredRevision: this._preferredRevision,
+                    preferredRevision: this.puppeteer.browserRevision,
                 });
-                browser = await Browser_js_1.Browser.create({
+                const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
+                /* webpackIgnore: true */ 845)));
+                browser = await BiDi.Browser.create({
                     connection,
                     closeCallback: runner.close.bind(runner),
                     process: runner.proc,
@@ -46587,9 +49732,9 @@ class FirefoxLauncher {
                 usePipe: pipe,
                 timeout,
                 slowMo,
-                preferredRevision: this._preferredRevision,
+                preferredRevision: this.puppeteer.browserRevision,
             });
-            browser = await Browser_js_2.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
+            browser = await Browser_js_1.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
         }
         catch (error) {
             runner.kill();
@@ -46609,22 +49754,18 @@ class FirefoxLauncher {
         return browser;
     }
     executablePath() {
-        return (0, ProductLauncher_js_1.resolveExecutablePath)(this).executablePath;
-    }
-    async _updateRevision() {
         // replace 'latest' placeholder with actual downloaded revision
-        if (this._preferredRevision === 'latest') {
-            const browserFetcher = new BrowserFetcher_js_1.BrowserFetcher({
+        if (this.puppeteer.browserRevision === 'latest') {
+            const browserFetcher = this.puppeteer.createBrowserFetcher({
                 product: this.product,
+                path: this.puppeteer.defaultDownloadPath,
             });
-            const localRevisions = await browserFetcher.localRevisions();
+            const localRevisions = browserFetcher.localRevisions();
             if (localRevisions[0]) {
-                this._preferredRevision = localRevisions[0];
+                this.actualBrowserRevision = localRevisions[0];
             }
         }
-    }
-    get product() {
-        return 'firefox';
+        return this.resolveExecutablePath();
     }
     defaultArgs(options = {}) {
         const { devtools = false, headless = !devtools, args = [], userDataDir = null, } = options;
@@ -46841,7 +49982,7 @@ class FirefoxLauncher {
         }
     }
     async _createProfile(extraPrefs) {
-        const temporaryProfilePath = await fs_1.default.promises.mkdtemp(path_1.default.join((0, util_js_1.tmpdir)(), 'puppeteer_dev_firefox_profile-'));
+        const temporaryProfilePath = await fs_1.default.promises.mkdtemp(this.getProfilePath());
         const prefs = this.defaultPreferences(extraPrefs);
         await this.writePreferences(prefs, temporaryProfilePath);
         return temporaryProfilePath;
@@ -46849,6 +49990,31 @@ class FirefoxLauncher {
 }
 exports.FirefoxLauncher = FirefoxLauncher;
 //# sourceMappingURL=FirefoxLauncher.js.map
+
+/***/ }),
+
+/***/ 5608:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2020 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=LaunchOptions.js.map
 
 /***/ }),
 
@@ -46939,11 +50105,43 @@ _PipeTransport_pipeWrite = new WeakMap(), _PipeTransport_eventListeners = new We
 
 "use strict";
 
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
 };
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _ProductLauncher_product;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createLauncher = exports.resolveExecutablePath = exports.executablePathForChannel = void 0;
+exports.ProductLauncher = void 0;
 /**
  * Copyright 2017 Google Inc. All rights reserved.
  *
@@ -46960,151 +50158,94 @@ exports.createLauncher = exports.resolveExecutablePath = exports.executablePathF
  * limitations under the License.
  */
 const fs_1 = __nccwpck_require__(7147);
-const os_1 = __importDefault(__nccwpck_require__(2037));
-const BrowserFetcher_js_1 = __nccwpck_require__(6573);
-const ChromeLauncher_js_1 = __nccwpck_require__(5524);
-const FirefoxLauncher_js_1 = __nccwpck_require__(9585);
+const os_1 = __importStar(__nccwpck_require__(2037));
+const path_1 = __nccwpck_require__(1017);
 /**
- * @internal
+ * Describes a launcher - a class that is able to create and launch a browser instance.
+ *
+ * @public
  */
-function executablePathForChannel(channel) {
-    const platform = os_1.default.platform();
-    let chromePath;
-    switch (platform) {
-        case 'win32':
-            switch (channel) {
-                case 'chrome':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome\\Application\\chrome.exe`;
-                    break;
-                case 'chrome-beta':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome Beta\\Application\\chrome.exe`;
-                    break;
-                case 'chrome-canary':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome SxS\\Application\\chrome.exe`;
-                    break;
-                case 'chrome-dev':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome Dev\\Application\\chrome.exe`;
-                    break;
-            }
-            break;
-        case 'darwin':
-            switch (channel) {
-                case 'chrome':
-                    chromePath =
-                        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-                    break;
-                case 'chrome-beta':
-                    chromePath =
-                        '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta';
-                    break;
-                case 'chrome-canary':
-                    chromePath =
-                        '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary';
-                    break;
-                case 'chrome-dev':
-                    chromePath =
-                        '/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev';
-                    break;
-            }
-            break;
-        case 'linux':
-            switch (channel) {
-                case 'chrome':
-                    chromePath = '/opt/google/chrome/chrome';
-                    break;
-                case 'chrome-beta':
-                    chromePath = '/opt/google/chrome-beta/chrome';
-                    break;
-                case 'chrome-dev':
-                    chromePath = '/opt/google/chrome-unstable/chrome';
-                    break;
-            }
-            break;
+class ProductLauncher {
+    /**
+     * @internal
+     */
+    constructor(puppeteer, product) {
+        _ProductLauncher_product.set(this, void 0);
+        this.puppeteer = puppeteer;
+        __classPrivateFieldSet(this, _ProductLauncher_product, product, "f");
     }
-    if (!chromePath) {
-        throw new Error(`Unable to detect browser executable path for '${channel}' on ${platform}.`);
+    get product() {
+        return __classPrivateFieldGet(this, _ProductLauncher_product, "f");
     }
-    // Check if Chrome exists and is accessible.
-    try {
-        (0, fs_1.accessSync)(chromePath);
+    launch() {
+        throw new Error('Not implemented');
     }
-    catch (error) {
-        throw new Error(`Could not find Google Chrome executable for channel '${channel}' at '${chromePath}'.`);
+    executablePath() {
+        throw new Error('Not implemented');
     }
-    return chromePath;
-}
-exports.executablePathForChannel = executablePathForChannel;
-/**
- * @internal
- */
-function resolveExecutablePath(launcher) {
-    const { product, _isPuppeteerCore, _preferredRevision } = launcher;
-    let downloadPath;
-    // puppeteer-core doesn't take into account PUPPETEER_* env variables.
-    if (!_isPuppeteerCore) {
-        const executablePath = process.env['PUPPETEER_EXECUTABLE_PATH'] ||
-            process.env['npm_config_puppeteer_executable_path'] ||
-            process.env['npm_package_config_puppeteer_executable_path'];
+    defaultArgs() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Set only for Firefox, after the launcher resolves the `latest` revision to
+     * the actual revision.
+     * @internal
+     */
+    getActualBrowserRevision() {
+        return this.actualBrowserRevision;
+    }
+    /**
+     * @internal
+     */
+    getProfilePath() {
+        var _a;
+        return (0, path_1.join)((_a = this.puppeteer.configuration.temporaryDirectory) !== null && _a !== void 0 ? _a : (0, os_1.tmpdir)(), `puppeteer_dev_${this.product}_profile-`);
+    }
+    /**
+     * @internal
+     */
+    resolveExecutablePath() {
+        const executablePath = this.puppeteer.configuration.executablePath;
         if (executablePath) {
-            const missingText = !(0, fs_1.existsSync)(executablePath)
-                ? 'Tried to use PUPPETEER_EXECUTABLE_PATH env variable to launch browser but did not find any executable at: ' +
-                    executablePath
-                : undefined;
-            return { executablePath, missingText };
+            if (!(0, fs_1.existsSync)(executablePath)) {
+                throw new Error(`Tried to find the browser at the configured path (${executablePath}), but no executable was found.`);
+            }
+            return executablePath;
         }
         const ubuntuChromiumPath = '/usr/bin/chromium-browser';
-        if (product === 'chrome' &&
+        if (this.product === 'chrome' &&
             os_1.default.platform() !== 'darwin' &&
             os_1.default.arch() === 'arm64' &&
             (0, fs_1.existsSync)(ubuntuChromiumPath)) {
-            return { executablePath: ubuntuChromiumPath, missingText: undefined };
+            return ubuntuChromiumPath;
         }
-        downloadPath =
-            process.env['PUPPETEER_DOWNLOAD_PATH'] ||
-                process.env['npm_config_puppeteer_download_path'] ||
-                process.env['npm_package_config_puppeteer_download_path'];
-    }
-    const browserFetcher = new BrowserFetcher_js_1.BrowserFetcher({
-        product: product,
-        path: downloadPath,
-    });
-    if (!_isPuppeteerCore) {
-        let revision = process.env['PUPPETEER_BROWSER_REVISION'];
-        if (product === 'chrome') {
-            revision !== null && revision !== void 0 ? revision : (revision = process.env['PUPPETEER_CHROMIUM_REVISION']);
+        const browserFetcher = this.puppeteer.createBrowserFetcher({
+            product: this.product,
+            path: this.puppeteer.defaultDownloadPath,
+        });
+        const revisionInfo = browserFetcher.revisionInfo(this.puppeteer.browserRevision);
+        if (!revisionInfo.local) {
+            if (this.puppeteer.configuration.browserRevision) {
+                throw new Error(`Tried to find the browser at the configured path (${revisionInfo.executablePath}) for revision ${this.puppeteer.browserRevision}, but no executable was found.`);
+            }
+            switch (this.product) {
+                case 'chrome':
+                    throw new Error(`Could not find Chromium (rev. ${this.puppeteer.browserRevision}). This can occur if either\n` +
+                        ' 1. you did not perform an installation before running the script (e.g. `npm install`) or\n' +
+                        ` 2. your cache path is incorrectly configured (which is: ${this.puppeteer.configuration.cacheDirectory}).\n` +
+                        'For (2), check out our guide on configuring puppeteer at https://pptr.dev/guides/configuration.');
+                case 'firefox':
+                    throw new Error(`Could not find Firefox (rev. ${this.puppeteer.browserRevision}). This can occur if either\n` +
+                        ' 1. you did not perform an installation for Firefox before running the script (e.g. `PUPPETEER_PRODUCT=firefox npm install`) or\n' +
+                        ` 2. your cache path is incorrectly configured (which is: ${this.puppeteer.configuration.cacheDirectory}).\n` +
+                        'For (2), check out our guide on configuring puppeteer at https://pptr.dev/guides/configuration.');
+            }
         }
-        if (revision) {
-            const revisionInfo = browserFetcher.revisionInfo(revision);
-            const missingText = !revisionInfo.local
-                ? 'Tried to use PUPPETEER_CHROMIUM_REVISION env variable to launch browser but did not find executable at: ' +
-                    revisionInfo.executablePath
-                : undefined;
-            return { executablePath: revisionInfo.executablePath, missingText };
-        }
-    }
-    const revisionInfo = browserFetcher.revisionInfo(_preferredRevision);
-    const firefoxHelp = `Run \`PUPPETEER_PRODUCT=firefox npm install\` to download a supported Firefox browser binary.`;
-    const chromeHelp = `Run \`npm install\` to download the correct Chromium revision (${launcher._preferredRevision}).`;
-    const missingText = !revisionInfo.local
-        ? `Could not find expected browser (${product}) locally. ${product === 'chrome' ? chromeHelp : firefoxHelp}`
-        : undefined;
-    return { executablePath: revisionInfo.executablePath, missingText };
-}
-exports.resolveExecutablePath = resolveExecutablePath;
-/**
- * @internal
- */
-function createLauncher(preferredRevision, isPuppeteerCore, product = 'chrome') {
-    switch (product) {
-        case 'firefox':
-            return new FirefoxLauncher_js_1.FirefoxLauncher(preferredRevision, isPuppeteerCore);
-        case 'chrome':
-            return new ChromeLauncher_js_1.ChromeLauncher(preferredRevision, isPuppeteerCore);
-        default:
-            throw new Error(`Unknown product: ${product}`);
+        return revisionInfo.executablePath;
     }
 }
-exports.createLauncher = createLauncher;
+exports.ProductLauncher = ProductLauncher;
+_ProductLauncher_product = new WeakMap();
 //# sourceMappingURL=ProductLauncher.js.map
 
 /***/ }),
@@ -47140,13 +50281,15 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _PuppeteerNode_launcher, _PuppeteerNode_productName;
+var _PuppeteerNode_instances, _PuppeteerNode__launcher, _PuppeteerNode_lastLaunchedProduct, _PuppeteerNode_launcher_get;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PuppeteerNode = void 0;
+const path_1 = __nccwpck_require__(1017);
 const Puppeteer_js_1 = __nccwpck_require__(8435);
 const revisions_js_1 = __nccwpck_require__(2580);
 const BrowserFetcher_js_1 = __nccwpck_require__(6573);
-const ProductLauncher_js_1 = __nccwpck_require__(9675);
+const ChromeLauncher_js_1 = __nccwpck_require__(5524);
+const FirefoxLauncher_js_1 = __nccwpck_require__(9585);
 /**
  * Extends the main {@link Puppeteer} class with Node specific behaviour for
  * fetching and downloading browsers.
@@ -47165,7 +50308,7 @@ const ProductLauncher_js_1 = __nccwpck_require__(9675);
  * The following is a typical example of using Puppeteer to drive automation:
  *
  * ```ts
- * const puppeteer = require('puppeteer');
+ * import puppeteer from 'puppeteer';
  *
  * (async () => {
  *   const browser = await puppeteer.launch();
@@ -47187,17 +50330,26 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      * @internal
      */
     constructor(settings) {
-        const { preferredRevision, productName, ...commonSettings } = settings;
+        const { configuration, ...commonSettings } = settings;
         super(commonSettings);
-        _PuppeteerNode_launcher.set(this, void 0);
-        _PuppeteerNode_productName.set(this, void 0);
+        _PuppeteerNode_instances.add(this);
+        _PuppeteerNode__launcher.set(this, void 0);
+        _PuppeteerNode_lastLaunchedProduct.set(this, void 0);
         /**
          * @internal
          */
-        this._preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
-        __classPrivateFieldSet(this, _PuppeteerNode_productName, productName, "f");
-        if (preferredRevision) {
-            this._preferredRevision = preferredRevision;
+        this.configuration = {};
+        if (configuration) {
+            this.configuration = configuration;
+        }
+        switch (this.configuration.defaultProduct) {
+            case 'firefox':
+                this.defaultBrowserRevision = revisions_js_1.PUPPETEER_REVISIONS.firefox;
+                break;
+            default:
+                this.configuration.defaultProduct = 'chrome';
+                this.defaultBrowserRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
+                break;
         }
         this.connect = this.connect.bind(this);
         this.launch = this.launch.bind(this);
@@ -47210,28 +50362,23 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      *
      * @param options - Set of configurable options to set on the browser.
      * @returns Promise which resolves to browser instance.
+     *
+     * @public
      */
     connect(options) {
         return super.connect(options);
     }
     /**
-     * @internal
-     */
-    get _productName() {
-        return __classPrivateFieldGet(this, _PuppeteerNode_productName, "f");
-    }
-    set _productName(name) {
-        if (__classPrivateFieldGet(this, _PuppeteerNode_productName, "f") !== name) {
-            this._changedProduct = true;
-        }
-        __classPrivateFieldSet(this, _PuppeteerNode_productName, name, "f");
-    }
-    /**
-     * Launches puppeteer and launches a browser instance with given arguments and
-     * options when specified.
+     * Launches a browser instance with given arguments and options when
+     * specified.
+     *
+     * When using with `puppeteer-core`,
+     * {@link LaunchOptions.executablePath | options.executablePath} or
+     * {@link LaunchOptions.channel | options.channel} must be provided.
      *
      * @example
-     * You can use `ignoreDefaultArgs` to filter out `--mute-audio` from default arguments:
+     * You can use {@link LaunchOptions.ignoreDefaultArgs | options.ignoreDefaultArgs}
+     * to filter out `--mute-audio` from default arguments:
      *
      * ```ts
      * const browser = await puppeteer.launch({
@@ -47240,119 +50387,196 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      * ```
      *
      * @remarks
-     * **NOTE** Puppeteer can also be used to control the Chrome browser, but it
-     * works best with the version of Chromium it is bundled with. There is no
-     * guarantee it will work with any other version. Use `executablePath` option
-     * with extreme caution. If Google Chrome (rather than Chromium) is preferred,
-     * a {@link https://www.google.com/chrome/browser/canary.html | Chrome Canary}
+     * Puppeteer can also be used to control the Chrome browser, but it works best
+     * with the version of Chromium downloaded by default by Puppeteer. There is
+     * no guarantee it will work with any other version. If Google Chrome (rather
+     * than Chromium) is preferred, a
+     * {@link https://www.google.com/chrome/browser/canary.html | Chrome Canary}
      * or
      * {@link https://www.chromium.org/getting-involved/dev-channel | Dev Channel}
-     * build is suggested. In `puppeteer.launch([options])`, any mention of
-     * Chromium also applies to Chrome. See
+     * build is suggested. See
      * {@link https://www.howtogeek.com/202825/what%E2%80%99s-the-difference-between-chromium-and-chrome/ | this article}
      * for a description of the differences between Chromium and Chrome.
      * {@link https://chromium.googlesource.com/chromium/src/+/lkgr/docs/chromium_browser_vs_google_chrome.md | This article}
      * describes some differences for Linux users.
      *
-     * @param options - Set of configurable options to set on the browser.
-     * @returns Promise which resolves to browser instance.
+     * @param options - Options to configure launching behavior.
+     *
+     * @public
      */
     launch(options = {}) {
-        if (options.product) {
-            this._productName = options.product;
-        }
-        return this._launcher.launch(options);
+        const { product = this.defaultProduct } = options;
+        __classPrivateFieldSet(this, _PuppeteerNode_lastLaunchedProduct, product, "f");
+        return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).launch(options);
     }
     /**
-     * @remarks
-     * **NOTE** `puppeteer.executablePath()` is affected by the
-     * `PUPPETEER_EXECUTABLE_PATH` and `PUPPETEER_CHROMIUM_REVISION` environment
-     * variables.
+     * @returns The default executable path.
      *
-     * @returns A path where Puppeteer expects to find the bundled browser. The
-     * browser binary might not be there if the download was skipped with the
-     * `PUPPETEER_SKIP_DOWNLOAD` environment variable.
+     * @public
      */
     executablePath(channel) {
-        return this._launcher.executablePath(channel);
+        return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).executablePath(channel);
     }
     /**
      * @internal
      */
-    get _launcher() {
-        if (!__classPrivateFieldGet(this, _PuppeteerNode_launcher, "f") ||
-            __classPrivateFieldGet(this, _PuppeteerNode_launcher, "f").product !== this._productName ||
-            this._changedProduct) {
-            switch (this._productName) {
-                case 'firefox':
-                    this._preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.firefox;
-                    break;
-                case 'chrome':
-                default:
-                    this._preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
-            }
-            this._changedProduct = false;
-            __classPrivateFieldSet(this, _PuppeteerNode_launcher, (0, ProductLauncher_js_1.createLauncher)(this._preferredRevision, this._isPuppeteerCore, this._productName), "f");
-        }
-        return __classPrivateFieldGet(this, _PuppeteerNode_launcher, "f");
+    get browserRevision() {
+        var _a, _b, _c;
+        return ((_c = (_b = (_a = __classPrivateFieldGet(this, _PuppeteerNode__launcher, "f")) === null || _a === void 0 ? void 0 : _a.getActualBrowserRevision()) !== null && _b !== void 0 ? _b : this.configuration.browserRevision) !== null && _c !== void 0 ? _c : this.defaultBrowserRevision);
     }
     /**
-     * The name of the browser that is under automation (`"chrome"` or
-     * `"firefox"`)
+     * @returns The default download path for puppeteer. For puppeteer-core, this
+     * code should never be called as it is never defined.
      *
-     * @remarks
-     * The product is set by the `PUPPETEER_PRODUCT` environment variable or the
-     * `product` option in `puppeteer.launch([options])` and defaults to `chrome`.
-     * Firefox support is experimental.
+     * @internal
+     */
+    get defaultDownloadPath() {
+        var _a;
+        return ((_a = this.configuration.downloadPath) !== null && _a !== void 0 ? _a : (0, path_1.join)(this.configuration.cacheDirectory, this.product));
+    }
+    /**
+     * @returns The name of the browser that was last launched.
+     *
+     * @public
+     */
+    get lastLaunchedProduct() {
+        var _a;
+        return (_a = __classPrivateFieldGet(this, _PuppeteerNode_lastLaunchedProduct, "f")) !== null && _a !== void 0 ? _a : this.defaultProduct;
+    }
+    /**
+     * @returns The name of the browser that will be launched by default. For
+     * `puppeteer`, this is influenced by your configuration. Otherwise, it's
+     * `chrome`.
+     *
+     * @public
+     */
+    get defaultProduct() {
+        var _a;
+        return (_a = this.configuration.defaultProduct) !== null && _a !== void 0 ? _a : 'chrome';
+    }
+    /**
+     * @deprecated Do not use as this field as it does not take into account
+     * multiple browsers of different types. Use
+     * {@link PuppeteerNode.defaultProduct | defaultProduct} or
+     * {@link PuppeteerNode.lastLaunchedProduct | lastLaunchedProduct}.
+     *
+     * @returns The name of the browser that is under automation.
+     *
+     * @public
      */
     get product() {
-        return this._launcher.product;
+        return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).product;
     }
     /**
      * @param options - Set of configurable options to set on the browser.
+     *
      * @returns The default flags that Chromium will be launched with.
+     *
+     * @public
      */
     defaultArgs(options = {}) {
-        return this._launcher.defaultArgs(options);
+        return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).defaultArgs(options);
     }
     /**
-     * @deprecated Import {@link BrowserFetcher} directly and use the constructor.
-     *
      * @param options - Set of configurable options to specify the settings of the
      * BrowserFetcher.
+     *
+     * @remarks
+     * If you are using `puppeteer-core`, do not use this method. Just
+     * construct {@link BrowserFetcher} manually.
+     *
      * @returns A new BrowserFetcher instance.
      */
-    createBrowserFetcher(options) {
+    createBrowserFetcher(options = {}) {
+        var _a;
+        const downloadPath = this.defaultDownloadPath;
+        if (!options.path && downloadPath) {
+            options.path = downloadPath;
+        }
+        if (!options.path) {
+            throw new Error('A `path` must be specified for `puppeteer-core`.');
+        }
+        if (!('useMacOSARMBinary' in options) &&
+            ((_a = this.configuration.experiments) === null || _a === void 0 ? void 0 : _a.macArmChromiumEnabled)) {
+            options.useMacOSARMBinary = true;
+        }
+        if (!('host' in options) && this.configuration.downloadHost) {
+            options.host = this.configuration.downloadHost;
+        }
+        if (!('product' in options) && this.configuration.defaultProduct) {
+            options.product = this.configuration.defaultProduct;
+        }
         return new BrowserFetcher_js_1.BrowserFetcher(options);
     }
 }
 exports.PuppeteerNode = PuppeteerNode;
-_PuppeteerNode_launcher = new WeakMap(), _PuppeteerNode_productName = new WeakMap();
+_PuppeteerNode__launcher = new WeakMap(), _PuppeteerNode_lastLaunchedProduct = new WeakMap(), _PuppeteerNode_instances = new WeakSet(), _PuppeteerNode_launcher_get = function _PuppeteerNode_launcher_get() {
+    if (__classPrivateFieldGet(this, _PuppeteerNode__launcher, "f") &&
+        __classPrivateFieldGet(this, _PuppeteerNode__launcher, "f").product === this.lastLaunchedProduct) {
+        return __classPrivateFieldGet(this, _PuppeteerNode__launcher, "f");
+    }
+    switch (this.lastLaunchedProduct) {
+        case 'chrome':
+            this.defaultBrowserRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
+            __classPrivateFieldSet(this, _PuppeteerNode__launcher, new ChromeLauncher_js_1.ChromeLauncher(this), "f");
+            break;
+        case 'firefox':
+            this.defaultBrowserRevision = revisions_js_1.PUPPETEER_REVISIONS.firefox;
+            __classPrivateFieldSet(this, _PuppeteerNode__launcher, new FirefoxLauncher_js_1.FirefoxLauncher(this), "f");
+            break;
+        default:
+            throw new Error(`Unknown product: ${__classPrivateFieldGet(this, _PuppeteerNode_lastLaunchedProduct, "f")}`);
+    }
+    return __classPrivateFieldGet(this, _PuppeteerNode__launcher, "f");
+};
 //# sourceMappingURL=PuppeteerNode.js.map
 
 /***/ }),
 
-/***/ 7632:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ 1068:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.tmpdir = void 0;
-const os_1 = __nccwpck_require__(2037);
 /**
- * Gets the temporary directory, either from the environmental variable
- * `PUPPETEER_TMP_DIR` or the `os.tmpdir`.
+ * Copyright 2022 Google Inc. All rights reserved.
  *
- * @returns The temporary directory path.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * @internal
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-const tmpdir = () => {
-    return process.env['PUPPETEER_TMP_DIR'] || (0, os_1.tmpdir)();
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
-exports.tmpdir = tmpdir;
-//# sourceMappingURL=util.js.map
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+__exportStar(__nccwpck_require__(6573), exports);
+__exportStar(__nccwpck_require__(7988), exports);
+__exportStar(__nccwpck_require__(5524), exports);
+__exportStar(__nccwpck_require__(9585), exports);
+__exportStar(__nccwpck_require__(5608), exports);
+__exportStar(__nccwpck_require__(9238), exports);
+__exportStar(__nccwpck_require__(9675), exports);
+__exportStar(__nccwpck_require__(4140), exports);
+//# sourceMappingURL=node.js.map
 
 /***/ }),
 
@@ -47392,15 +50616,15 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.launch = exports.executablePath = exports.defaultArgs = exports.createBrowserFetcher = exports.connect = void 0;
-__exportStar(__nccwpck_require__(1626), exports);
-__exportStar(__nccwpck_require__(6315), exports);
-__exportStar(__nccwpck_require__(3768), exports);
-__exportStar(__nccwpck_require__(8435), exports);
+__exportStar(__nccwpck_require__(1742), exports);
+__exportStar(__nccwpck_require__(3031), exports);
+__exportStar(__nccwpck_require__(1068), exports);
+__exportStar(__nccwpck_require__(2580), exports);
+__exportStar(__nccwpck_require__(1470), exports);
 /**
  * @deprecated Use the query handler API defined on {@link Puppeteer}
  */
-__exportStar(__nccwpck_require__(3200), exports);
-__exportStar(__nccwpck_require__(6573), exports);
+__exportStar(__nccwpck_require__(5057), exports);
 const PuppeteerNode_js_1 = __nccwpck_require__(4140);
 /**
  * @public
@@ -47408,9 +50632,7 @@ const PuppeteerNode_js_1 = __nccwpck_require__(4140);
 const puppeteer = new PuppeteerNode_js_1.PuppeteerNode({
     isPuppeteerCore: true,
 });
-exports.connect = puppeteer.connect, 
-/** @deprecated Import {@link BrowserFetcher} directly and use the constructor. */
-exports.createBrowserFetcher = puppeteer.createBrowserFetcher, exports.defaultArgs = puppeteer.defaultArgs, exports.executablePath = puppeteer.executablePath, exports.launch = puppeteer.launch;
+exports.connect = puppeteer.connect, exports.createBrowserFetcher = puppeteer.createBrowserFetcher, exports.defaultArgs = puppeteer.defaultArgs, exports.executablePath = puppeteer.executablePath, exports.launch = puppeteer.launch;
 exports["default"] = puppeteer;
 //# sourceMappingURL=puppeteer-core.js.map
 
@@ -47442,10 +50664,50 @@ exports.PUPPETEER_REVISIONS = void 0;
  * @internal
  */
 exports.PUPPETEER_REVISIONS = Object.freeze({
-    chromium: '1045629',
+    chromium: '1095492',
     firefox: 'latest',
 });
 //# sourceMappingURL=revisions.js.map
+
+/***/ }),
+
+/***/ 6992:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AsyncIterableUtil = void 0;
+/**
+ * @internal
+ */
+class AsyncIterableUtil {
+    static async *map(iterable, map) {
+        for await (const value of iterable) {
+            yield await map(value);
+        }
+    }
+    static async *flatMap(iterable, map) {
+        for await (const value of iterable) {
+            yield* map(value);
+        }
+    }
+    static async collect(iterable) {
+        const result = [];
+        for await (const value of iterable) {
+            result.push(value);
+        }
+        return result;
+    }
+    static async first(iterable) {
+        for await (const value of iterable) {
+            return value;
+        }
+        return;
+    }
+}
+exports.AsyncIterableUtil = AsyncIterableUtil;
+//# sourceMappingURL=AsyncIterableUtil.js.map
 
 /***/ }),
 
@@ -47565,6 +50827,98 @@ exports.isErrnoException = isErrnoException;
 
 /***/ }),
 
+/***/ 2329:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.interpolateFunction = exports.stringifyFunction = exports.createFunction = void 0;
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+const createdFunctions = new Map();
+/**
+ * Creates a function from a string.
+ *
+ * @internal
+ */
+const createFunction = (functionValue) => {
+    let fn = createdFunctions.get(functionValue);
+    if (fn) {
+        return fn;
+    }
+    fn = new Function(`return ${functionValue}`)();
+    createdFunctions.set(functionValue, fn);
+    return fn;
+};
+exports.createFunction = createFunction;
+/**
+ * @internal
+ */
+function stringifyFunction(fn) {
+    let value = fn.toString();
+    try {
+        new Function(`(${value})`);
+    }
+    catch {
+        // This means we might have a function shorthand (e.g. `test(){}`). Let's
+        // try prefixing.
+        let prefix = 'function ';
+        if (value.startsWith('async ')) {
+            prefix = `async ${prefix}`;
+            value = value.substring('async '.length);
+        }
+        value = `${prefix}${value}`;
+        try {
+            new Function(`(${value})`);
+        }
+        catch {
+            // We tried hard to serialize, but there's a weird beast here.
+            throw new Error('Passed function cannot be serialized!');
+        }
+    }
+    return value;
+}
+exports.stringifyFunction = stringifyFunction;
+/**
+ * Replaces `PLACEHOLDER`s with the given replacements.
+ *
+ * All replacements must be valid JS code.
+ *
+ * @example
+ *
+ * ```ts
+ * interpolateFunction(() => PLACEHOLDER('test'), {test: 'void 0'});
+ * // Equivalent to () => void 0
+ * ```
+ *
+ * @internal
+ */
+const interpolateFunction = (fn, replacements) => {
+    let value = stringifyFunction(fn);
+    for (const [name, jsValue] of Object.entries(replacements)) {
+        value = value.replace(new RegExp(`PLACEHOLDER\\(\\s*(?:'${name}'|"${name}")\\s*\\)`, 'g'), jsValue);
+    }
+    return (0, exports.createFunction)(value);
+};
+exports.interpolateFunction = interpolateFunction;
+//# sourceMappingURL=Function.js.map
+
+/***/ }),
+
 /***/ 7729:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -47604,15 +50958,59 @@ exports.assert = assert;
 
 /***/ }),
 
+/***/ 1470:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2022 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+__exportStar(__nccwpck_require__(7729), exports);
+__exportStar(__nccwpck_require__(7454), exports);
+__exportStar(__nccwpck_require__(7015), exports);
+__exportStar(__nccwpck_require__(2937), exports);
+__exportStar(__nccwpck_require__(6992), exports);
+//# sourceMappingURL=util.js.map
+
+/***/ }),
+
 /***/ 3733:
 /***/ ((module) => {
 
 "use strict";
 
 
-function mitt_es(n){return {all:n=n||new Map,on:function(t,e){var i=n.get(t);i&&i.push(e)||n.set(t,[e]);},off:function(t,e){var i=n.get(t);i&&i.splice(i.indexOf(e)>>>0,1);},emit:function(t,e){(n.get(t)||[]).slice().map(function(n){n(e);}),(n.get("*")||[]).slice().map(function(n){n(t,e);});}}}
+function mitt(n){return {all:n=n||new Map,on:function(t,e){var i=n.get(t);i?i.push(e):n.set(t,[e]);},off:function(t,e){var i=n.get(t);i&&(e?i.splice(i.indexOf(e)>>>0,1):n.set(t,[]));},emit:function(t,e){var i=n.get(t);i&&i.slice().map(function(n){n(e);}),(i=n.get("*"))&&i.slice().map(function(n){n(t,e);});}}}
 
-module.exports = mitt_es;
+module.exports = mitt;
 
 
 /***/ }),
