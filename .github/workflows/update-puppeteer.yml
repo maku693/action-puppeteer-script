@@ -21,4 +21,7 @@ jobs:
           branch: update-puppeteer-core
           base: main
           title: Update puppeteer-core
-          body: Update puppeteer-core to latest version.
+          body: |
+            Update puppeteer-core to latest version.
+
+            To run CI workflow, once close this PR then reopen it.
