@@ -1,0 +1,27 @@
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "* 1 * * SAT" # 10am every Saturday in JST
+
+jobs:
+  update-puppeteer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: npm
+      - run: npm ci
+      - run: npm install puppeteer-core@latest
+      - run: npm run build
+      - uses: peter-evans/create-pull-request@v4
+        with:
+          commit-message: Update puppeteer-core
+          branch: update-puppeteer-core
+          base: main
+          title: Update puppeteer-core
+          body: |
+            Update puppeteer-core to latest version.
+
+            To run CI workflow, once close this PR then reopen it.
