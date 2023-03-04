@@ -19,6 +19,7 @@ jobs:
       - uses: peter-evans/create-pull-request@v4
         with:
           commit-message: Update puppeteer-core
+          branch: update-puppeteer-core
+          base: main
           title: Update puppeteer-core
           body: Update puppeteer-core to latest version.
-          branch: update-puppeteer-core
