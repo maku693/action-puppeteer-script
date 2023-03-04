@@ -2,7 +2,7 @@ on:
   push: # XXX: For testing purposes
   workflow_dispatch:
   schedule:
-    - cron: "* 1 * * SAT" # 10am every Saturday
+    - cron: "* 1 * * SAT" # 10am every Saturday in JST
 
 jobs:
   ci:
