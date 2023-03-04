@@ -5,7 +5,7 @@ on:
     - cron: "* 1 * * SAT" # 10am every Saturday in JST
 
 jobs:
-  ci:
+  update-puppeteer:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
