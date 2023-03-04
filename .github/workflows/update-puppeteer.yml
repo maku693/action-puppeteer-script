@@ -1,0 +1,24 @@
+on:
+  push: # XXX: For testing purposes
+  workflow_dispatch:
+  schedule:
+    - cron: "* 1 * * SAT" # 10am every Saturday
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: npm
+      - run: npm ci
+      - run: npm install puppeteer-core@latest
+      - run: npm run build
+      - uses: peter-evans/create-pull-request@v4
+        with:
+          commit-message: Update puppeteer-core
+          title: Update puppeteer-core
+          body: Update puppeteer-core to latest version.
+          branch: update-puppeteer-core
