@@ -15,7 +15,7 @@ jobs:
       - run: npm ci
       - run: npm install puppeteer-core@latest
       - run: npm run build
-      - uses: peter-evans/create-pull-request@v4
+      - uses: peter-evans/create-pull-request@v5
         with:
           commit-message: Update puppeteer-core
           branch: update-puppeteer-core
