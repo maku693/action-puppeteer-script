@@ -4245,6 +4245,196 @@ exports["default"] = promisify;
 
 /***/ }),
 
+/***/ 5063:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = ({onlyFirst = false} = {}) => {
+	const pattern = [
+		'[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)',
+		'(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))'
+	].join('|');
+
+	return new RegExp(pattern, onlyFirst ? undefined : 'g');
+};
+
+
+/***/ }),
+
+/***/ 2068:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+/* module decorator */ module = __nccwpck_require__.nmd(module);
+
+
+const wrapAnsi16 = (fn, offset) => (...args) => {
+	const code = fn(...args);
+	return `\u001B[${code + offset}m`;
+};
+
+const wrapAnsi256 = (fn, offset) => (...args) => {
+	const code = fn(...args);
+	return `\u001B[${38 + offset};5;${code}m`;
+};
+
+const wrapAnsi16m = (fn, offset) => (...args) => {
+	const rgb = fn(...args);
+	return `\u001B[${38 + offset};2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
+};
+
+const ansi2ansi = n => n;
+const rgb2rgb = (r, g, b) => [r, g, b];
+
+const setLazyProperty = (object, property, get) => {
+	Object.defineProperty(object, property, {
+		get: () => {
+			const value = get();
+
+			Object.defineProperty(object, property, {
+				value,
+				enumerable: true,
+				configurable: true
+			});
+
+			return value;
+		},
+		enumerable: true,
+		configurable: true
+	});
+};
+
+/** @type {typeof import('color-convert')} */
+let colorConvert;
+const makeDynamicStyles = (wrap, targetSpace, identity, isBackground) => {
+	if (colorConvert === undefined) {
+		colorConvert = __nccwpck_require__(6931);
+	}
+
+	const offset = isBackground ? 10 : 0;
+	const styles = {};
+
+	for (const [sourceSpace, suite] of Object.entries(colorConvert)) {
+		const name = sourceSpace === 'ansi16' ? 'ansi' : sourceSpace;
+		if (sourceSpace === targetSpace) {
+			styles[name] = wrap(identity, offset);
+		} else if (typeof suite === 'object') {
+			styles[name] = wrap(suite[targetSpace], offset);
+		}
+	}
+
+	return styles;
+};
+
+function assembleStyles() {
+	const codes = new Map();
+	const styles = {
+		modifier: {
+			reset: [0, 0],
+			// 21 isn't widely supported and 22 does the same thing
+			bold: [1, 22],
+			dim: [2, 22],
+			italic: [3, 23],
+			underline: [4, 24],
+			inverse: [7, 27],
+			hidden: [8, 28],
+			strikethrough: [9, 29]
+		},
+		color: {
+			black: [30, 39],
+			red: [31, 39],
+			green: [32, 39],
+			yellow: [33, 39],
+			blue: [34, 39],
+			magenta: [35, 39],
+			cyan: [36, 39],
+			white: [37, 39],
+
+			// Bright color
+			blackBright: [90, 39],
+			redBright: [91, 39],
+			greenBright: [92, 39],
+			yellowBright: [93, 39],
+			blueBright: [94, 39],
+			magentaBright: [95, 39],
+			cyanBright: [96, 39],
+			whiteBright: [97, 39]
+		},
+		bgColor: {
+			bgBlack: [40, 49],
+			bgRed: [41, 49],
+			bgGreen: [42, 49],
+			bgYellow: [43, 49],
+			bgBlue: [44, 49],
+			bgMagenta: [45, 49],
+			bgCyan: [46, 49],
+			bgWhite: [47, 49],
+
+			// Bright color
+			bgBlackBright: [100, 49],
+			bgRedBright: [101, 49],
+			bgGreenBright: [102, 49],
+			bgYellowBright: [103, 49],
+			bgBlueBright: [104, 49],
+			bgMagentaBright: [105, 49],
+			bgCyanBright: [106, 49],
+			bgWhiteBright: [107, 49]
+		}
+	};
+
+	// Alias bright black as gray (and grey)
+	styles.color.gray = styles.color.blackBright;
+	styles.bgColor.bgGray = styles.bgColor.bgBlackBright;
+	styles.color.grey = styles.color.blackBright;
+	styles.bgColor.bgGrey = styles.bgColor.bgBlackBright;
+
+	for (const [groupName, group] of Object.entries(styles)) {
+		for (const [styleName, style] of Object.entries(group)) {
+			styles[styleName] = {
+				open: `\u001B[${style[0]}m`,
+				close: `\u001B[${style[1]}m`
+			};
+
+			group[styleName] = styles[styleName];
+
+			codes.set(style[0], style[1]);
+		}
+
+		Object.defineProperty(styles, groupName, {
+			value: group,
+			enumerable: false
+		});
+	}
+
+	Object.defineProperty(styles, 'codes', {
+		value: codes,
+		enumerable: false
+	});
+
+	styles.color.close = '\u001B[39m';
+	styles.bgColor.close = '\u001B[49m';
+
+	setLazyProperty(styles.color, 'ansi', () => makeDynamicStyles(wrapAnsi16, 'ansi16', ansi2ansi, false));
+	setLazyProperty(styles.color, 'ansi256', () => makeDynamicStyles(wrapAnsi256, 'ansi256', ansi2ansi, false));
+	setLazyProperty(styles.color, 'ansi16m', () => makeDynamicStyles(wrapAnsi16m, 'rgb', rgb2rgb, false));
+	setLazyProperty(styles.bgColor, 'ansi', () => makeDynamicStyles(wrapAnsi16, 'ansi16', ansi2ansi, true));
+	setLazyProperty(styles.bgColor, 'ansi256', () => makeDynamicStyles(wrapAnsi256, 'ansi256', ansi2ansi, true));
+	setLazyProperty(styles.bgColor, 'ansi16m', () => makeDynamicStyles(wrapAnsi16m, 'rgb', rgb2rgb, true));
+
+	return styles;
+}
+
+// Make the export immutable
+Object.defineProperty(module, 'exports', {
+	enumerable: true,
+	get: assembleStyles
+});
+
+
+/***/ }),
+
 /***/ 3664:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -5057,11 +5247,11 @@ chownr.sync = chownrSync
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BidiServer = void 0;
+const EventEmitter_js_1 = __nccwpck_require__(6111);
+const processingQueue_js_1 = __nccwpck_require__(9300);
 const CommandProcessor_js_1 = __nccwpck_require__(7002);
 const browsingContextStorage_js_1 = __nccwpck_require__(7652);
-const EventEmitter_js_1 = __nccwpck_require__(6111);
 const EventManager_js_1 = __nccwpck_require__(8701);
-const processingQueue_js_1 = __nccwpck_require__(9300);
 const realmStorage_js_1 = __nccwpck_require__(4716);
 class BidiServer extends EventEmitter_js_1.EventEmitter {
     #messageQueue;
@@ -5070,12 +5260,22 @@ class BidiServer extends EventEmitter_js_1.EventEmitter {
     #browsingContextStorage;
     #realmStorage;
     #logger;
+    #handleIncomingMessage = (message) => {
+        this.#commandProcessor.processCommand(message);
+    };
+    #processOutgoingMessage = async (messageEntry) => {
+        const message = messageEntry.message;
+        if (messageEntry.channel !== null) {
+            message['channel'] = messageEntry.channel;
+        }
+        await this.#transport.sendMessage(message);
+    };
     constructor(bidiTransport, cdpConnection, selfTargetId, parser, logger) {
         super();
         this.#logger = logger;
         this.#browsingContextStorage = new browsingContextStorage_js_1.BrowsingContextStorage();
         this.#realmStorage = new realmStorage_js_1.RealmStorage();
-        this.#messageQueue = new processingQueue_js_1.ProcessingQueue(this.#processOutgoingMessage, undefined, this.#logger);
+        this.#messageQueue = new processingQueue_js_1.ProcessingQueue(this.#processOutgoingMessage, () => Promise.resolve(), this.#logger);
         this.#transport = bidiTransport;
         this.#transport.setOnMessage(this.#handleIncomingMessage);
         this.#commandProcessor = new CommandProcessor_js_1.CommandProcessor(this.#realmStorage, cdpConnection, new EventManager_js_1.EventManager(this), selfTargetId, parser, this.#browsingContextStorage, this.#logger);
@@ -5102,13 +5302,6 @@ class BidiServer extends EventEmitter_js_1.EventEmitter {
             .getTopLevelContexts()
             .map((c) => c.awaitLoaded()));
     }
-    #processOutgoingMessage = async (messageEntry) => {
-        const message = messageEntry.message;
-        if (messageEntry.channel !== null) {
-            message['channel'] = messageEntry.channel;
-        }
-        await this.#transport.sendMessage(message);
-    };
     /**
      * Sends BiDi message.
      */
@@ -5118,9 +5311,6 @@ class BidiServer extends EventEmitter_js_1.EventEmitter {
     close() {
         this.#transport.close();
     }
-    #handleIncomingMessage = async (message) => {
-        this.#commandProcessor.processCommand(message);
-    };
     getBrowsingContextStorage() {
         return this.#browsingContextStorage;
     }
@@ -5154,10 +5344,17 @@ exports.BidiServer = BidiServer;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CommandProcessor = void 0;
 const protocol_js_1 = __nccwpck_require__(315);
-const browsingContextProcessor_js_1 = __nccwpck_require__(1538);
+const log_js_1 = __nccwpck_require__(5598);
 const EventEmitter_js_1 = __nccwpck_require__(6111);
+const browsingContextProcessor_js_1 = __nccwpck_require__(1538);
 const OutgoingBidiMessage_js_1 = __nccwpck_require__(8596);
 class BidiNoOpParser {
+    parseAddPreloadScriptParams(params) {
+        return params;
+    }
+    parseRemovePreloadScriptParams(params) {
+        return params;
+    }
     parseGetRealmsParams(params) {
         return params;
     }
@@ -5176,13 +5373,13 @@ class BidiNoOpParser {
     parseGetSessionParams(params) {
         return params;
     }
+    parseSubscribeParams(params) {
+        return params;
+    }
     parseNavigateParams(params) {
         return params;
     }
     parseGetTreeParams(params) {
-        return params;
-    }
-    parseSubscribeParams(params) {
         return params;
     }
     parseCreateParams(params) {
@@ -5191,19 +5388,26 @@ class BidiNoOpParser {
     parseCloseParams(params) {
         return params;
     }
+    parseCaptureScreenshotParams(params) {
+        return params;
+    }
+    parsePrintParams(params) {
+        return params;
+    }
 }
 class CommandProcessor extends EventEmitter_js_1.EventEmitter {
     #contextProcessor;
     #eventManager;
     #parser;
+    #logger;
     constructor(realmStorage, cdpConnection, eventManager, selfTargetId, parser = new BidiNoOpParser(), browsingContextStorage, logger) {
         super();
         this.#eventManager = eventManager;
+        this.#logger = logger;
         this.#contextProcessor = new browsingContextProcessor_js_1.BrowsingContextProcessor(realmStorage, cdpConnection, selfTargetId, eventManager, browsingContextStorage, logger);
         this.#parser = parser;
     }
-    // noinspection JSMethodCanBeStatic,JSUnusedLocalSymbols
-    async #process_session_status() {
+    static #process_session_status() {
         return { result: { ready: false, message: 'already connected' } };
     }
     async #process_session_subscribe(params, channel) {
@@ -5217,36 +5421,44 @@ class CommandProcessor extends EventEmitter_js_1.EventEmitter {
     async #processCommand(commandData) {
         switch (commandData.method) {
             case 'session.status':
-                return await this.#process_session_status();
+                return CommandProcessor.#process_session_status();
             case 'session.subscribe':
-                return await this.#process_session_subscribe(this.#parser.parseSubscribeParams(commandData.params), commandData.channel ?? null);
+                return this.#process_session_subscribe(this.#parser.parseSubscribeParams(commandData.params), commandData.channel ?? null);
             case 'session.unsubscribe':
-                return await this.#process_session_unsubscribe(this.#parser.parseSubscribeParams(commandData.params), commandData.channel ?? null);
+                return this.#process_session_unsubscribe(this.#parser.parseSubscribeParams(commandData.params), commandData.channel ?? null);
             case 'browsingContext.create':
-                return await this.#contextProcessor.process_browsingContext_create(this.#parser.parseCreateParams(commandData.params));
+                return this.#contextProcessor.process_browsingContext_create(this.#parser.parseCreateParams(commandData.params));
             case 'browsingContext.close':
-                return await this.#contextProcessor.process_browsingContext_close(this.#parser.parseCloseParams(commandData.params));
+                return this.#contextProcessor.process_browsingContext_close(this.#parser.parseCloseParams(commandData.params));
             case 'browsingContext.getTree':
-                return await this.#contextProcessor.process_browsingContext_getTree(this.#parser.parseGetTreeParams(commandData.params));
+                return this.#contextProcessor.process_browsingContext_getTree(this.#parser.parseGetTreeParams(commandData.params));
             case 'browsingContext.navigate':
-                return await this.#contextProcessor.process_browsingContext_navigate(this.#parser.parseNavigateParams(commandData.params));
+                return this.#contextProcessor.process_browsingContext_navigate(this.#parser.parseNavigateParams(commandData.params));
+            case 'browsingContext.captureScreenshot':
+                return this.#contextProcessor.process_browsingContext_captureScreenshot(this.#parser.parseCaptureScreenshotParams(commandData.params));
+            case 'browsingContext.print':
+                return this.#contextProcessor.process_browsingContext_print(this.#parser.parsePrintParams(commandData.params));
+            case 'script.addPreloadScript':
+                return this.#contextProcessor.process_script_addPreloadScript(this.#parser.parseAddPreloadScriptParams(commandData.params));
+            case 'script.removePreloadScript':
+                return this.#contextProcessor.process_script_removePreloadScript(this.#parser.parseRemovePreloadScriptParams(commandData.params));
             case 'script.getRealms':
                 return this.#contextProcessor.process_script_getRealms(this.#parser.parseGetRealmsParams(commandData.params));
             case 'script.callFunction':
-                return await this.#contextProcessor.process_script_callFunction(this.#parser.parseCallFunctionParams(commandData.params));
+                return this.#contextProcessor.process_script_callFunction(this.#parser.parseCallFunctionParams(commandData.params));
             case 'script.evaluate':
-                return await this.#contextProcessor.process_script_evaluate(this.#parser.parseEvaluateParams(commandData.params));
+                return this.#contextProcessor.process_script_evaluate(this.#parser.parseEvaluateParams(commandData.params));
             case 'script.disown':
-                return await this.#contextProcessor.process_script_disown(this.#parser.parseDisownParams(commandData.params));
+                return this.#contextProcessor.process_script_disown(this.#parser.parseDisownParams(commandData.params));
             case 'cdp.sendCommand':
-                return await this.#contextProcessor.process_cdp_sendCommand(this.#parser.parseSendCommandParams(commandData.params));
+                return this.#contextProcessor.process_cdp_sendCommand(this.#parser.parseSendCommandParams(commandData.params));
             case 'cdp.getSession':
-                return await this.#contextProcessor.process_cdp_getSession(this.#parser.parseGetSessionParams(commandData.params));
+                return this.#contextProcessor.process_cdp_getSession(this.#parser.parseGetSessionParams(commandData.params));
             default:
                 throw new protocol_js_1.Message.UnknownCommandException(`Unknown command '${commandData.method}'.`);
         }
     }
-    processCommand = async (command) => {
+    async processCommand(command) {
         try {
             const result = await this.#processCommand(command);
             const response = {
@@ -5256,17 +5468,17 @@ class CommandProcessor extends EventEmitter_js_1.EventEmitter {
             this.emit('response', OutgoingBidiMessage_js_1.OutgoingBidiMessage.createResolved(response, command.channel ?? null));
         }
         catch (e) {
-            if (e instanceof protocol_js_1.Message.ErrorResponseClass) {
+            if (e instanceof protocol_js_1.Message.ErrorResponse) {
                 const errorResponse = e;
                 this.emit('response', OutgoingBidiMessage_js_1.OutgoingBidiMessage.createResolved(errorResponse.toErrorResponse(command.id), command.channel ?? null));
             }
             else {
                 const error = e;
-                console.error(error);
-                this.emit('response', OutgoingBidiMessage_js_1.OutgoingBidiMessage.createResolved(new protocol_js_1.Message.UnknownException(error.message).toErrorResponse(command.id), command.channel ?? null));
+                this.#logger?.(log_js_1.LogType.bidi, error);
+                this.emit('response', OutgoingBidiMessage_js_1.OutgoingBidiMessage.createResolved(new protocol_js_1.Message.ErrorResponse(protocol_js_1.Message.ErrorCode.UnknownError, error.message).toErrorResponse(command.id), command.channel ?? null));
             }
         }
-    };
+    }
 }
 exports.CommandProcessor = CommandProcessor;
 //# sourceMappingURL=CommandProcessor.js.map
@@ -5304,8 +5516,7 @@ class OutgoingBidiMessage {
         this.#channel = channel;
     }
     static async createFromPromise(messagePromise, channel) {
-        const message = await messagePromise;
-        return new OutgoingBidiMessage(message, channel);
+        return messagePromise.then((message) => new OutgoingBidiMessage(message, channel));
     }
     static createResolved(message, channel) {
         return Promise.resolve(new OutgoingBidiMessage(message, channel));
@@ -5376,15 +5587,27 @@ Object.defineProperty(exports, "EventEmitter", ({ enumerable: true, get: functio
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BrowsingContextImpl = void 0;
+const unitConversions_js_1 = __nccwpck_require__(7542);
 const protocol_js_1 = __nccwpck_require__(315);
 const log_js_1 = __nccwpck_require__(5598);
 const deferred_js_1 = __nccwpck_require__(3343);
-const logManager_js_1 = __nccwpck_require__(3805);
 const realm_js_1 = __nccwpck_require__(3874);
 class BrowsingContextImpl {
-    #targetDefers = {
+    /** The ID of the current context. */
+    #contextId;
+    /**
+     * The ID of the parent context.
+     * If null, this is a top-level context.
+     */
+    #parentId;
+    /**
+     * Children contexts.
+     * Map from children context ID to context implementation.
+     */
+    #children = new Map();
+    #browsingContextStorage;
+    #defers = {
         documentInitialized: new deferred_js_1.Deferred(),
-        targetUnblocked: new deferred_js_1.Deferred(),
         Page: {
             navigatedWithinDocument: new deferred_js_1.Deferred(),
             lifecycleEvent: {
@@ -5393,137 +5616,125 @@ class BrowsingContextImpl {
             },
         },
     };
-    #contextId;
-    #parentId;
-    #cdpBrowserContextId;
-    #eventManager;
-    #children = new Map();
-    #realmStorage;
     #url = 'about:blank';
+    #eventManager;
+    #realmStorage;
     #loaderId = null;
-    #cdpSessionId;
-    #cdpClient;
+    #cdpTarget;
     #maybeDefaultRealm;
-    #browsingContextStorage;
     #logger;
+    constructor(cdpTarget, realmStorage, contextId, parentId, eventManager, browsingContextStorage, logger) {
+        this.#cdpTarget = cdpTarget;
+        this.#realmStorage = realmStorage;
+        this.#contextId = contextId;
+        this.#parentId = parentId;
+        this.#eventManager = eventManager;
+        this.#browsingContextStorage = browsingContextStorage;
+        this.#logger = logger;
+        this.#initListeners();
+    }
+    static create(cdpTarget, realmStorage, contextId, parentId, eventManager, browsingContextStorage, logger) {
+        const context = new BrowsingContextImpl(cdpTarget, realmStorage, contextId, parentId, eventManager, browsingContextStorage, logger);
+        browsingContextStorage.addContext(context);
+        eventManager.registerEvent({
+            method: protocol_js_1.BrowsingContext.EventNames.ContextCreatedEvent,
+            params: context.serializeToBidiValue(),
+        }, context.contextId);
+        return context;
+    }
+    /**
+     * @see https://html.spec.whatwg.org/multipage/document-sequences.html#navigable
+     */
+    get navigableId() {
+        return this.#loaderId;
+    }
+    delete() {
+        this.#deleteChildren();
+        this.#realmStorage.deleteRealms({
+            browsingContextId: this.contextId,
+        });
+        // Remove context from the parent.
+        if (this.parentId !== null) {
+            const parent = this.#browsingContextStorage.getContext(this.parentId);
+            parent.#children.delete(this.contextId);
+        }
+        this.#eventManager.registerEvent({
+            method: protocol_js_1.BrowsingContext.EventNames.ContextDestroyedEvent,
+            params: this.serializeToBidiValue(),
+        }, this.contextId);
+        this.#browsingContextStorage.deleteContext(this.contextId);
+    }
+    /** Returns the ID of this context. */
+    get contextId() {
+        return this.#contextId;
+    }
+    /** Returns the parent context ID. */
+    get parentId() {
+        return this.#parentId;
+    }
+    /** Returns all children contexts. */
+    get children() {
+        return Array.from(this.#children.values());
+    }
+    /**
+     * Returns true if this is a top-level context.
+     * This is the case whenever the parent context ID is null.
+     */
+    isTopLevelContext() {
+        return this.#parentId === null;
+    }
+    addChild(child) {
+        this.#children.set(child.contextId, child);
+    }
+    #deleteChildren() {
+        this.children.map((child) => child.delete());
+    }
     get #defaultRealm() {
         if (this.#maybeDefaultRealm === undefined) {
             throw new Error(`No default realm for browsing context ${this.#contextId}`);
         }
         return this.#maybeDefaultRealm;
     }
-    constructor(realmStorage, contextId, parentId, cdpClient, cdpSessionId, cdpBrowserContextId, eventManager, browsingContextStorage, logger) {
-        this.#realmStorage = realmStorage;
-        this.#contextId = contextId;
-        this.#parentId = parentId;
-        this.#cdpClient = cdpClient;
-        this.#cdpBrowserContextId = cdpBrowserContextId;
-        this.#eventManager = eventManager;
-        this.#cdpSessionId = cdpSessionId;
-        this.#browsingContextStorage = browsingContextStorage;
-        this.#logger = logger;
+    get cdpTarget() {
+        return this.#cdpTarget;
+    }
+    updateCdpTarget(cdpTarget) {
+        this.#cdpTarget = cdpTarget;
         this.#initListeners();
-        this.#browsingContextStorage.addContext(this);
-    }
-    static async createFrameContext(realmStorage, contextId, parentId, cdpClient, cdpSessionId, eventManager, browsingContextStorage, logger) {
-        const context = new BrowsingContextImpl(realmStorage, contextId, parentId, cdpClient, cdpSessionId, null, eventManager, browsingContextStorage, logger);
-        context.#targetDefers.targetUnblocked.resolve();
-        await eventManager.registerEvent({
-            method: protocol_js_1.BrowsingContext.EventNames.ContextCreatedEvent,
-            params: context.serializeToBidiValue(),
-        }, context.contextId);
-    }
-    static async createTargetContext(realmStorage, contextId, parentId, cdpClient, cdpSessionId, cdpBrowserContextId, eventManager, browsingContextStorage, logger) {
-        const context = new BrowsingContextImpl(realmStorage, contextId, parentId, cdpClient, cdpSessionId, cdpBrowserContextId, eventManager, browsingContextStorage, logger);
-        // No need in waiting for target to be unblocked.
-        // noinspection ES6MissingAwait
-        context.#unblockAttachedTarget();
-        await eventManager.registerEvent({
-            method: protocol_js_1.BrowsingContext.EventNames.ContextCreatedEvent,
-            params: context.serializeToBidiValue(),
-        }, context.contextId);
-    }
-    get cdpBrowserContextId() {
-        return this.#cdpBrowserContextId;
-    }
-    // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable
-    get navigableId() {
-        return this.#loaderId;
-    }
-    convertFrameToTargetContext(cdpClient, cdpSessionId) {
-        this.#updateConnection(cdpClient, cdpSessionId);
-        // No need in waiting for target to be unblocked.
-        // noinspection JSIgnoredPromiseFromCall
-        this.#unblockAttachedTarget();
-    }
-    async delete() {
-        await this.#removeChildContexts();
-        this.#realmStorage.deleteRealms({
-            browsingContextId: this.contextId,
-        });
-        // Remove context from the parent.
-        if (this.parentId !== null) {
-            const parent = this.#browsingContextStorage.getKnownContext(this.parentId);
-            parent.#children.delete(this.contextId);
-        }
-        await this.#eventManager.registerEvent({
-            method: protocol_js_1.BrowsingContext.EventNames.ContextDestroyedEvent,
-            params: this.serializeToBidiValue(),
-        }, this.contextId);
-        this.#browsingContextStorage.removeContext(this.contextId);
-    }
-    async #removeChildContexts() {
-        await Promise.all(this.children.map((child) => child.delete()));
-    }
-    #updateConnection(cdpClient, cdpSessionId) {
-        if (this.#targetDefers.targetUnblocked.isFinished) {
-            this.#targetDefers.targetUnblocked = new deferred_js_1.Deferred();
-        }
-        else {
-            this.#logger?.(log_js_1.LogType.browsingContexts, 'targetUnblocked postponed because of OOPiF');
-        }
-        this.#cdpClient = cdpClient;
-        this.#cdpSessionId = cdpSessionId;
-        this.#initListeners();
-    }
-    async #unblockAttachedTarget() {
-        logManager_js_1.LogManager.create(this.#realmStorage, this.#cdpClient, this.#cdpSessionId, this.#eventManager);
-        await this.#cdpClient.sendCommand('Runtime.enable');
-        await this.#cdpClient.sendCommand('Page.enable');
-        await this.#cdpClient.sendCommand('Page.setLifecycleEventsEnabled', {
-            enabled: true,
-        });
-        await this.#cdpClient.sendCommand('Target.setAutoAttach', {
-            autoAttach: true,
-            waitForDebuggerOnStart: true,
-            flatten: true,
-        });
-        await this.#cdpClient.sendCommand('Runtime.runIfWaitingForDebugger');
-        this.#targetDefers.targetUnblocked.resolve();
-    }
-    get contextId() {
-        return this.#contextId;
-    }
-    get parentId() {
-        return this.#parentId;
-    }
-    get cdpSessionId() {
-        return this.#cdpSessionId;
-    }
-    get children() {
-        return Array.from(this.#children.values());
     }
     get url() {
         return this.#url;
     }
-    addChild(child) {
-        this.#children.set(child.contextId, child);
-    }
     async awaitLoaded() {
-        await this.#targetDefers.Page.lifecycleEvent.load;
+        await this.#defers.Page.lifecycleEvent.load;
     }
-    async awaitUnblocked() {
-        await this.#targetDefers.targetUnblocked;
+    awaitUnblocked() {
+        return this.#cdpTarget.targetUnblocked;
+    }
+    async getOrCreateSandbox(sandbox) {
+        if (sandbox === undefined || sandbox === '') {
+            return this.#defaultRealm;
+        }
+        let maybeSandboxes = this.#realmStorage.findRealms({
+            browsingContextId: this.contextId,
+            sandbox,
+        });
+        if (maybeSandboxes.length === 0) {
+            await this.#cdpTarget.cdpClient.sendCommand('Page.createIsolatedWorld', {
+                frameId: this.contextId,
+                worldName: sandbox,
+            });
+            // `Runtime.executionContextCreated` should be emitted by the time the
+            // previous command is done.
+            maybeSandboxes = this.#realmStorage.findRealms({
+                browsingContextId: this.contextId,
+                sandbox,
+            });
+        }
+        if (maybeSandboxes.length !== 1) {
+            throw Error(`Sandbox ${sandbox} wasn't created.`);
+        }
+        return maybeSandboxes[0];
     }
     serializeToBidiValue(maxDepth = 0, addParentFiled = true) {
         return {
@@ -5536,13 +5747,13 @@ class BrowsingContextImpl {
         };
     }
     #initListeners() {
-        this.#cdpClient.on('Target.targetInfoChanged', (params) => {
+        this.#cdpTarget.cdpClient.on('Target.targetInfoChanged', (params) => {
             if (this.contextId !== params.targetInfo.targetId) {
                 return;
             }
             this.#url = params.targetInfo.url;
         });
-        this.#cdpClient.on('Page.frameNavigated', async (params) => {
+        this.#cdpTarget.cdpClient.on('Page.frameNavigated', (params) => {
             if (this.contextId !== params.frame.id) {
                 return;
             }
@@ -5550,24 +5761,27 @@ class BrowsingContextImpl {
             // At the point the page is initiated, all the nested iframes from the
             // previous page are detached and realms are destroyed.
             // Remove context's children.
-            await this.#removeChildContexts();
-            // Remove all the already created realms.
-            this.#realmStorage.deleteRealms({ browsingContextId: this.contextId });
+            this.#deleteChildren();
         });
-        this.#cdpClient.on('Page.navigatedWithinDocument', (params) => {
+        this.#cdpTarget.cdpClient.on('Page.navigatedWithinDocument', (params) => {
             if (this.contextId !== params.frameId) {
                 return;
             }
             this.#url = params.url;
-            this.#targetDefers.Page.navigatedWithinDocument.resolve(params);
+            this.#defers.Page.navigatedWithinDocument.resolve(params);
         });
-        this.#cdpClient.on('Page.lifecycleEvent', async (params) => {
+        this.#cdpTarget.cdpClient.on('Page.lifecycleEvent', (params) => {
             if (this.contextId !== params.frameId) {
                 return;
             }
+            // `timestamp` from the event is MonotonicTime, not real time, so
+            // the best Mapper can do is to set the timestamp to the epoch time
+            // of the event arrived.
+            // https://chromedevtools.github.io/devtools-protocol/tot/Network/#type-MonotonicTime
+            const timestamp = new Date().getTime();
             if (params.name === 'init') {
                 this.#documentChanged(params.loaderId);
-                this.#targetDefers.documentInitialized.resolve();
+                this.#defers.documentInitialized.resolve();
             }
             if (params.name === 'commit') {
                 this.#loaderId = params.loaderId;
@@ -5578,30 +5792,32 @@ class BrowsingContextImpl {
             }
             switch (params.name) {
                 case 'DOMContentLoaded':
-                    this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded.resolve(params);
-                    await this.#eventManager.registerEvent({
+                    this.#defers.Page.lifecycleEvent.DOMContentLoaded.resolve(params);
+                    this.#eventManager.registerEvent({
                         method: protocol_js_1.BrowsingContext.EventNames.DomContentLoadedEvent,
                         params: {
                             context: this.contextId,
                             navigation: this.#loaderId,
+                            timestamp,
                             url: this.#url,
                         },
                     }, this.contextId);
                     break;
                 case 'load':
-                    this.#targetDefers.Page.lifecycleEvent.load.resolve(params);
-                    await this.#eventManager.registerEvent({
+                    this.#defers.Page.lifecycleEvent.load.resolve(params);
+                    this.#eventManager.registerEvent({
                         method: protocol_js_1.BrowsingContext.EventNames.LoadEvent,
                         params: {
                             context: this.contextId,
                             navigation: this.#loaderId,
+                            timestamp,
                             url: this.#url,
                         },
                     }, this.contextId);
                     break;
             }
         });
-        this.#cdpClient.on('Runtime.executionContextCreated', (params) => {
+        this.#cdpTarget.cdpClient.on('Runtime.executionContextCreated', (params) => {
             if (params.context.auxData.frameId !== this.contextId) {
                 return;
             }
@@ -5615,15 +5831,20 @@ class BrowsingContextImpl {
             // Sandbox name for isolated world.
             params.context.auxData.type === 'isolated'
                 ? params.context.name
-                : undefined, this.#cdpSessionId, this.#cdpClient);
+                : undefined, this.#cdpTarget.cdpSessionId, this.#cdpTarget.cdpClient, this.#eventManager);
             if (params.context.auxData.isDefault) {
                 this.#maybeDefaultRealm = realm;
             }
         });
-        this.#cdpClient.on('Runtime.executionContextDestroyed', (params) => {
+        this.#cdpTarget.cdpClient.on('Runtime.executionContextDestroyed', (params) => {
             this.#realmStorage.deleteRealms({
-                cdpSessionId: this.#cdpSessionId,
+                cdpSessionId: this.#cdpTarget.cdpSessionId,
                 executionContextId: params.executionContextId,
+            });
+        });
+        this.#cdpTarget.cdpClient.on('Runtime.executionContextsCleared', () => {
+            this.#realmStorage.deleteRealms({
+                cdpSessionId: this.#cdpTarget.cdpSessionId,
             });
         });
     }
@@ -5641,27 +5862,27 @@ class BrowsingContextImpl {
     #documentChanged(loaderId) {
         // Same document navigation.
         if (loaderId === undefined || this.#loaderId === loaderId) {
-            if (this.#targetDefers.Page.navigatedWithinDocument.isFinished) {
-                this.#targetDefers.Page.navigatedWithinDocument =
+            if (this.#defers.Page.navigatedWithinDocument.isFinished) {
+                this.#defers.Page.navigatedWithinDocument =
                     new deferred_js_1.Deferred();
             }
             return;
         }
-        if (this.#targetDefers.documentInitialized.isFinished) {
-            this.#targetDefers.documentInitialized = new deferred_js_1.Deferred();
+        if (this.#defers.documentInitialized.isFinished) {
+            this.#defers.documentInitialized = new deferred_js_1.Deferred();
         }
         else {
             this.#logger?.(log_js_1.LogType.browsingContexts, 'Document changed');
         }
-        if (this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded.isFinished) {
-            this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded =
+        if (this.#defers.Page.lifecycleEvent.DOMContentLoaded.isFinished) {
+            this.#defers.Page.lifecycleEvent.DOMContentLoaded =
                 new deferred_js_1.Deferred();
         }
         else {
             this.#logger?.(log_js_1.LogType.browsingContexts, 'Document changed');
         }
-        if (this.#targetDefers.Page.lifecycleEvent.load.isFinished) {
-            this.#targetDefers.Page.lifecycleEvent.load =
+        if (this.#defers.Page.lifecycleEvent.load.isFinished) {
+            this.#defers.Page.lifecycleEvent.load =
                 new deferred_js_1.Deferred();
         }
         else {
@@ -5670,14 +5891,14 @@ class BrowsingContextImpl {
         this.#loaderId = loaderId;
     }
     async navigate(url, wait) {
-        await this.#targetDefers.targetUnblocked;
+        await this.awaitUnblocked();
         // TODO: handle loading errors.
-        const cdpNavigateResult = await this.#cdpClient.sendCommand('Page.navigate', {
+        const cdpNavigateResult = await this.#cdpTarget.cdpClient.sendCommand('Page.navigate', {
             url,
             frameId: this.contextId,
         });
         if (cdpNavigateResult.errorText) {
-            throw new protocol_js_1.Message.UnknownException(cdpNavigateResult.errorText);
+            throw new protocol_js_1.Message.UnknownErrorException(cdpNavigateResult.errorText);
         }
         this.#documentChanged(cdpNavigateResult.loaderId);
         // Wait for `wait` condition.
@@ -5687,55 +5908,87 @@ class BrowsingContextImpl {
             case 'interactive':
                 // No `loaderId` means same-document navigation.
                 if (cdpNavigateResult.loaderId === undefined) {
-                    await this.#targetDefers.Page.navigatedWithinDocument;
+                    await this.#defers.Page.navigatedWithinDocument;
                 }
                 else {
-                    await this.#targetDefers.Page.lifecycleEvent.DOMContentLoaded;
+                    await this.#defers.Page.lifecycleEvent.DOMContentLoaded;
                 }
                 break;
             case 'complete':
                 // No `loaderId` means same-document navigation.
                 if (cdpNavigateResult.loaderId === undefined) {
-                    await this.#targetDefers.Page.navigatedWithinDocument;
+                    await this.#defers.Page.navigatedWithinDocument;
                 }
                 else {
-                    await this.#targetDefers.Page.lifecycleEvent.load;
+                    await this.#defers.Page.lifecycleEvent.load;
                 }
                 break;
-            default:
-                throw new Error(`Not implemented wait '${wait}'`);
         }
         return {
             result: {
                 navigation: cdpNavigateResult.loaderId || null,
-                url: url,
+                url,
             },
         };
     }
-    async getOrCreateSandbox(sandbox) {
-        if (sandbox === undefined || sandbox === '') {
-            return this.#defaultRealm;
+    async captureScreenshot() {
+        const [, result] = await Promise.all([
+            // TODO: Either make this a proposal in the BiDi spec, or focus the
+            // original tab right after the screenshot is taken.
+            // The screenshot command gets blocked until we focus the active tab.
+            this.#cdpTarget.cdpClient.sendCommand('Page.bringToFront'),
+            this.#cdpTarget.cdpClient.sendCommand('Page.captureScreenshot', {}),
+        ]);
+        return {
+            result: {
+                data: result.data,
+            },
+        };
+    }
+    async print(params) {
+        const printToPdfCdpParams = {
+            printBackground: params.background,
+            landscape: params.orientation === 'landscape',
+            pageRanges: params.pageRanges?.join(',') ?? '',
+            scale: params.scale,
+            preferCSSPageSize: !params.shrinkToFit,
+        };
+        if (params.margin?.bottom) {
+            printToPdfCdpParams.marginBottom = (0, unitConversions_js_1.inchesFromCm)(params.margin.bottom);
         }
-        let maybeSandboxes = this.#realmStorage.findRealms({
-            browsingContextId: this.contextId,
-            sandbox,
+        if (params.margin?.left) {
+            printToPdfCdpParams.marginLeft = (0, unitConversions_js_1.inchesFromCm)(params.margin.left);
+        }
+        if (params.margin?.right) {
+            printToPdfCdpParams.marginRight = (0, unitConversions_js_1.inchesFromCm)(params.margin.right);
+        }
+        if (params.margin?.top) {
+            printToPdfCdpParams.marginTop = (0, unitConversions_js_1.inchesFromCm)(params.margin.top);
+        }
+        if (params.page?.height) {
+            printToPdfCdpParams.paperHeight = (0, unitConversions_js_1.inchesFromCm)(params.page.height);
+        }
+        if (params.page?.width) {
+            printToPdfCdpParams.paperWidth = (0, unitConversions_js_1.inchesFromCm)(params.page.width);
+        }
+        const result = await this.#cdpTarget.cdpClient.sendCommand('Page.printToPDF', printToPdfCdpParams);
+        return {
+            result: {
+                data: result.data,
+            },
+        };
+    }
+    async addPreloadScript(params) {
+        const result = await this.#cdpTarget.cdpClient.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+            // The spec provides a function, and CDP expects an evaluation.
+            source: `(${params.expression})();`,
+            worldName: params.sandbox,
         });
-        if (maybeSandboxes.length === 0) {
-            await this.#cdpClient.sendCommand('Page.createIsolatedWorld', {
-                frameId: this.contextId,
-                worldName: sandbox,
-            });
-            // `Runtime.executionContextCreated` should be emitted by the time the
-            // previous command is done.
-            maybeSandboxes = this.#realmStorage.findRealms({
-                browsingContextId: this.contextId,
-                sandbox,
-            });
-        }
-        if (maybeSandboxes.length !== 1) {
-            throw Error(`Sandbox ${sandbox} wasn't created.`);
-        }
-        return maybeSandboxes[0];
+        return {
+            result: {
+                script: result.identifier,
+            },
+        };
     }
 }
 exports.BrowsingContextImpl = BrowsingContextImpl;
@@ -5750,25 +6003,10 @@ exports.BrowsingContextImpl = BrowsingContextImpl;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BrowsingContextProcessor = void 0;
-/**
- * Copyright 2021 Google LLC.
- * Copyright (c) Microsoft Corporation.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 const protocol_js_1 = __nccwpck_require__(315);
 const log_js_1 = __nccwpck_require__(5598);
 const browsingContextImpl_js_1 = __nccwpck_require__(177);
+const cdpTarget_js_1 = __nccwpck_require__(4101);
 class BrowsingContextProcessor {
     #browsingContextStorage;
     #cdpConnection;
@@ -5776,7 +6014,6 @@ class BrowsingContextProcessor {
     #logger;
     #realmStorage;
     #selfTargetId;
-    #sessions;
     constructor(realmStorage, cdpConnection, selfTargetId, eventManager, browsingContextStorage, logger) {
         this.#browsingContextStorage = browsingContextStorage;
         this.#cdpConnection = cdpConnection;
@@ -5784,77 +6021,107 @@ class BrowsingContextProcessor {
         this.#logger = logger;
         this.#realmStorage = realmStorage;
         this.#selfTargetId = selfTargetId;
-        this.#sessions = new Set();
-        this.#setBrowserClientEventListeners(this.#cdpConnection.browserClient());
+        this.#setEventListeners(this.#cdpConnection.browserClient());
     }
-    #setBrowserClientEventListeners(browserClient) {
-        this.#setTargetEventListeners(browserClient);
-    }
-    #setTargetEventListeners(cdpClient) {
-        cdpClient.on('Target.attachedToTarget', async (params) => {
-            await this.#handleAttachedToTargetEvent(params, cdpClient);
+    /**
+     * This method is called for each CDP session, since this class is responsible
+     * for creating and destroying all targets and browsing contexts.
+     */
+    #setEventListeners(cdpClient) {
+        cdpClient.on('Target.attachedToTarget', (params) => {
+            this.#handleAttachedToTargetEvent(params, cdpClient);
         });
-        cdpClient.on('Target.detachedFromTarget', async (params) => {
-            await this.#handleDetachedFromTargetEvent(params);
+        cdpClient.on('Target.detachedFromTarget', (params) => {
+            this.#handleDetachedFromTargetEvent(params);
+        });
+        cdpClient.on('Page.frameAttached', (params) => {
+            this.#handleFrameAttachedEvent(params);
+        });
+        cdpClient.on('Page.frameDetached', (params) => {
+            this.#handleFrameDetachedEvent(params);
         });
     }
-    #setSessionEventListeners(sessionId) {
-        if (this.#sessions.has(sessionId)) {
+    // { "method": "Page.frameAttached",
+    //   "params": {
+    //     "frameId": "0A639AB1D9A392DF2CE02C53CC4ED3A6",
+    //     "parentFrameId": "722BB0526C73B067A479BED6D0DB1156" } }
+    #handleFrameAttachedEvent(params) {
+        const parentBrowsingContext = this.#browsingContextStorage.findContext(params.parentFrameId);
+        if (parentBrowsingContext !== undefined) {
+            browsingContextImpl_js_1.BrowsingContextImpl.create(parentBrowsingContext.cdpTarget, this.#realmStorage, params.frameId, params.parentFrameId, this.#eventManager, this.#browsingContextStorage, this.#logger);
+        }
+    }
+    // { "method": "Page.frameDetached",
+    //   "params": {
+    //     "frameId": "0A639AB1D9A392DF2CE02C53CC4ED3A6",
+    //     "reason": "swap" } }
+    #handleFrameDetachedEvent(params) {
+        // In case of OOPiF no need in deleting BrowsingContext.
+        if (params.reason === 'swap') {
             return;
         }
-        this.#sessions.add(sessionId);
-        const sessionCdpClient = this.#cdpConnection.getCdpClient(sessionId);
-        this.#setTargetEventListeners(sessionCdpClient);
-        sessionCdpClient.on('*', async (method, params) => {
-            await this.#eventManager.registerEvent({
-                method: protocol_js_1.CDP.EventNames.EventReceivedEvent,
-                params: {
-                    cdpMethod: method,
-                    cdpParams: params || {},
-                    cdpSession: sessionId,
-                },
-            }, null);
-        });
-        sessionCdpClient.on('Page.frameAttached', async (params) => {
-            await browsingContextImpl_js_1.BrowsingContextImpl.createFrameContext(this.#realmStorage, params.frameId, params.parentFrameId, sessionCdpClient, sessionId, this.#eventManager, this.#browsingContextStorage, this.#logger);
-        });
+        this.#browsingContextStorage.findContext(params.frameId)?.delete();
     }
-    async #handleAttachedToTargetEvent(params, parentSessionCdpClient) {
+    // { "method": "Target.attachedToTarget",
+    //   "params": {
+    //     "sessionId": "EA999F39BDCABD7D45C9FEB787413BBA",
+    //     "targetInfo": {
+    //       "targetId": "722BB0526C73B067A479BED6D0DB1156",
+    //       "type": "page",
+    //       "title": "about:blank",
+    //       "url": "about:blank",
+    //       "attached": true,
+    //       "canAccessOpener": false,
+    //       "browserContextId": "1B5244080EC3FF28D03BBDA73138C0E2" },
+    //     "waitingForDebugger": false } }
+    #handleAttachedToTargetEvent(params, parentSessionCdpClient) {
         const { sessionId, targetInfo } = params;
-        const targetSessionCdpClient = this.#cdpConnection.getCdpClient(sessionId);
+        const targetCdpClient = this.#cdpConnection.getCdpClient(sessionId);
         if (!this.#isValidTarget(targetInfo)) {
-            // DevTools or some other not supported by BiDi target.
-            await targetSessionCdpClient.sendCommand('Runtime.runIfWaitingForDebugger');
-            await parentSessionCdpClient.sendCommand('Target.detachFromTarget', params);
+            // DevTools or some other not supported by BiDi target. Just release
+            // debugger  and ignore them.
+            void targetCdpClient
+                .sendCommand('Runtime.runIfWaitingForDebugger')
+                .then(() => parentSessionCdpClient.sendCommand('Target.detachFromTarget', params));
             return;
         }
         this.#logger?.(log_js_1.LogType.browsingContexts, 'AttachedToTarget event received:', JSON.stringify(params, null, 2));
-        this.#setSessionEventListeners(sessionId);
-        if (this.#browsingContextStorage.hasKnownContext(targetInfo.targetId)) {
+        this.#setEventListeners(targetCdpClient);
+        const cdpTarget = cdpTarget_js_1.CdpTarget.create(targetInfo.targetId, targetCdpClient, sessionId, this.#realmStorage, this.#eventManager);
+        if (this.#browsingContextStorage.hasContext(targetInfo.targetId)) {
             // OOPiF.
             this.#browsingContextStorage
-                .getKnownContext(targetInfo.targetId)
-                .convertFrameToTargetContext(targetSessionCdpClient, sessionId);
+                .getContext(targetInfo.targetId)
+                .updateCdpTarget(cdpTarget);
         }
         else {
-            await browsingContextImpl_js_1.BrowsingContextImpl.createTargetContext(this.#realmStorage, targetInfo.targetId, null, targetSessionCdpClient, sessionId, params.targetInfo.browserContextId ?? null, this.#eventManager, this.#browsingContextStorage, this.#logger);
+            browsingContextImpl_js_1.BrowsingContextImpl.create(cdpTarget, this.#realmStorage, targetInfo.targetId, null, this.#eventManager, this.#browsingContextStorage, this.#logger);
         }
     }
     // { "method": "Target.detachedFromTarget",
     //   "params": {
     //     "sessionId": "7EFBFB2A4942A8989B3EADC561BC46E9",
     //     "targetId": "19416886405CBA4E03DBB59FA67FF4E8" } }
-    async #handleDetachedFromTargetEvent(params) {
+    #handleDetachedFromTargetEvent(params) {
         // TODO: params.targetId is deprecated. Update this class to track using
         // params.sessionId instead.
         // https://github.com/GoogleChromeLabs/chromium-bidi/issues/60
         const contextId = params.targetId;
-        await this.#browsingContextStorage.findContext(contextId)?.delete();
+        this.#browsingContextStorage.findContext(contextId)?.delete();
     }
-    async process_browsingContext_getTree(params) {
+    async #getRealm(target) {
+        if ('realm' in target) {
+            return this.#realmStorage.getRealm({
+                realmId: target.realm,
+            });
+        }
+        const context = this.#browsingContextStorage.getContext(target.context);
+        return context.getOrCreateSandbox(target.sandbox);
+    }
+    process_browsingContext_getTree(params) {
         const resultContexts = params.root === undefined
             ? this.#browsingContextStorage.getTopLevelContexts()
-            : [this.#browsingContextStorage.getKnownContext(params.root)];
+            : [this.#browsingContextStorage.getContext(params.root)];
         return {
             result: {
                 contexts: resultContexts.map((c) => c.serializeToBidiValue(params.maxDepth ?? Number.MAX_VALUE)),
@@ -5865,17 +6132,14 @@ class BrowsingContextProcessor {
         const browserCdpClient = this.#cdpConnection.browserClient();
         let referenceContext = undefined;
         if (params.referenceContext !== undefined) {
-            referenceContext = this.#browsingContextStorage.getKnownContext(params.referenceContext);
-            if (referenceContext.parentId !== null) {
+            referenceContext = this.#browsingContextStorage.getContext(params.referenceContext);
+            if (!referenceContext.isTopLevelContext()) {
                 throw new protocol_js_1.Message.InvalidArgumentException(`referenceContext should be a top-level context`);
             }
         }
         const result = await browserCdpClient.sendCommand('Target.createTarget', {
             url: 'about:blank',
             newWindow: params.type === 'window',
-            ...(referenceContext?.cdpBrowserContextId
-                ? { browserContextId: referenceContext.cdpBrowserContextId }
-                : {}),
         });
         // Wait for the new tab to be loaded to avoid race conditions in the
         // `browsingContext` events, when the `browsingContext.domContentLoaded` and
@@ -5883,33 +6147,54 @@ class BrowsingContextProcessor {
         // are emitted after the next navigation is started.
         // Details: https://github.com/web-platform-tests/wpt/issues/35846
         const contextId = result.targetId;
-        const context = this.#browsingContextStorage.getKnownContext(contextId);
+        const context = this.#browsingContextStorage.getContext(contextId);
         await context.awaitLoaded();
         return {
             result: context.serializeToBidiValue(1),
         };
     }
-    async process_browsingContext_navigate(params) {
-        const context = this.#browsingContextStorage.getKnownContext(params.context);
-        return await context.navigate(params.url, params.wait === undefined ? 'none' : params.wait);
+    process_browsingContext_navigate(params) {
+        const context = this.#browsingContextStorage.getContext(params.context);
+        return context.navigate(params.url, params.wait === undefined ? 'none' : params.wait);
     }
-    async #getRealm(target) {
-        if ('realm' in target) {
-            return this.#realmStorage.getRealm({
-                realmId: target.realm,
-            });
+    async process_browsingContext_captureScreenshot(params) {
+        const context = this.#browsingContextStorage.getContext(params.context);
+        return context.captureScreenshot();
+    }
+    async process_browsingContext_print(params) {
+        const context = this.#browsingContextStorage.getContext(params.context);
+        return context.print(params);
+    }
+    async process_script_addPreloadScript(params) {
+        const contexts = [];
+        const scripts = [];
+        if (params.context) {
+            // TODO(#293): Handle edge case with OOPiF. Whenever a frame is moved out
+            // of process, we have to add those scripts as well.
+            contexts.push(this.#browsingContextStorage.getContext(params.context));
         }
-        const context = this.#browsingContextStorage.getKnownContext(target.context);
-        return await context.getOrCreateSandbox(target.sandbox);
+        else {
+            // Add all contexts.
+            // TODO(#293): Add preload scripts to all new browsing contexts as well.
+            contexts.push(...this.#browsingContextStorage.getAllContexts());
+        }
+        scripts.push(...(await Promise.all(contexts.map((context) => context.addPreloadScript(params)))));
+        // TODO(#293): What to return whenever there are multiple contexts?
+        return scripts[0];
+    }
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async process_script_removePreloadScript(_params) {
+        throw new protocol_js_1.Message.UnknownErrorException('Not implemented.');
+        return {};
     }
     async process_script_evaluate(params) {
         const realm = await this.#getRealm(params.target);
-        return await realm.scriptEvaluate(params.expression, params.awaitPromise, params.resultOwnership ?? 'none');
+        return realm.scriptEvaluate(params.expression, params.awaitPromise, params.resultOwnership ?? 'none');
     }
     process_script_getRealms(params) {
         if (params.context !== undefined) {
             // Make sure the context is known.
-            this.#browsingContextStorage.getKnownContext(params.context);
+            this.#browsingContextStorage.getContext(params.context);
         }
         const realms = this.#realmStorage
             .findRealms({
@@ -5921,7 +6206,7 @@ class BrowsingContextProcessor {
     }
     async process_script_callFunction(params) {
         const realm = await this.#getRealm(params.target);
-        return await realm.callFunction(params.functionDeclaration, params.this || {
+        return realm.callFunction(params.functionDeclaration, params.this || {
             type: 'undefined',
         }, // `this` is `undefined` by default.
         params.arguments || [], // `arguments` is `[]` by default.
@@ -5929,14 +6214,14 @@ class BrowsingContextProcessor {
     }
     async process_script_disown(params) {
         const realm = await this.#getRealm(params.target);
-        await Promise.all(params.handles.map(async (h) => await realm.disown(h)));
+        await Promise.all(params.handles.map(async (h) => realm.disown(h)));
         return { result: {} };
     }
     async process_browsingContext_close(commandParams) {
         const browserCdpClient = this.#cdpConnection.browserClient();
-        const context = this.#browsingContextStorage.getKnownContext(commandParams.context);
-        if (context.parentId !== null) {
-            throw new protocol_js_1.Message.InvalidArgumentException('Not a top-level browsing context cannot be closed.');
+        const context = this.#browsingContextStorage.getContext(commandParams.context);
+        if (!context.isTopLevelContext()) {
+            throw new protocol_js_1.Message.InvalidArgumentException('A top-level browsing context cannot be closed.');
         }
         const detachedFromTargetPromise = new Promise((resolve) => {
             const onContextDestroyed = (eventParams) => {
@@ -5947,9 +6232,7 @@ class BrowsingContextProcessor {
             };
             browserCdpClient.on('Target.detachedFromTarget', onContextDestroyed);
         });
-        await this.#cdpConnection
-            .browserClient()
-            .sendCommand('Target.closeTarget', {
+        await browserCdpClient.sendCommand('Target.closeTarget', {
             targetId: commandParams.context,
         });
         // Sometimes CDP command finishes before `detachedFromTarget` event,
@@ -5974,9 +6257,9 @@ class BrowsingContextProcessor {
             cdpSession: params.cdpSession,
         };
     }
-    async process_cdp_getSession(params) {
+    process_cdp_getSession(params) {
         const context = params.context;
-        const sessionId = this.#browsingContextStorage.getKnownContext(context).cdpSessionId;
+        const sessionId = this.#browsingContextStorage.getContext(context).cdpTarget.cdpSessionId;
         if (sessionId === undefined) {
             return { result: { cdpSession: null } };
         }
@@ -6012,27 +6295,51 @@ exports.BrowsingContextProcessor = BrowsingContextProcessor;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BrowsingContextStorage = void 0;
 const protocol_js_1 = __nccwpck_require__(315);
+/** Container class for browsing contexts. */
 class BrowsingContextStorage {
+    /** Map from context ID to context implementation. */
     #contexts = new Map();
+    /** Gets all top-level contexts, i.e. those with no parent. */
     getTopLevelContexts() {
-        return Array.from(this.#contexts.values()).filter((c) => c.parentId === null);
+        return this.getAllContexts().filter((c) => c.isTopLevelContext());
     }
-    removeContext(contextId) {
+    /** Gets all contexts. */
+    getAllContexts() {
+        return Array.from(this.#contexts.values());
+    }
+    /** Deletes the context with the given ID. */
+    deleteContext(contextId) {
         this.#contexts.delete(contextId);
     }
+    /** Adds the given context. */
     addContext(context) {
         this.#contexts.set(context.contextId, context);
-        if (context.parentId !== null) {
-            this.getKnownContext(context.parentId).addChild(context);
+        if (!context.isTopLevelContext()) {
+            this.getContext(context.parentId).addChild(context);
         }
     }
-    hasKnownContext(contextId) {
+    /** Returns true whether there is an existing context with the given ID. */
+    hasContext(contextId) {
         return this.#contexts.has(contextId);
     }
+    /** Gets the context with the given ID, if any. */
     findContext(contextId) {
         return this.#contexts.get(contextId);
     }
-    getKnownContext(contextId) {
+    /** Returns the top-level context ID of the given context, if any. */
+    findTopLevelContextId(contextId) {
+        if (contextId === null) {
+            return null;
+        }
+        const maybeContext = this.findContext(contextId);
+        const parentId = maybeContext?.parentId ?? null;
+        if (parentId === null) {
+            return contextId;
+        }
+        return this.findTopLevelContextId(parentId);
+    }
+    /** Gets the context with the given ID, if any, otherwise throws. */
+    getContext(contextId) {
         const result = this.findContext(contextId);
         if (result === undefined) {
             throw new protocol_js_1.Message.NoSuchFrameException(`Context ${contextId} not found`);
@@ -6042,6 +6349,125 @@ class BrowsingContextStorage {
 }
 exports.BrowsingContextStorage = BrowsingContextStorage;
 //# sourceMappingURL=browsingContextStorage.js.map
+
+/***/ }),
+
+/***/ 4101:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/*
+ * Copyright 2023 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CdpTarget = void 0;
+const logManager_1 = __nccwpck_require__(3805);
+const protocol_1 = __nccwpck_require__(315);
+const deferred_1 = __nccwpck_require__(3343);
+const networkProcessor_1 = __nccwpck_require__(3170);
+class CdpTarget {
+    #targetUnblocked;
+    #targetId;
+    #cdpClient;
+    #eventManager;
+    #cdpSessionId;
+    #networkDomainActivated;
+    static create(targetId, cdpClient, cdpSessionId, realmStorage, eventManager) {
+        const cdpTarget = new CdpTarget(targetId, cdpClient, cdpSessionId, eventManager);
+        logManager_1.LogManager.create(cdpTarget, realmStorage, eventManager);
+        cdpTarget.#setEventListeners();
+        // No need in waiting. Deferred will be resolved when the target is unblocked.
+        void cdpTarget.#unblock();
+        return cdpTarget;
+    }
+    constructor(targetId, cdpClient, cdpSessionId, eventManager) {
+        this.#targetId = targetId;
+        this.#cdpClient = cdpClient;
+        this.#cdpSessionId = cdpSessionId;
+        this.#eventManager = eventManager;
+        this.#networkDomainActivated = false;
+        this.#targetUnblocked = new deferred_1.Deferred();
+    }
+    /**
+     * Returns a promise that resolves when the target is unblocked.
+     */
+    get targetUnblocked() {
+        return this.#targetUnblocked;
+    }
+    get targetId() {
+        return this.#targetId;
+    }
+    get cdpClient() {
+        return this.#cdpClient;
+    }
+    /**
+     * Needed for CDP escape path.
+     */
+    get cdpSessionId() {
+        return this.#cdpSessionId;
+    }
+    /**
+     * Enables all the required CDP domains and unblocks the target.
+     */
+    async #unblock() {
+        // Enable Network domain, if it is enabled globally.
+        // TODO: enable Network domain for OOPiF targets.
+        if (this.#eventManager.isNetworkDomainEnabled) {
+            await this.enableNetworkDomain();
+        }
+        await this.#cdpClient.sendCommand('Runtime.enable');
+        await this.#cdpClient.sendCommand('Page.enable');
+        await this.#cdpClient.sendCommand('Page.setLifecycleEventsEnabled', {
+            enabled: true,
+        });
+        await this.#cdpClient.sendCommand('Target.setAutoAttach', {
+            autoAttach: true,
+            waitForDebuggerOnStart: true,
+            flatten: true,
+        });
+        await this.#cdpClient.sendCommand('Runtime.runIfWaitingForDebugger');
+        this.#targetUnblocked.resolve();
+    }
+    /**
+     * Enables the Network domain (creates NetworkProcessor on the target's cdp
+     * client) if it is not enabled yet.
+     */
+    async enableNetworkDomain() {
+        if (!this.#networkDomainActivated) {
+            this.#networkDomainActivated = true;
+            await networkProcessor_1.NetworkProcessor.create(this.cdpClient, this.#eventManager);
+        }
+    }
+    #setEventListeners() {
+        this.#cdpClient.on('*', (method, params) => {
+            this.#eventManager.registerEvent({
+                method: protocol_1.CDP.EventNames.EventReceivedEvent,
+                params: {
+                    cdpMethod: method,
+                    cdpParams: params || {},
+                    cdpSession: this.#cdpSessionId,
+                },
+            }, null);
+        });
+    }
+}
+exports.CdpTarget = CdpTarget;
+//# sourceMappingURL=cdpTarget.js.map
 
 /***/ }),
 
@@ -6068,17 +6494,23 @@ exports.BrowsingContextStorage = BrowsingContextStorage;
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.EventManager = void 0;
+const protocol_js_1 = __nccwpck_require__(315);
 const buffer_js_1 = __nccwpck_require__(5860);
 const idWrapper_js_1 = __nccwpck_require__(3018);
 const OutgoingBidiMessage_js_1 = __nccwpck_require__(8596);
+const DefaultMap_js_1 = __nccwpck_require__(2038);
 const SubscriptionManager_js_1 = __nccwpck_require__(9793);
-class EventWrapper extends idWrapper_js_1.IdWrapper {
+class EventWrapper {
+    #idWrapper;
     #contextId;
     #event;
     constructor(event, contextId) {
-        super();
+        this.#idWrapper = new idWrapper_js_1.IdWrapper();
         this.#contextId = contextId;
         this.#event = event;
+    }
+    get id() {
+        return this.#idWrapper.id;
     }
     get contextId() {
         return this.#contextId;
@@ -6091,15 +6523,16 @@ class EventWrapper extends idWrapper_js_1.IdWrapper {
  * Maps event name to a desired buffer length.
  */
 const eventBufferLength = new Map([
-    ['log.entryAdded', 100],
+    [protocol_js_1.Log.EventNames.LogEntryAddedEvent, 100],
 ]);
 class EventManager {
+    static #NETWORK_DOMAIN_PREFIX = 'network';
     /**
      * Maps event name to a set of contexts where this event already happened.
      * Needed for getting buffered events from all the contexts in case of
      * subscripting to all contexts.
      */
-    #eventToContextsMap = new Map();
+    #eventToContextsMap = new DefaultMap_js_1.DefaultMap(() => new Set());
     /**
      * Maps `eventName` + `browsingContext` to buffer. Used to get buffered events
      * during subscription. Channel-agnostic.
@@ -6113,20 +6546,25 @@ class EventManager {
     #lastMessageSent = new Map();
     #subscriptionManager;
     #bidiServer;
+    #isNetworkDomainEnabled;
     constructor(bidiServer) {
         this.#bidiServer = bidiServer;
         this.#subscriptionManager = new SubscriptionManager_js_1.SubscriptionManager(bidiServer.getBrowsingContextStorage());
+        this.#isNetworkDomainEnabled = false;
+    }
+    get isNetworkDomainEnabled() {
+        return this.#isNetworkDomainEnabled;
     }
     /**
      * Returns consistent key to be used to access value maps.
      */
-    #getMapKey(eventName, browsingContext, channel = undefined) {
+    static #getMapKey(eventName, browsingContext, channel) {
         return JSON.stringify({ eventName, browsingContext, channel });
     }
-    async registerEvent(event, contextId) {
-        await this.registerPromiseEvent(Promise.resolve(event), contextId, event.method);
+    registerEvent(event, contextId) {
+        this.registerPromiseEvent(Promise.resolve(event), contextId, event.method);
     }
-    async registerPromiseEvent(event, contextId, eventName) {
+    registerPromiseEvent(event, contextId, eventName) {
         const eventWrapper = new EventWrapper(event, contextId);
         const sortedChannels = this.#subscriptionManager.getChannelsSubscribedToEvent(eventName, contextId);
         this.#bufferEvent(eventWrapper, eventName);
@@ -6141,11 +6579,12 @@ class EventManager {
         for (const contextId of contextIds) {
             if (contextId !== null) {
                 // Assert the context is known. Throw exception otherwise.
-                this.#bidiServer.getBrowsingContextStorage().getKnownContext(contextId);
+                this.#bidiServer.getBrowsingContextStorage().getContext(contextId);
             }
         }
         for (const eventName of eventNames) {
             for (const contextId of contextIds) {
+                await this.#handleDomains(eventName, contextId);
                 this.#subscriptionManager.subscribe(eventName, contextId, channel);
                 for (const eventWrapper of this.#getBufferedEvents(eventName, contextId, channel)) {
                     // The order of the events is important.
@@ -6155,19 +6594,31 @@ class EventManager {
             }
         }
     }
-    async unsubscribe(eventNames, contextIds, channel) {
-        // First check if all the contexts are known.
-        for (const contextId of contextIds) {
-            if (contextId !== null) {
-                // Assert the context is known. Throw exception otherwise.
-                this.#bidiServer.getBrowsingContextStorage().getKnownContext(contextId);
+    /**
+     * Enables domains for the subscribed event in the required contexts or
+     * globally.
+     */
+    async #handleDomains(eventName, contextId) {
+        // Enable network domain if user subscribed to any of network events.
+        if (eventName.startsWith(EventManager.#NETWORK_DOMAIN_PREFIX)) {
+            // Enable for all the contexts.
+            if (contextId === null) {
+                this.#isNetworkDomainEnabled = true;
+                await Promise.all(this.#bidiServer
+                    .getBrowsingContextStorage()
+                    .getAllContexts()
+                    .map((context) => context.cdpTarget.enableNetworkDomain()));
+            }
+            else {
+                await this.#bidiServer
+                    .getBrowsingContextStorage()
+                    .getContext(contextId)
+                    .cdpTarget.enableNetworkDomain();
             }
         }
-        for (const eventName of eventNames) {
-            for (const contextId of contextIds) {
-                this.#subscriptionManager.unsubscribe(eventName, contextId, channel);
-            }
-        }
+    }
+    unsubscribe(eventNames, contextIds, channel) {
+        this.#subscriptionManager.unsubscribeAll(eventNames, contextIds, channel);
     }
     /**
      * If the event is buffer-able, put it in the buffer.
@@ -6177,15 +6628,12 @@ class EventManager {
             // Do nothing if the event is no buffer-able.
             return;
         }
-        const bufferMapKey = this.#getMapKey(eventName, eventWrapper.contextId);
+        const bufferMapKey = EventManager.#getMapKey(eventName, eventWrapper.contextId);
         if (!this.#eventBuffers.has(bufferMapKey)) {
             this.#eventBuffers.set(bufferMapKey, new buffer_js_1.Buffer(eventBufferLength.get(eventName)));
         }
         this.#eventBuffers.get(bufferMapKey).add(eventWrapper);
         // Add the context to the list of contexts having `eventName` events.
-        if (!this.#eventToContextsMap.has(eventName)) {
-            this.#eventToContextsMap.set(eventName, new Set());
-        }
         this.#eventToContextsMap.get(eventName).add(eventWrapper.contextId);
     }
     /**
@@ -6196,15 +6644,15 @@ class EventManager {
             // Do nothing if the event is no buffer-able.
             return;
         }
-        const lastSentMapKey = this.#getMapKey(eventName, eventWrapper.contextId, channel);
+        const lastSentMapKey = EventManager.#getMapKey(eventName, eventWrapper.contextId, channel);
         this.#lastMessageSent.set(lastSentMapKey, Math.max(this.#lastMessageSent.get(lastSentMapKey) ?? 0, eventWrapper.id));
     }
     /**
      * Returns events which are buffered and not yet sent to the given channel events.
      */
     #getBufferedEvents(eventName, contextId, channel) {
-        const bufferMapKey = this.#getMapKey(eventName, contextId);
-        const lastSentMapKey = this.#getMapKey(eventName, contextId, channel);
+        const bufferMapKey = EventManager.#getMapKey(eventName, contextId);
+        const lastSentMapKey = EventManager.#getMapKey(eventName, contextId, channel);
         const lastSentMessageId = this.#lastMessageSent.get(lastSentMapKey) ?? -Infinity;
         const result = this.#eventBuffers
             .get(bufferMapKey)
@@ -6212,14 +6660,12 @@ class EventManager {
             .filter((wrapper) => wrapper.id > lastSentMessageId) ?? [];
         if (contextId === null) {
             // For global subscriptions, events buffered in each context should be sent back.
-            Array.from(this.#eventToContextsMap.get(eventName)?.keys() ?? [])
+            Array.from(this.#eventToContextsMap.get(eventName).keys())
                 .filter((_contextId) => 
             // Events without context are already in the result.
             _contextId !== null &&
                 // Events from deleted contexts should not be sent.
-                this.#bidiServer
-                    .getBrowsingContextStorage()
-                    .hasKnownContext(_contextId))
+                this.#bidiServer.getBrowsingContextStorage().hasContext(_contextId))
                 .map((_contextId) => this.#getBufferedEvents(eventName, _contextId, channel))
                 .forEach((events) => result.push(...events));
         }
@@ -6253,9 +6699,45 @@ exports.EventManager = EventManager;
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SubscriptionManager = void 0;
+exports.SubscriptionManager = exports.unrollEvents = exports.cartesianProduct = void 0;
 const protocol_js_1 = __nccwpck_require__(315);
-var InvalidArgumentException = protocol_js_1.Message.InvalidArgumentException;
+/**
+ * Returns the cartesian product of the given arrays.
+ *
+ * Example:
+ *   cartesian([1, 2], ['a', 'b']); => [[1, 'a'], [1, 'b'], [2, 'a'], [2, 'b']]
+ */
+function cartesianProduct(...a) {
+    return a.reduce((a, b) => a.flatMap((d) => b.map((e) => [d, e].flat())));
+}
+exports.cartesianProduct = cartesianProduct;
+/** Expands "AllEvents" events into atomic events. */
+function unrollEvents(events) {
+    const allEvents = [];
+    for (const event of events) {
+        switch (event) {
+            case protocol_js_1.BrowsingContext.AllEvents:
+                allEvents.push(...Object.values(protocol_js_1.BrowsingContext.EventNames));
+                break;
+            case protocol_js_1.CDP.AllEvents:
+                allEvents.push(...Object.values(protocol_js_1.CDP.EventNames));
+                break;
+            case protocol_js_1.Log.AllEvents:
+                allEvents.push(...Object.values(protocol_js_1.Log.EventNames));
+                break;
+            case protocol_js_1.Network.AllEvents:
+                allEvents.push(...Object.values(protocol_js_1.Network.EventNames));
+                break;
+            case protocol_js_1.Script.AllEvents:
+                allEvents.push(...Object.values(protocol_js_1.Script.EventNames));
+                break;
+            default:
+                allEvents.push(event);
+        }
+    }
+    return allEvents;
+}
+exports.unrollEvents = unrollEvents;
 class SubscriptionManager {
     #subscriptionPriority = 0;
     // BrowsingContext `null` means the event has subscription across all the
@@ -6283,7 +6765,7 @@ class SubscriptionManager {
         if (contextToEventMap === undefined) {
             return null;
         }
-        const maybeTopLevelContextId = this.#findTopLevelContextId(contextId);
+        const maybeTopLevelContextId = this.#browsingContextStorage.findTopLevelContextId(contextId);
         // `null` covers global subscription.
         const relevantContexts = [...new Set([null, maybeTopLevelContextId])];
         // Get all the subscription priorities.
@@ -6297,20 +6779,9 @@ class SubscriptionManager {
         // Return minimal priority.
         return Math.min(...priorities);
     }
-    #findTopLevelContextId(contextId) {
-        if (contextId === null) {
-            return null;
-        }
-        const maybeContext = this.#browsingContextStorage.findContext(contextId);
-        const parentId = maybeContext?.parentId ?? null;
-        if (parentId !== null) {
-            return this.#findTopLevelContextId(parentId);
-        }
-        return contextId;
-    }
     subscribe(event, contextId, channel) {
         // All the subscriptions are handled on the top-level contexts.
-        contextId = this.#findTopLevelContextId(contextId);
+        contextId = this.#browsingContextStorage.findTopLevelContextId(contextId);
         if (event === protocol_js_1.BrowsingContext.AllEvents) {
             Object.values(protocol_js_1.BrowsingContext.EventNames).map((specificEvent) => this.subscribe(specificEvent, contextId, channel));
             return;
@@ -6321,6 +6792,14 @@ class SubscriptionManager {
         }
         if (event === protocol_js_1.Log.AllEvents) {
             Object.values(protocol_js_1.Log.EventNames).map((specificEvent) => this.subscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (event === protocol_js_1.Network.AllEvents) {
+            Object.values(protocol_js_1.Network.EventNames).map((specificEvent) => this.subscribe(specificEvent, contextId, channel));
+            return;
+        }
+        if (event === protocol_js_1.Script.AllEvents) {
+            Object.values(protocol_js_1.Script.EventNames).map((specificEvent) => this.subscribe(specificEvent, contextId, channel));
             return;
         }
         if (!this.#channelToContextToEventMap.has(channel)) {
@@ -6337,40 +6816,54 @@ class SubscriptionManager {
         }
         eventMap.set(event, this.#subscriptionPriority++);
     }
-    unsubscribe(event, contextId, channel) {
+    /**
+     * Unsubscribes atomically from all events in the given contexts and channel.
+     */
+    unsubscribeAll(events, contextIds, channel) {
+        // Assert all contexts are known.
+        for (const contextId of contextIds) {
+            if (contextId !== null) {
+                this.#browsingContextStorage.getContext(contextId);
+            }
+        }
+        const eventContextPairs = cartesianProduct(unrollEvents(events), contextIds);
+        // Assert all unsubscriptions are valid.
+        // If any of the unsubscriptions are invalid, do not unsubscribe from anything.
+        eventContextPairs
+            .map(([event, contextId]) => this.#checkUnsubscribe(event, contextId, channel))
+            .forEach((unsubscribe) => unsubscribe());
+    }
+    /**
+     * Unsubscribes from the event in the given context and channel.
+     * Syntactic sugar for "unsubscribeAll".
+     */
+    unsubscribe(eventName, contextId, channel) {
+        this.unsubscribeAll([eventName], [contextId], channel);
+    }
+    #checkUnsubscribe(event, contextId, channel) {
         // All the subscriptions are handled on the top-level contexts.
-        contextId = this.#findTopLevelContextId(contextId);
-        if (event === protocol_js_1.BrowsingContext.AllEvents) {
-            Object.values(protocol_js_1.BrowsingContext.EventNames).map((specificEvent) => this.unsubscribe(specificEvent, contextId, channel));
-            return;
-        }
-        if (event === protocol_js_1.CDP.AllEvents) {
-            Object.values(protocol_js_1.CDP.EventNames).map((specificEvent) => this.unsubscribe(specificEvent, contextId, channel));
-            return;
-        }
-        if (event === protocol_js_1.Log.AllEvents) {
-            Object.values(protocol_js_1.Log.EventNames).map((specificEvent) => this.unsubscribe(specificEvent, contextId, channel));
-            return;
-        }
+        contextId = this.#browsingContextStorage.findTopLevelContextId(contextId);
         if (!this.#channelToContextToEventMap.has(channel)) {
-            throw new InvalidArgumentException(`Cannot unsubscribe from ${event}, ${contextId}. No subscription found.`);
+            throw new protocol_js_1.Message.InvalidArgumentException(`Cannot unsubscribe from ${event}, ${contextId === null ? 'null' : contextId}. No subscription found.`);
         }
         const contextToEventMap = this.#channelToContextToEventMap.get(channel);
         if (!contextToEventMap.has(contextId)) {
-            throw new InvalidArgumentException(`Cannot unsubscribe from ${event}, ${contextId}. No subscription found.`);
+            throw new protocol_js_1.Message.InvalidArgumentException(`Cannot unsubscribe from ${event}, ${contextId === null ? 'null' : contextId}. No subscription found.`);
         }
         const eventMap = contextToEventMap.get(contextId);
         if (!eventMap.has(event)) {
-            throw new InvalidArgumentException(`Cannot unsubscribe from ${event}, ${contextId}. No subscription found.`);
+            throw new protocol_js_1.Message.InvalidArgumentException(`Cannot unsubscribe from ${event}, ${contextId === null ? 'null' : contextId}. No subscription found.`);
         }
-        eventMap.delete(event);
-        // Clean up maps if empty.
-        if (eventMap.size === 0) {
-            contextToEventMap.delete(event);
-        }
-        if (contextToEventMap.size === 0) {
-            this.#channelToContextToEventMap.delete(channel);
-        }
+        return () => {
+            eventMap.delete(event);
+            // Clean up maps if empty.
+            if (eventMap.size === 0) {
+                contextToEventMap.delete(event);
+            }
+            if (contextToEventMap.size === 0) {
+                this.#channelToContextToEventMap.delete(channel);
+            }
+        };
     }
 }
 exports.SubscriptionManager = SubscriptionManager;
@@ -6407,7 +6900,7 @@ function isFormmatSpecifier(str) {
 }
 /**
  * @param args input remote values to be format printed
- * @returns parsed text of the remote values in specific format
+ * @return parsed text of the remote values in specific format
  */
 function logMessageFormatter(args) {
     let output = '';
@@ -6465,7 +6958,7 @@ function logMessageFormatter(args) {
 exports.logMessageFormatter = logMessageFormatter;
 /**
  * @param arg input remote value to be parsed
- * @returns parsed text of the remote value
+ * @return parsed text of the remote value
  *
  * input: {"type": "number", "value": 1}
  * output: 1
@@ -6506,7 +6999,7 @@ function toJson(arg) {
             .join(',')}}`;
     }
     if (arg.type === 'array') {
-        return `[${arg.value.map((val) => toJson(val)).join(',')}]`;
+        return `[${arg.value?.map((val) => toJson(val)).join(',') ?? ''}]`;
     }
     throw Error(`Invalid value type: ${arg.toString()}`);
 }
@@ -6521,13 +7014,13 @@ function stringFromArg(arg) {
         case 'bigint':
             return String(arg.value);
         case 'regexp':
-            return `/${arg.value.pattern}/${arg.value.flags}`;
+            return `/${arg.value.pattern}/${arg.value.flags ?? ''}`;
         case 'date':
             return new Date(arg.value).toString();
         case 'object':
-            return `Object(${arg.value?.length})`;
+            return `Object(${arg.value?.length ?? ''})`;
         case 'array':
-            return `Array(${arg.value?.length})`;
+            return `Array(${arg.value?.length ?? ''})`;
         case 'map':
             return `Map(${arg.value.length})`;
         case 'set':
@@ -6549,7 +7042,7 @@ function getRemoteValuesText(args, formatText) {
         formatText) {
         return logMessageFormatter(args);
     }
-    // if args[0] is not a format specifier, just join the args with \u0020
+    // if args[0] is not a format specifier, just join the args with \u0020 (unicode 'SPACE')
     return args
         .map((arg) => {
         return stringFromArg(arg);
@@ -6568,25 +7061,9 @@ exports.getRemoteValuesText = getRemoteValuesText;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LogManager = void 0;
-/**
- * Copyright 2021 Google LLC.
- * Copyright (c) Microsoft Corporation.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 const protocol_js_1 = __nccwpck_require__(315);
 const logHelper_js_1 = __nccwpck_require__(9283);
-/** Converts CDP StackTrace object to Bidi StackTrace object. */
+/** Converts CDP StackTrace object to BiDi StackTrace object. */
 function getBidiStackTrace(cdpStackTrace) {
     const stackFrames = cdpStackTrace?.callFrames.map((callFrame) => {
         return {
@@ -6611,18 +7088,16 @@ function getLogLevel(consoleApiType) {
     return 'info';
 }
 class LogManager {
-    #cdpClient;
-    #cdpSessionId;
     #eventManager;
     #realmStorage;
-    constructor(realmStorage, cdpClient, cdpSessionId, eventManager) {
+    #cdpTarget;
+    constructor(cdpTarget, realmStorage, eventManager) {
+        this.#cdpTarget = cdpTarget;
         this.#realmStorage = realmStorage;
-        this.#cdpSessionId = cdpSessionId;
-        this.#cdpClient = cdpClient;
         this.#eventManager = eventManager;
     }
-    static create(realmStorage, cdpClient, cdpSessionId, eventManager) {
-        const logManager = new LogManager(realmStorage, cdpClient, cdpSessionId, eventManager);
+    static create(cdpTarget, realmStorage, eventManager) {
+        const logManager = new LogManager(cdpTarget, realmStorage, eventManager);
         logManager.#initialize();
         return logManager;
     }
@@ -6630,11 +7105,11 @@ class LogManager {
         this.#initializeLogEntryAddedEventListener();
     }
     #initializeLogEntryAddedEventListener() {
-        this.#cdpClient.on('Runtime.consoleAPICalled', (params) => {
+        this.#cdpTarget.cdpClient.on('Runtime.consoleAPICalled', (params) => {
             // Try to find realm by `cdpSessionId` and `executionContextId`,
             // if provided.
             const realm = this.#realmStorage.findRealm({
-                cdpSessionId: this.#cdpSessionId,
+                cdpSessionId: this.#cdpTarget.cdpSessionId,
                 executionContextId: params.executionContextId,
             });
             const argsPromise = realm === undefined
@@ -6643,8 +7118,6 @@ class LogManager {
                     Promise.all(params.args.map((arg) => {
                         return realm.serializeCdpObject(arg, 'none');
                     }));
-            // No need in waiting for the result, just register the event promise.
-            // noinspection JSIgnoredPromiseFromCall
             this.#eventManager.registerPromiseEvent(argsPromise.then((args) => ({
                 method: protocol_js_1.Log.EventNames.LogEntryAddedEvent,
                 params: {
@@ -6663,11 +7136,11 @@ class LogManager {
                 },
             })), realm?.browsingContextId ?? 'UNKNOWN', protocol_js_1.Log.EventNames.LogEntryAddedEvent);
         });
-        this.#cdpClient.on('Runtime.exceptionThrown', (params) => {
+        this.#cdpTarget.cdpClient.on('Runtime.exceptionThrown', (params) => {
             // Try to find realm by `cdpSessionId` and `executionContextId`,
             // if provided.
             const realm = this.#realmStorage.findRealm({
-                cdpSessionId: this.#cdpSessionId,
+                cdpSessionId: this.#cdpTarget.cdpSessionId,
                 executionContextId: params.exceptionDetails.executionContextId,
             });
             // Try all the best to get the exception text.
@@ -6678,10 +7151,8 @@ class LogManager {
                 if (realm === undefined) {
                     return JSON.stringify(params.exceptionDetails.exception);
                 }
-                return await realm.stringifyObject(params.exceptionDetails.exception);
+                return realm.stringifyObject(params.exceptionDetails.exception);
             })();
-            // No need in waiting for the result, just register the event promise.
-            // noinspection JSIgnoredPromiseFromCall
             this.#eventManager.registerPromiseEvent(textPromise.then((text) => ({
                 method: protocol_js_1.Log.EventNames.LogEntryAddedEvent,
                 params: {
@@ -6701,6 +7172,342 @@ class LogManager {
 }
 exports.LogManager = LogManager;
 //# sourceMappingURL=logManager.js.map
+
+/***/ }),
+
+/***/ 3170:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/*
+ * Copyright 2023 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.NetworkProcessor = void 0;
+const DefaultMap_1 = __nccwpck_require__(2038);
+const networkRequest_1 = __nccwpck_require__(9995);
+class NetworkProcessor {
+    #eventManager;
+    /**
+     * Map of request ID to NetworkRequest objects. Needed as long as information
+     * about requests comes from different events.
+     */
+    #requestMap;
+    constructor(eventManager) {
+        this.#eventManager = eventManager;
+        this.#requestMap = new DefaultMap_1.DefaultMap((requestId) => new networkRequest_1.NetworkRequest(requestId, this.#eventManager));
+    }
+    static async create(cdpClient, eventManager) {
+        const networkProcessor = new NetworkProcessor(eventManager);
+        cdpClient.on('Network.requestWillBeSent', (params) => {
+            networkProcessor
+                .#getOrCreateNetworkRequest(params.requestId)
+                .onRequestWillBeSentEvent(params);
+        });
+        cdpClient.on('Network.requestWillBeSentExtraInfo', (params) => {
+            networkProcessor
+                .#getOrCreateNetworkRequest(params.requestId)
+                .onRequestWillBeSentExtraInfoEvent(params);
+        });
+        cdpClient.on('Network.responseReceived', (params) => {
+            networkProcessor
+                .#getOrCreateNetworkRequest(params.requestId)
+                .onResponseReceivedEvent(params);
+        });
+        cdpClient.on('Network.responseReceivedExtraInfo', (params) => {
+            networkProcessor
+                .#getOrCreateNetworkRequest(params.requestId)
+                .onResponseReceivedEventExtraInfo(params);
+        });
+        cdpClient.on('Network.loadingFailed', (params) => {
+            networkProcessor
+                .#getOrCreateNetworkRequest(params.requestId)
+                .onLoadingFailedEvent(params);
+        });
+        await cdpClient.sendCommand('Network.enable');
+        return networkProcessor;
+    }
+    #getOrCreateNetworkRequest(requestId) {
+        return this.#requestMap.get(requestId);
+    }
+}
+exports.NetworkProcessor = NetworkProcessor;
+//# sourceMappingURL=networkProcessor.js.map
+
+/***/ }),
+
+/***/ 9995:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/*
+ * Copyright 2023 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.NetworkRequest = void 0;
+const deferred_1 = __nccwpck_require__(3343);
+const protocol_1 = __nccwpck_require__(315);
+class NetworkRequest {
+    static #unknown = 'UNKNOWN';
+    requestId;
+    #eventManager;
+    #requestWillBeSentEvent;
+    #requestWillBeSentExtraInfoEvent;
+    #responseReceivedEvent;
+    #responseReceivedExtraInfoEvent;
+    #beforeRequestSentDeferred;
+    #responseReceivedDeferred;
+    constructor(requestId, eventManager) {
+        this.requestId = requestId;
+        this.#eventManager = eventManager;
+        this.#beforeRequestSentDeferred = new deferred_1.Deferred();
+        this.#responseReceivedDeferred = new deferred_1.Deferred();
+    }
+    onRequestWillBeSentEvent(requestWillBeSentEvent) {
+        if (this.#requestWillBeSentEvent !== undefined) {
+            throw new Error('RequestWillBeSentEvent is already set');
+        }
+        this.#requestWillBeSentEvent = requestWillBeSentEvent;
+        if (this.#requestWillBeSentExtraInfoEvent !== undefined) {
+            this.#beforeRequestSentDeferred.resolve();
+        }
+        this.#sendBeforeRequestEvent();
+    }
+    onRequestWillBeSentExtraInfoEvent(requestWillBeSentExtraInfoEvent) {
+        if (this.#requestWillBeSentExtraInfoEvent !== undefined) {
+            throw new Error('RequestWillBeSentExtraInfoEvent is already set');
+        }
+        this.#requestWillBeSentExtraInfoEvent = requestWillBeSentExtraInfoEvent;
+        if (this.#requestWillBeSentEvent !== undefined) {
+            this.#beforeRequestSentDeferred.resolve();
+        }
+    }
+    onResponseReceivedEvent(responseReceivedEvent) {
+        if (this.#responseReceivedEvent !== undefined) {
+            throw new Error('ResponseReceivedEvent is already set');
+        }
+        this.#responseReceivedEvent = responseReceivedEvent;
+        if (this.#responseReceivedExtraInfoEvent !== undefined) {
+            this.#responseReceivedDeferred.resolve();
+        }
+        this.#sendResponseReceivedEvent();
+    }
+    onResponseReceivedEventExtraInfo(responseReceivedExtraInfoEvent) {
+        if (this.#responseReceivedExtraInfoEvent !== undefined) {
+            throw new Error('ResponseReceivedExtraInfoEvent is already set');
+        }
+        this.#responseReceivedExtraInfoEvent = responseReceivedExtraInfoEvent;
+        if (this.#responseReceivedEvent !== undefined) {
+            this.#responseReceivedDeferred.resolve();
+        }
+    }
+    onLoadingFailedEvent(loadingFailedEvent) {
+        this.#beforeRequestSentDeferred.resolve();
+        this.#responseReceivedDeferred.reject(loadingFailedEvent);
+        const params = {
+            ...this.#getBaseEventParams(),
+            errorText: loadingFailedEvent.errorText,
+        };
+        this.#eventManager.registerEvent({
+            method: protocol_1.Network.EventNames.FetchErrorEvent,
+            params,
+        }, this.#requestWillBeSentEvent?.frameId ?? null);
+    }
+    #sendBeforeRequestEvent() {
+        if (!this.#isIgnoredEvent()) {
+            this.#eventManager.registerPromiseEvent(this.#beforeRequestSentDeferred.then(() => this.#getBeforeRequestEvent()), this.#requestWillBeSentEvent?.frameId ?? null, protocol_1.Network.EventNames.BeforeRequestSentEvent);
+        }
+    }
+    #getBeforeRequestEvent() {
+        if (this.#requestWillBeSentEvent === undefined) {
+            throw new Error('RequestWillBeSentEvent is not set');
+        }
+        const params = {
+            ...this.#getBaseEventParams(),
+            initiator: { type: this.#getInitiatorType() },
+        };
+        return {
+            method: protocol_1.Network.EventNames.BeforeRequestSentEvent,
+            params,
+        };
+    }
+    #getBaseEventParams() {
+        return {
+            context: this.#requestWillBeSentEvent?.frameId ?? null,
+            navigation: this.#requestWillBeSentEvent?.loaderId ?? null,
+            // TODO: implement.
+            redirectCount: 0,
+            request: this.#getRequestData(),
+            // Timestamp should be in milliseconds, while CDP provides it in seconds.
+            timestamp: Math.round((this.#requestWillBeSentEvent?.wallTime ?? 0) * 1000),
+        };
+    }
+    #getRequestData() {
+        const cookies = this.#requestWillBeSentExtraInfoEvent === undefined
+            ? []
+            : NetworkRequest.#getCookies(this.#requestWillBeSentExtraInfoEvent.associatedCookies);
+        return {
+            request: this.#requestWillBeSentEvent?.requestId ?? NetworkRequest.#unknown,
+            url: this.#requestWillBeSentEvent?.request.url ?? NetworkRequest.#unknown,
+            method: this.#requestWillBeSentEvent?.request.method ?? NetworkRequest.#unknown,
+            headers: Object.keys(this.#requestWillBeSentEvent?.request.headers ?? []).map((key) => ({
+                name: key,
+                value: this.#requestWillBeSentEvent?.request.headers[key],
+            })),
+            cookies,
+            // TODO: implement.
+            headersSize: -1,
+            // TODO: implement.
+            bodySize: 0,
+            timings: {
+                // TODO: implement.
+                timeOrigin: 0,
+                // TODO: implement.
+                requestTime: 0,
+                // TODO: implement.
+                redirectStart: 0,
+                // TODO: implement.
+                redirectEnd: 0,
+                // TODO: implement.
+                fetchStart: 0,
+                // TODO: implement.
+                dnsStart: 0,
+                // TODO: implement.
+                dnsEnd: 0,
+                // TODO: implement.
+                connectStart: 0,
+                // TODO: implement.
+                connectEnd: 0,
+                // TODO: implement.
+                tlsStart: 0,
+                // TODO: implement.
+                tlsEnd: 0,
+                // TODO: implement.
+                requestStart: 0,
+                // TODO: implement.
+                responseStart: 0,
+                // TODO: implement.
+                responseEnd: 0,
+            },
+        };
+    }
+    #getInitiatorType() {
+        switch (this.#requestWillBeSentEvent?.initiator.type) {
+            case 'parser':
+            case 'script':
+            case 'preflight':
+                return this.#requestWillBeSentEvent.initiator.type;
+            default:
+                return 'other';
+        }
+    }
+    static #getCookiesSameSite(cdpSameSiteValue) {
+        switch (cdpSameSiteValue) {
+            case 'Strict':
+                return 'strict';
+            case 'Lax':
+                return 'lax';
+            default:
+                return 'none';
+        }
+    }
+    static #getCookies(associatedCookies) {
+        return associatedCookies.map((cookieInfo) => {
+            return {
+                name: cookieInfo.cookie.name,
+                value: cookieInfo.cookie.value,
+                domain: cookieInfo.cookie.domain,
+                path: cookieInfo.cookie.path,
+                expires: cookieInfo.cookie.expires,
+                size: cookieInfo.cookie.size,
+                httpOnly: cookieInfo.cookie.httpOnly,
+                secure: cookieInfo.cookie.secure,
+                sameSite: NetworkRequest.#getCookiesSameSite(cookieInfo.cookie.sameSite),
+            };
+        });
+    }
+    #sendResponseReceivedEvent() {
+        if (!this.#isIgnoredEvent()) {
+            // Wait for both ResponseReceived and ResponseReceivedExtraInfo events.
+            this.#eventManager.registerPromiseEvent(this.#responseReceivedDeferred.then(() => this.#getResponseReceivedEvent()), this.#responseReceivedEvent?.frameId ?? null, protocol_1.Network.EventNames.ResponseCompletedEvent);
+        }
+    }
+    #getResponseReceivedEvent() {
+        if (this.#responseReceivedEvent === undefined) {
+            throw new Error('ResponseReceivedEvent is not set');
+        }
+        if (this.#requestWillBeSentEvent === undefined) {
+            throw new Error('RequestWillBeSentEvent is not set');
+        }
+        return {
+            method: protocol_1.Network.EventNames.ResponseCompletedEvent,
+            params: {
+                ...this.#getBaseEventParams(),
+                response: {
+                    url: this.#responseReceivedEvent.response.url,
+                    protocol: this.#responseReceivedEvent.response.protocol,
+                    status: this.#responseReceivedEvent.response.status,
+                    statusText: this.#responseReceivedEvent.response.statusText,
+                    // Check if this is correct.
+                    fromCache: this.#responseReceivedEvent.response.fromDiskCache ||
+                        this.#responseReceivedEvent.response.fromPrefetchCache,
+                    // TODO: implement.
+                    headers: this.#getHeaders(this.#responseReceivedEvent.response.headers),
+                    mimeType: this.#responseReceivedEvent.response.mimeType,
+                    bytesReceived: this.#responseReceivedEvent.response.encodedDataLength,
+                    headersSize: this.#responseReceivedExtraInfoEvent?.headersText?.length ?? -1,
+                    // TODO: consider removing from spec.
+                    bodySize: -1,
+                    content: {
+                        // TODO: consider removing from spec.
+                        size: -1,
+                    },
+                },
+            },
+        };
+    }
+    #getHeaders(headers) {
+        return Object.keys(headers).map((key) => ({
+            name: key,
+            value: headers[key],
+        }));
+    }
+    #isIgnoredEvent() {
+        return (this.#requestWillBeSentEvent?.request.url.endsWith('/favicon.ico') ??
+            false);
+    }
+}
+exports.NetworkRequest = NetworkRequest;
+//# sourceMappingURL=networkRequest.js.map
 
 /***/ }),
 
@@ -6728,7 +7535,6 @@ exports.LogManager = LogManager;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Realm = void 0;
 const scriptEvaluator_js_1 = __nccwpck_require__(1376);
-const scriptEvaluator = new scriptEvaluator_js_1.ScriptEvaluator();
 class Realm {
     #realmStorage;
     #browsingContextStorage;
@@ -6738,9 +7544,11 @@ class Realm {
     #origin;
     #type;
     #cdpClient;
+    #eventManager;
+    #scriptEvaluator;
     sandbox;
     cdpSessionId;
-    constructor(realmStorage, browsingContextStorage, realmId, browsingContextId, executionContextId, origin, type, sandbox, cdpSessionId, cdpClient) {
+    constructor(realmStorage, browsingContextStorage, realmId, browsingContextId, executionContextId, origin, type, sandbox, cdpSessionId, cdpClient, eventManager) {
         this.#realmId = realmId;
         this.#browsingContextId = browsingContextId;
         this.#executionContextId = executionContextId;
@@ -6751,6 +7559,8 @@ class Realm {
         this.#cdpClient = cdpClient;
         this.#realmStorage = realmStorage;
         this.#browsingContextStorage = browsingContextStorage;
+        this.#eventManager = eventManager;
+        this.#scriptEvaluator = new scriptEvaluator_js_1.ScriptEvaluator(this.#eventManager);
         this.#realmStorage.realmMap.set(this.#realmId, this);
     }
     async disown(handle) {
@@ -6772,7 +7582,7 @@ class Realm {
         }
         this.#realmStorage.knownHandlesToRealm.delete(handle);
     }
-    async cdpToBidiValue(cdpValue, resultOwnership) {
+    cdpToBidiValue(cdpValue, resultOwnership) {
         const cdpWebDriverValue = cdpValue.result.webDriverValue;
         const bidiValue = this.webDriverValueToBiDi(cdpWebDriverValue);
         if (cdpValue.result.objectId) {
@@ -6785,23 +7595,28 @@ class Realm {
                 this.#realmStorage.knownHandlesToRealm.set(objectId, this.realmId);
             }
             else {
-                // No need in waiting for the object to be released.
-                // noinspection ES6MissingAwait
-                this.cdpClient.sendCommand('Runtime.releaseObject', { objectId });
+                // No need in awaiting for the object to be released.
+                void this.cdpClient.sendCommand('Runtime.releaseObject', { objectId });
             }
         }
         return bidiValue;
     }
     webDriverValueToBiDi(webDriverValue) {
         // This relies on the CDP to implement proper BiDi serialization, except
-        // backendNodeId/sharedId.
+        // backendNodeId/sharedId and `platformobject`.
         const result = webDriverValue;
+        // Platform object is a special case. It should have only `{type: object}`
+        // without `value` field.
+        if (result.type === 'platformobject') {
+            return { type: 'object' };
+        }
         const bidiValue = result.value;
         if (bidiValue === undefined) {
             return result;
         }
         if (result.type === 'node') {
             if (Object.hasOwn(bidiValue, 'backendNodeId')) {
+                // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
                 bidiValue.sharedId = `${this.navigableId}${scriptEvaluator_js_1.SHARED_ID_DIVIDER}${bidiValue.backendNodeId}`;
                 delete bidiValue['backendNodeId'];
             }
@@ -6859,37 +7674,36 @@ class Realm {
         return this.#cdpClient;
     }
     async callFunction(functionDeclaration, _this, _arguments, awaitPromise, resultOwnership) {
-        const context = this.#browsingContextStorage.getKnownContext(this.browsingContextId);
+        const context = this.#browsingContextStorage.getContext(this.browsingContextId);
         await context.awaitUnblocked();
         return {
-            result: await scriptEvaluator.callFunction(this, functionDeclaration, _this, _arguments, awaitPromise, resultOwnership),
+            result: await this.#scriptEvaluator.callFunction(this, functionDeclaration, _this, _arguments, awaitPromise, resultOwnership),
         };
     }
     async scriptEvaluate(expression, awaitPromise, resultOwnership) {
-        const context = this.#browsingContextStorage.getKnownContext(this.browsingContextId);
+        const context = this.#browsingContextStorage.getContext(this.browsingContextId);
         await context.awaitUnblocked();
         return {
-            result: await scriptEvaluator.scriptEvaluate(this, expression, awaitPromise, resultOwnership),
+            result: await this.#scriptEvaluator.scriptEvaluate(this, expression, awaitPromise, resultOwnership),
         };
     }
     /**
      * Serializes a given CDP object into BiDi, keeping references in the
      * target's `globalThis`.
      * @param cdpObject CDP remote object to be serialized.
-     * @param resultOwnership indicates desired OwnershipModel.
+     * @param resultOwnership Indicates desired ResultOwnership.
      */
     async serializeCdpObject(cdpObject, resultOwnership) {
-        return await scriptEvaluator.serializeCdpObject(cdpObject, resultOwnership, this);
+        return this.#scriptEvaluator.serializeCdpObject(cdpObject, resultOwnership, this);
     }
     /**
      * Gets the string representation of an object. This is equivalent to
      * calling toString() on the object value.
      * @param cdpObject CDP remote object representing an object.
-     * @param realm
-     * @returns string The stringified object.
+     * @return string The stringified object.
      */
     async stringifyObject(cdpObject) {
-        return await (0, scriptEvaluator_js_1.stringifyObject)(cdpObject, this);
+        return scriptEvaluator_js_1.ScriptEvaluator.stringifyObject(cdpObject, this);
     }
 }
 exports.Realm = Realm;
@@ -6908,6 +7722,7 @@ const protocol_js_1 = __nccwpck_require__(315);
 class RealmStorage {
     /** Tracks handles and their realms sent to the client. */
     #knownHandlesToRealm = new Map();
+    /** Map from realm ID to Realm. */
     #realmMap = new Map();
     get knownHandlesToRealm() {
         return this.#knownHandlesToRealm;
@@ -6982,260 +7797,46 @@ exports.RealmStorage = RealmStorage;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ScriptEvaluator = exports.stringifyObject = exports.SHARED_ID_DIVIDER = void 0;
-/**
- * Copyright 2022 Google LLC.
- * Copyright (c) Microsoft Corporation.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+exports.ScriptEvaluator = exports.SHARED_ID_DIVIDER = void 0;
 const protocol_js_1 = __nccwpck_require__(315);
 // As `script.evaluate` wraps call into serialization script, `lineNumber`
 // should be adjusted.
 const CALL_FUNCTION_STACKTRACE_LINE_OFFSET = 1;
 const EVALUATE_STACKTRACE_LINE_OFFSET = 0;
 exports.SHARED_ID_DIVIDER = '_element_';
-function cdpRemoteObjectToCallArgument(cdpRemoteObject) {
-    if (cdpRemoteObject.objectId !== undefined) {
-        return { objectId: cdpRemoteObject.objectId };
-    }
-    if (cdpRemoteObject.unserializableValue !== undefined) {
-        return { unserializableValue: cdpRemoteObject.unserializableValue };
-    }
-    return { value: cdpRemoteObject.value };
-}
-async function deserializeToCdpArg(argumentValue, realm) {
-    if ('sharedId' in argumentValue) {
-        const [navigableId, rawBackendNodeId] = argumentValue.sharedId.split(exports.SHARED_ID_DIVIDER);
-        const backendNodeId = parseInt(rawBackendNodeId ?? '');
-        if (isNaN(backendNodeId) ||
-            backendNodeId === undefined ||
-            navigableId === undefined) {
-            throw new protocol_js_1.Message.InvalidArgumentException(`SharedId "${argumentValue.sharedId}" should have format "{navigableId}${exports.SHARED_ID_DIVIDER}{backendNodeId}".`);
-        }
-        if (realm.navigableId !== navigableId) {
-            throw new protocol_js_1.Message.NoSuchNodeException(`SharedId "${argumentValue.sharedId}" belongs to different document. Current document is ${realm.navigableId}.`);
-        }
-        try {
-            const obj = await realm.cdpClient.sendCommand('DOM.resolveNode', {
-                backendNodeId,
-                executionContextId: realm.executionContextId,
-            });
-            // TODO: release `obj.object.objectId` after using.
-            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
-            return { objectId: obj.object.objectId };
-        }
-        catch (e) {
-            // Heuristic to detect "no such node" exception. Based on the  specific
-            // CDP implementation.
-            if (e.code === -32000 && e.message === 'No node with given id found') {
-                throw new protocol_js_1.Message.NoSuchNodeException(`SharedId "${argumentValue.sharedId}" was not found.`);
-            }
-            throw e;
-        }
-    }
-    if ('handle' in argumentValue) {
-        return { objectId: argumentValue.handle };
-    }
-    switch (argumentValue.type) {
-        // Primitive Protocol Value
-        // https://w3c.github.io/webdriver-bidi/#data-types-protocolValue-primitiveProtocolValue
-        case 'undefined': {
-            return { unserializableValue: 'undefined' };
-        }
-        case 'null': {
-            return { unserializableValue: 'null' };
-        }
-        case 'string': {
-            return { value: argumentValue.value };
-        }
-        case 'number': {
-            if (argumentValue.value === 'NaN') {
-                return { unserializableValue: 'NaN' };
-            }
-            else if (argumentValue.value === '-0') {
-                return { unserializableValue: '-0' };
-            }
-            else if (argumentValue.value === 'Infinity') {
-                return { unserializableValue: 'Infinity' };
-            }
-            else if (argumentValue.value === '-Infinity') {
-                return { unserializableValue: '-Infinity' };
-            }
-            return {
-                value: argumentValue.value,
-            };
-        }
-        case 'boolean': {
-            return { value: Boolean(argumentValue.value) };
-        }
-        case 'bigint': {
-            return {
-                unserializableValue: `BigInt(${JSON.stringify(argumentValue.value)})`,
-            };
-        }
-        // Local Value
-        // https://w3c.github.io/webdriver-bidi/#data-types-protocolValue-LocalValue
-        case 'date': {
-            return {
-                unserializableValue: `new Date(Date.parse(${JSON.stringify(argumentValue.value)}))`,
-            };
-        }
-        case 'regexp': {
-            return {
-                unserializableValue: `new RegExp(${JSON.stringify(argumentValue.value.pattern)}, ${JSON.stringify(argumentValue.value.flags)})`,
-            };
-        }
-        case 'map': {
-            // TODO(sadym): if non of the nested keys and values has remote
-            // reference, serialize to `unserializableValue` without CDP roundtrip.
-            const keyValueArray = await flattenKeyValuePairs(argumentValue.value, realm);
-            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
-                functionDeclaration: String((...args) => {
-                    const result = new Map();
-                    for (let i = 0; i < args.length; i += 2) {
-                        result.set(args[i], args[i + 1]);
-                    }
-                    return result;
-                }),
-                awaitPromise: false,
-                arguments: keyValueArray,
-                returnByValue: false,
-                executionContextId: realm.executionContextId,
-            });
-            // TODO: release `argEvalResult.result.objectId`  after using.
-            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
-            return { objectId: argEvalResult.result.objectId };
-        }
-        case 'object': {
-            // TODO(sadym): if non of the nested keys and values has remote
-            //  reference, serialize to `unserializableValue` without CDP roundtrip.
-            const keyValueArray = await flattenKeyValuePairs(argumentValue.value, realm);
-            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
-                functionDeclaration: String((...args) => {
-                    const result = {};
-                    for (let i = 0; i < args.length; i += 2) {
-                        // Key should be either `string`, `number`, or `symbol`.
-                        const key = args[i];
-                        result[key] = args[i + 1];
-                    }
-                    return result;
-                }),
-                awaitPromise: false,
-                arguments: keyValueArray,
-                returnByValue: false,
-                executionContextId: realm.executionContextId,
-            });
-            // TODO: release `argEvalResult.result.objectId`  after using.
-            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
-            return { objectId: argEvalResult.result.objectId };
-        }
-        case 'array': {
-            // TODO(sadym): if non of the nested items has remote reference,
-            //  serialize to `unserializableValue` without CDP roundtrip.
-            const args = await flattenValueList(argumentValue.value, realm);
-            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
-                functionDeclaration: String((...args) => {
-                    return args;
-                }),
-                awaitPromise: false,
-                arguments: args,
-                returnByValue: false,
-                executionContextId: realm.executionContextId,
-            });
-            // TODO: release `argEvalResult.result.objectId`  after using.
-            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
-            return { objectId: argEvalResult.result.objectId };
-        }
-        case 'set': {
-            // TODO(sadym): if non of the nested items has remote reference,
-            //  serialize to `unserializableValue` without CDP roundtrip.
-            const args = await flattenValueList(argumentValue.value, realm);
-            const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
-                functionDeclaration: String((...args) => {
-                    return new Set(args);
-                }),
-                awaitPromise: false,
-                arguments: args,
-                returnByValue: false,
-                executionContextId: realm.executionContextId,
-            });
-            // TODO: release `argEvalResult.result.objectId`  after using.
-            // https://github.com/GoogleChromeLabs/chromium-bidi/issues/375
-            return { objectId: argEvalResult.result.objectId };
-        }
-        // TODO(sadym): dispose nested objects.
-        default:
-            throw new Error(`Value ${JSON.stringify(argumentValue)} is not deserializable.`);
-    }
-}
-async function flattenKeyValuePairs(value, realm) {
-    const keyValueArray = [];
-    for (const pair of value) {
-        const key = pair[0];
-        const value = pair[1];
-        let keyArg;
-        if (typeof key === 'string') {
-            // Key is a string.
-            keyArg = { value: key };
-        }
-        else {
-            // Key is a serialized value.
-            keyArg = await deserializeToCdpArg(key, realm);
-        }
-        const valueArg = await deserializeToCdpArg(value, realm);
-        keyValueArray.push(keyArg);
-        keyValueArray.push(valueArg);
-    }
-    return keyValueArray;
-}
-async function flattenValueList(list, realm) {
-    const result = [];
-    for (const value of list) {
-        result.push(await deserializeToCdpArg(value, realm));
-    }
-    return result;
-}
-/**
- * Gets the string representation of an object. This is equivalent to
- * calling toString() on the object value.
- * @param cdpObject CDP remote object representing an object.
- * @param realm
- * @returns string The stringified object.
- */
-async function stringifyObject(cdpObject, realm) {
-    const stringifyResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
-        functionDeclaration: String((obj) => {
-            return String(obj);
-        }),
-        awaitPromise: false,
-        arguments: [cdpObject],
-        returnByValue: true,
-        executionContextId: realm.executionContextId,
-    });
-    return stringifyResult.result.value;
-}
-exports.stringifyObject = stringifyObject;
 class ScriptEvaluator {
+    #eventManager;
+    constructor(eventManager) {
+        this.#eventManager = eventManager;
+    }
+    /**
+     * Gets the string representation of an object. This is equivalent to
+     * calling toString() on the object value.
+     * @param cdpObject CDP remote object representing an object.
+     * @param realm
+     * @return string The stringified object.
+     */
+    static async stringifyObject(cdpObject, realm) {
+        const stringifyResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+            functionDeclaration: String((obj) => {
+                return String(obj);
+            }),
+            awaitPromise: false,
+            arguments: [cdpObject],
+            returnByValue: true,
+            executionContextId: realm.executionContextId,
+        });
+        return stringifyResult.result.value;
+    }
     /**
      * Serializes a given CDP object into BiDi, keeping references in the
      * target's `globalThis`.
      * @param cdpRemoteObject CDP remote object to be serialized.
-     * @param resultOwnership indicates desired OwnershipModel.
+     * @param resultOwnership Indicates desired ResultOwnership.
      * @param realm
      */
     async serializeCdpObject(cdpRemoteObject, resultOwnership, realm) {
-        const arg = cdpRemoteObjectToCallArgument(cdpRemoteObject);
+        const arg = ScriptEvaluator.#cdpRemoteObjectToCallArgument(cdpRemoteObject);
         const cdpWebDriverValue = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
             functionDeclaration: String((obj) => obj),
             awaitPromise: false,
@@ -7243,7 +7844,28 @@ class ScriptEvaluator {
             generateWebDriverValue: true,
             executionContextId: realm.executionContextId,
         });
-        return await realm.cdpToBidiValue(cdpWebDriverValue, resultOwnership);
+        return realm.cdpToBidiValue(cdpWebDriverValue, resultOwnership);
+    }
+    async scriptEvaluate(realm, expression, awaitPromise, resultOwnership) {
+        const cdpEvaluateResult = await realm.cdpClient.sendCommand('Runtime.evaluate', {
+            contextId: realm.executionContextId,
+            expression,
+            awaitPromise,
+            generateWebDriverValue: true,
+        });
+        if (cdpEvaluateResult.exceptionDetails) {
+            // Serialize exception details.
+            return {
+                exceptionDetails: await this.#serializeCdpExceptionDetails(cdpEvaluateResult.exceptionDetails, EVALUATE_STACKTRACE_LINE_OFFSET, resultOwnership, realm),
+                type: 'exception',
+                realm: realm.realmId,
+            };
+        }
+        return {
+            type: 'success',
+            result: realm.cdpToBidiValue(cdpEvaluateResult, resultOwnership),
+            realm: realm.realmId,
+        };
     }
     async callFunction(realm, functionDeclaration, _this, _arguments, awaitPromise, resultOwnership) {
         const callFunctionAndSerializeScript = `(...args)=>{ return _callFunction((\n${functionDeclaration}\n), args);
@@ -7252,9 +7874,11 @@ class ScriptEvaluator {
         const deserializedArgs = args;
         return f.apply(deserializedThis, deserializedArgs);
       }}`;
-        const thisAndArgumentsList = [await deserializeToCdpArg(_this, realm)];
+        const thisAndArgumentsList = [
+            await this.#deserializeToCdpArg(_this, realm),
+        ];
         thisAndArgumentsList.push(...(await Promise.all(_arguments.map(async (a) => {
-            return await deserializeToCdpArg(a, realm);
+            return this.#deserializeToCdpArg(a, realm);
         }))));
         let cdpCallFunctionResult;
         try {
@@ -7274,8 +7898,9 @@ class ScriptEvaluator {
                 [
                     'Could not find object with given id',
                     'Argument should belong to the same JavaScript world as target object',
+                    'Invalid remote object id',
                 ].includes(e.message)) {
-                throw new protocol_js_1.Message.InvalidArgumentException('Handle was not found.');
+                throw new protocol_js_1.Message.NoSuchHandleException('Handle was not found.');
             }
             throw e;
         }
@@ -7289,9 +7914,272 @@ class ScriptEvaluator {
         }
         return {
             type: 'success',
-            result: await realm.cdpToBidiValue(cdpCallFunctionResult, resultOwnership),
+            result: realm.cdpToBidiValue(cdpCallFunctionResult, resultOwnership),
             realm: realm.realmId,
         };
+    }
+    static #cdpRemoteObjectToCallArgument(cdpRemoteObject) {
+        if (cdpRemoteObject.objectId !== undefined) {
+            return { objectId: cdpRemoteObject.objectId };
+        }
+        if (cdpRemoteObject.unserializableValue !== undefined) {
+            return { unserializableValue: cdpRemoteObject.unserializableValue };
+        }
+        return { value: cdpRemoteObject.value };
+    }
+    async #deserializeToCdpArg(argumentValue, realm) {
+        if ('sharedId' in argumentValue) {
+            const [navigableId, rawBackendNodeId] = argumentValue.sharedId.split(exports.SHARED_ID_DIVIDER);
+            const backendNodeId = parseInt(rawBackendNodeId ?? '');
+            if (isNaN(backendNodeId) ||
+                backendNodeId === undefined ||
+                navigableId === undefined) {
+                throw new protocol_js_1.Message.InvalidArgumentException(`SharedId "${argumentValue.sharedId}" should have format "{navigableId}${exports.SHARED_ID_DIVIDER}{backendNodeId}".`);
+            }
+            if (realm.navigableId !== navigableId) {
+                throw new protocol_js_1.Message.NoSuchNodeException(`SharedId "${argumentValue.sharedId}" belongs to different document. Current document is ${realm.navigableId}.`);
+            }
+            try {
+                const obj = await realm.cdpClient.sendCommand('DOM.resolveNode', {
+                    backendNodeId,
+                    executionContextId: realm.executionContextId,
+                });
+                // TODO(#375): Release `obj.object.objectId` after using.
+                return { objectId: obj.object.objectId };
+            }
+            catch (e) {
+                // Heuristic to detect "no such node" exception. Based on the  specific
+                // CDP implementation.
+                if (e.code === -32000 && e.message === 'No node with given id found') {
+                    throw new protocol_js_1.Message.NoSuchNodeException(`SharedId "${argumentValue.sharedId}" was not found.`);
+                }
+                throw e;
+            }
+        }
+        if ('handle' in argumentValue) {
+            return { objectId: argumentValue.handle };
+        }
+        switch (argumentValue.type) {
+            // Primitive Protocol Value
+            // https://w3c.github.io/webdriver-bidi/#data-types-protocolValue-primitiveProtocolValue
+            case 'undefined':
+                return { unserializableValue: 'undefined' };
+            case 'null':
+                return { unserializableValue: 'null' };
+            case 'string':
+                return { value: argumentValue.value };
+            case 'number':
+                if (argumentValue.value === 'NaN') {
+                    return { unserializableValue: 'NaN' };
+                }
+                else if (argumentValue.value === '-0') {
+                    return { unserializableValue: '-0' };
+                }
+                else if (argumentValue.value === 'Infinity') {
+                    return { unserializableValue: 'Infinity' };
+                }
+                else if (argumentValue.value === '-Infinity') {
+                    return { unserializableValue: '-Infinity' };
+                }
+                return {
+                    value: argumentValue.value,
+                };
+            case 'boolean':
+                return { value: Boolean(argumentValue.value) };
+            case 'bigint':
+                return {
+                    unserializableValue: `BigInt(${JSON.stringify(argumentValue.value)})`,
+                };
+            case 'date':
+                return {
+                    unserializableValue: `new Date(Date.parse(${JSON.stringify(argumentValue.value)}))`,
+                };
+            case 'regexp':
+                return {
+                    unserializableValue: `new RegExp(${JSON.stringify(argumentValue.value.pattern)}, ${JSON.stringify(argumentValue.value.flags)})`,
+                };
+            case 'map': {
+                // TODO(sadym): If none of the nested keys and values has a remote
+                // reference, serialize to `unserializableValue` without CDP roundtrip.
+                const keyValueArray = await this.#flattenKeyValuePairs(argumentValue.value, realm);
+                const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                    functionDeclaration: String((...args) => {
+                        const result = new Map();
+                        for (let i = 0; i < args.length; i += 2) {
+                            result.set(args[i], args[i + 1]);
+                        }
+                        return result;
+                    }),
+                    awaitPromise: false,
+                    arguments: keyValueArray,
+                    returnByValue: false,
+                    executionContextId: realm.executionContextId,
+                });
+                // TODO(#375): Release `argEvalResult.result.objectId` after using.
+                return { objectId: argEvalResult.result.objectId };
+            }
+            case 'object': {
+                // TODO(sadym): If none of the nested keys and values has a remote
+                //  reference, serialize to `unserializableValue` without CDP roundtrip.
+                const keyValueArray = await this.#flattenKeyValuePairs(argumentValue.value, realm);
+                const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                    functionDeclaration: String((...args) => {
+                        const result = {};
+                        for (let i = 0; i < args.length; i += 2) {
+                            // Key should be either `string`, `number`, or `symbol`.
+                            const key = args[i];
+                            result[key] = args[i + 1];
+                        }
+                        return result;
+                    }),
+                    awaitPromise: false,
+                    arguments: keyValueArray,
+                    returnByValue: false,
+                    executionContextId: realm.executionContextId,
+                });
+                // TODO(#375): Release `argEvalResult.result.objectId` after using.
+                return { objectId: argEvalResult.result.objectId };
+            }
+            case 'array': {
+                // TODO(sadym): If none of the nested items has a remote reference,
+                // serialize to `unserializableValue` without CDP roundtrip.
+                const args = await this.#flattenValueList(argumentValue.value, realm);
+                const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                    functionDeclaration: String((...args) => {
+                        return args;
+                    }),
+                    awaitPromise: false,
+                    arguments: args,
+                    returnByValue: false,
+                    executionContextId: realm.executionContextId,
+                });
+                // TODO(#375): Release `argEvalResult.result.objectId` after using.
+                return { objectId: argEvalResult.result.objectId };
+            }
+            case 'set': {
+                // TODO(sadym): if none of the nested items has a remote reference,
+                // serialize to `unserializableValue` without CDP roundtrip.
+                const args = await this.#flattenValueList(argumentValue.value, realm);
+                const argEvalResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                    functionDeclaration: String((...args) => {
+                        return new Set(args);
+                    }),
+                    awaitPromise: false,
+                    arguments: args,
+                    returnByValue: false,
+                    executionContextId: realm.executionContextId,
+                });
+                // TODO(#375): Release `argEvalResult.result.objectId` after using.
+                return { objectId: argEvalResult.result.objectId };
+            }
+            case 'channel': {
+                const createChannelHandleResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                    functionDeclaration: String(() => {
+                        const queue = [];
+                        let queueNonEmptyResolver = null;
+                        return {
+                            /**
+                             * Gets a promise, which is resolved as soon as a message occurs
+                             * in the queue.
+                             */
+                            async getMessage() {
+                                const onMessage = queue.length > 0
+                                    ? Promise.resolve()
+                                    : new Promise((resolve) => {
+                                        queueNonEmptyResolver = resolve;
+                                    });
+                                await onMessage;
+                                return queue.shift();
+                            },
+                            /**
+                             * Adds a message to the queue.
+                             * Resolves the pending promise if needed.
+                             */
+                            sendMessage(message) {
+                                queue.push(message);
+                                if (queueNonEmptyResolver !== null) {
+                                    queueNonEmptyResolver();
+                                    queueNonEmptyResolver = null;
+                                }
+                            },
+                        };
+                    }),
+                    returnByValue: false,
+                    executionContextId: realm.executionContextId,
+                    generateWebDriverValue: false,
+                });
+                const channelHandle = createChannelHandleResult.result.objectId;
+                // Long-poll the message queue asynchronously.
+                void this.#initChannelListener(argumentValue, channelHandle, realm);
+                const sendMessageArgResult = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                    functionDeclaration: String((channelHandle) => {
+                        return channelHandle.sendMessage;
+                    }),
+                    arguments: [
+                        {
+                            objectId: channelHandle,
+                        },
+                    ],
+                    returnByValue: false,
+                    executionContextId: realm.executionContextId,
+                    generateWebDriverValue: false,
+                });
+                return { objectId: sendMessageArgResult.result.objectId };
+            }
+            // TODO(#375): Dispose of nested objects.
+            default:
+                throw new Error(`Value ${JSON.stringify(argumentValue)} is not deserializable.`);
+        }
+    }
+    async #flattenKeyValuePairs(mapping, realm) {
+        const keyValueArray = [];
+        for (const [key, value] of mapping) {
+            let keyArg;
+            if (typeof key === 'string') {
+                // Key is a string.
+                keyArg = { value: key };
+            }
+            else {
+                // Key is a serialized value.
+                keyArg = await this.#deserializeToCdpArg(key, realm);
+            }
+            const valueArg = await this.#deserializeToCdpArg(value, realm);
+            keyValueArray.push(keyArg);
+            keyValueArray.push(valueArg);
+        }
+        return keyValueArray;
+    }
+    async #flattenValueList(list, realm) {
+        return Promise.all(list.map((value) => this.#deserializeToCdpArg(value, realm)));
+    }
+    async #initChannelListener(channel, channelHandle, realm) {
+        const channelId = channel.value.channel;
+        // TODO(#294): Remove this loop after the realm is destroyed.
+        // Rely on the CDP throwing exception in such a case.
+        for (;;) {
+            const message = await realm.cdpClient.sendCommand('Runtime.callFunctionOn', {
+                functionDeclaration: String(async (channelHandle) => channelHandle.getMessage()),
+                arguments: [
+                    {
+                        objectId: channelHandle,
+                    },
+                ],
+                awaitPromise: true,
+                executionContextId: realm.executionContextId,
+                generateWebDriverValue: true,
+            });
+            this.#eventManager.registerEvent({
+                method: protocol_js_1.Script.EventNames.MessageEvent,
+                params: {
+                    channel: channelId,
+                    data: realm.cdpToBidiValue(message, channel.value.ownership ?? 'none'),
+                    source: {
+                        realm: realm.realmId,
+                        context: realm.browsingContextId,
+                    },
+                },
+            }, realm.browsingContextId);
+        }
     }
     async #serializeCdpExceptionDetails(cdpExceptionDetails, lineOffset, resultOwnership, realm) {
         const callFrames = cdpExceptionDetails.stackTrace?.callFrames.map((frame) => ({
@@ -7305,7 +8193,7 @@ class ScriptEvaluator {
         const exception = await this.serializeCdpObject(
         // Exception should always be there.
         cdpExceptionDetails.exception, resultOwnership, realm);
-        const text = await stringifyObject(cdpExceptionDetails.exception, realm);
+        const text = await ScriptEvaluator.stringifyObject(cdpExceptionDetails.exception, realm);
         return {
             exception,
             columnNumber: cdpExceptionDetails.columnNumber,
@@ -7316,27 +8204,6 @@ class ScriptEvaluator {
                 callFrames: callFrames || [],
             },
             text: text || cdpExceptionDetails.text,
-        };
-    }
-    async scriptEvaluate(realm, expression, awaitPromise, resultOwnership) {
-        const cdpEvaluateResult = await realm.cdpClient.sendCommand('Runtime.evaluate', {
-            contextId: realm.executionContextId,
-            expression,
-            awaitPromise,
-            generateWebDriverValue: true,
-        });
-        if (cdpEvaluateResult.exceptionDetails) {
-            // Serialize exception details.
-            return {
-                exceptionDetails: await this.#serializeCdpExceptionDetails(cdpEvaluateResult.exceptionDetails, EVALUATE_STACKTRACE_LINE_OFFSET, resultOwnership, realm),
-                type: 'exception',
-                realm: realm.realmId,
-            };
-        }
-        return {
-            type: 'success',
-            result: await realm.cdpToBidiValue(cdpEvaluateResult, resultOwnership),
-            realm: realm.realmId,
         };
     }
 }
@@ -7367,18 +8234,35 @@ exports.ScriptEvaluator = ScriptEvaluator;
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CDP = exports.Log = exports.BrowsingContext = exports.Message = void 0;
+exports.CDP = exports.Network = exports.Log = exports.BrowsingContext = exports.Script = exports.Message = void 0;
 var Message;
 (function (Message) {
-    class ErrorResponseClass {
+    // keep-sorted end;
+    let ErrorCode;
+    (function (ErrorCode) {
+        // keep-sorted start
+        ErrorCode["InvalidArgument"] = "invalid argument";
+        ErrorCode["InvalidSessionId"] = "invalid session id";
+        ErrorCode["NoSuchAlert"] = "no such alert";
+        ErrorCode["NoSuchFrame"] = "no such frame";
+        ErrorCode["NoSuchHandle"] = "no such handle";
+        ErrorCode["NoSuchNode"] = "no such node";
+        ErrorCode["NoSuchScript"] = "no such script";
+        ErrorCode["SessionNotCreated"] = "session not created";
+        ErrorCode["UnknownCommand"] = "unknown command";
+        ErrorCode["UnknownError"] = "unknown error";
+        ErrorCode["UnsupportedOperation"] = "unsupported operation";
+        // keep-sorted end
+    })(ErrorCode = Message.ErrorCode || (Message.ErrorCode = {}));
+    class ErrorResponse {
+        error;
+        message;
+        stacktrace;
         constructor(error, message, stacktrace) {
             this.error = error;
             this.message = message;
             this.stacktrace = stacktrace;
         }
-        error;
-        message;
-        stacktrace;
         toErrorResponse(commandId) {
             return {
                 id: commandId,
@@ -7388,38 +8272,83 @@ var Message;
             };
         }
     }
-    Message.ErrorResponseClass = ErrorResponseClass;
-    class UnknownException extends ErrorResponseClass {
+    Message.ErrorResponse = ErrorResponse;
+    class InvalidArgumentException extends ErrorResponse {
         constructor(message, stacktrace) {
-            super('unknown error', message, stacktrace);
-        }
-    }
-    Message.UnknownException = UnknownException;
-    class UnknownCommandException extends ErrorResponseClass {
-        constructor(message, stacktrace) {
-            super('unknown command', message, stacktrace);
-        }
-    }
-    Message.UnknownCommandException = UnknownCommandException;
-    class InvalidArgumentException extends ErrorResponseClass {
-        constructor(message, stacktrace) {
-            super('invalid argument', message, stacktrace);
+            super(ErrorCode.InvalidArgument, message, stacktrace);
         }
     }
     Message.InvalidArgumentException = InvalidArgumentException;
-    class NoSuchNodeException extends ErrorResponseClass {
+    class NoSuchHandleException extends ErrorResponse {
         constructor(message, stacktrace) {
-            super('no such node', message, stacktrace);
+            super(ErrorCode.NoSuchHandle, message, stacktrace);
         }
     }
-    Message.NoSuchNodeException = NoSuchNodeException;
-    class NoSuchFrameException extends ErrorResponseClass {
+    Message.NoSuchHandleException = NoSuchHandleException;
+    class InvalidSessionIdException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.InvalidSessionId, message, stacktrace);
+        }
+    }
+    Message.InvalidSessionIdException = InvalidSessionIdException;
+    class NoSuchAlertException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.NoSuchAlert, message, stacktrace);
+        }
+    }
+    Message.NoSuchAlertException = NoSuchAlertException;
+    class NoSuchFrameException extends ErrorResponse {
         constructor(message) {
-            super('no such frame', message);
+            super(ErrorCode.NoSuchFrame, message);
         }
     }
     Message.NoSuchFrameException = NoSuchFrameException;
+    class NoSuchNodeException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.NoSuchNode, message, stacktrace);
+        }
+    }
+    Message.NoSuchNodeException = NoSuchNodeException;
+    class NoSuchScriptException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.NoSuchScript, message, stacktrace);
+        }
+    }
+    Message.NoSuchScriptException = NoSuchScriptException;
+    class SessionNotCreatedException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.SessionNotCreated, message, stacktrace);
+        }
+    }
+    Message.SessionNotCreatedException = SessionNotCreatedException;
+    class UnknownCommandException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.UnknownCommand, message, stacktrace);
+        }
+    }
+    Message.UnknownCommandException = UnknownCommandException;
+    class UnknownErrorException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.UnknownError, message, stacktrace);
+        }
+    }
+    Message.UnknownErrorException = UnknownErrorException;
+    class UnsupportedOperationException extends ErrorResponse {
+        constructor(message, stacktrace) {
+            super(ErrorCode.UnsupportedOperation, message, stacktrace);
+        }
+    }
+    Message.UnsupportedOperationException = UnsupportedOperationException;
 })(Message = exports.Message || (exports.Message = {}));
+/** @see https://w3c.github.io/webdriver-bidi/#module-script */
+var Script;
+(function (Script) {
+    let EventNames;
+    (function (EventNames) {
+        EventNames["MessageEvent"] = "script.message";
+    })(EventNames = Script.EventNames || (Script.EventNames = {}));
+    Script.AllEvents = 'script';
+})(Script = exports.Script || (exports.Script = {}));
 // https://w3c.github.io/webdriver-bidi/#module-browsingContext
 var BrowsingContext;
 (function (BrowsingContext) {
@@ -7432,7 +8361,7 @@ var BrowsingContext;
     })(EventNames = BrowsingContext.EventNames || (BrowsingContext.EventNames = {}));
     BrowsingContext.AllEvents = 'browsingContext';
 })(BrowsingContext = exports.BrowsingContext || (exports.BrowsingContext = {}));
-// https://w3c.github.io/webdriver-bidi/#module-log
+/** @see https://w3c.github.io/webdriver-bidi/#module-log */
 var Log;
 (function (Log) {
     Log.AllEvents = 'log';
@@ -7441,6 +8370,16 @@ var Log;
         EventNames["LogEntryAddedEvent"] = "log.entryAdded";
     })(EventNames = Log.EventNames || (Log.EventNames = {}));
 })(Log = exports.Log || (exports.Log = {}));
+var Network;
+(function (Network) {
+    Network.AllEvents = 'network';
+    let EventNames;
+    (function (EventNames) {
+        EventNames["BeforeRequestSentEvent"] = "network.beforeRequestSent";
+        EventNames["ResponseCompletedEvent"] = "network.responseCompleted";
+        EventNames["FetchErrorEvent"] = "network.fetchError";
+    })(EventNames = Network.EventNames || (Network.EventNames = {}));
+})(Network = exports.Network || (exports.Network = {}));
 var CDP;
 (function (CDP) {
     CDP.AllEvents = 'cdp';
@@ -7450,6 +8389,53 @@ var CDP;
     })(EventNames = CDP.EventNames || (CDP.EventNames = {}));
 })(CDP = exports.CDP || (exports.CDP = {}));
 //# sourceMappingURL=protocol.js.map
+
+/***/ }),
+
+/***/ 2038:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DefaultMap = void 0;
+/**
+ * A subclass of Map whose functionality is almost the same as its parent
+ * except for the fact that DefaultMap never returns undefined. It provides a
+ * default value for keys that do not exist.
+ */
+class DefaultMap extends Map {
+    /** The default value to return whenever a key is not present in the map. */
+    #getDefaultValue;
+    constructor(getDefaultValue, entries) {
+        super(entries);
+        this.#getDefaultValue = getDefaultValue;
+    }
+    get(key) {
+        if (!this.has(key)) {
+            this.set(key, this.#getDefaultValue(key));
+        }
+        return super.get(key);
+    }
+}
+exports.DefaultMap = DefaultMap;
+//# sourceMappingURL=DefaultMap.js.map
 
 /***/ }),
 
@@ -7488,9 +8474,9 @@ class EventEmitter {
     }
     /**
      * Like `on` but the listener will only be fired once and then it will be removed.
-     * @param event - the event you'd like to listen to
-     * @param handler - the handler function to run when the event occurs
-     * @returns `this` to enable you to chain method calls.
+     * @param event The event you'd like to listen to
+     * @param handler The handler function to run when the event occurs
+     * @return `this` to enable chaining method calls.
      */
     once(event, handler) {
         const onceHandler = (eventData) => {
@@ -7506,9 +8492,9 @@ class EventEmitter {
     /**
      * Emits an event and call any associated listeners.
      *
-     * @param event - the event you'd like to emit
-     * @param eventData - any data you'd like to emit with the event
-     * @returns `true` if there are any listeners, `false` if there are not.
+     * @param event The event to emit.
+     * @param eventData Any data to emit with the event.
+     * @return `true` if there are any listeners, `false` otherwise.
      */
     emit(event, eventData) {
         this.#emitter.emit(event, eventData);
@@ -7599,10 +8585,10 @@ exports.Buffer = Buffer;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Deferred = void 0;
 class Deferred {
+    #isFinished = false;
+    #promise;
     #resolve = () => { };
     #reject = () => { };
-    #promise;
-    #isFinished = false;
     get isFinished() {
         return this.#isFinished;
     }
@@ -7611,6 +8597,9 @@ class Deferred {
             this.#resolve = resolve;
             this.#reject = reject;
         });
+        // Needed to avoid `Uncaught (in promise)`. The promises returned by `then`
+        // and `catch` will be rejected anyway.
+        this.#promise.catch(() => { });
     }
     then(onFulfilled, onRejected) {
         return this.#promise.then(onFulfilled, onRejected);
@@ -7702,10 +8691,12 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LogType = void 0;
 var LogType;
 (function (LogType) {
+    // keep-sorted start
     LogType["bidi"] = "BiDi Messages";
     LogType["browsingContexts"] = "Browsing Contexts";
     LogType["cdp"] = "CDP";
     LogType["system"] = "System";
+    // keep-sorted end
 })(LogType = exports.LogType || (exports.LogType = {}));
 //# sourceMappingURL=log.js.map
 
@@ -7750,8 +8741,7 @@ class ProcessingQueue {
     add(entry) {
         this.#queue.push(entry);
         // No need in waiting. Just initialise processor if needed.
-        // noinspection JSIgnoredPromiseFromCall
-        this.#processIfNeeded();
+        void this.#processIfNeeded();
     }
     async #processIfNeeded() {
         if (this.#isProcessing) {
@@ -7766,8 +8756,7 @@ class ProcessingQueue {
                     .catch((e) => {
                     this.#logger?.(log_js_1.LogType.system, 'Event was not processed:', e);
                     this.#catch(e);
-                })
-                    .finally();
+                });
             }
         }
         this.#isProcessing = false;
@@ -7775,6 +8764,1236 @@ class ProcessingQueue {
 }
 exports.ProcessingQueue = ProcessingQueue;
 //# sourceMappingURL=processingQueue.js.map
+
+/***/ }),
+
+/***/ 7542:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google LLC.
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.inchesFromCm = void 0;
+/** @return Given an input in cm, convert it to inches. */
+function inchesFromCm(cm) {
+    return cm / 2.54;
+}
+exports.inchesFromCm = inchesFromCm;
+//# sourceMappingURL=unitConversions.js.map
+
+/***/ }),
+
+/***/ 7391:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/* MIT license */
+/* eslint-disable no-mixed-operators */
+const cssKeywords = __nccwpck_require__(8510);
+
+// NOTE: conversions should only return primitive values (i.e. arrays, or
+//       values that give correct `typeof` results).
+//       do not use box values types (i.e. Number(), String(), etc.)
+
+const reverseKeywords = {};
+for (const key of Object.keys(cssKeywords)) {
+	reverseKeywords[cssKeywords[key]] = key;
+}
+
+const convert = {
+	rgb: {channels: 3, labels: 'rgb'},
+	hsl: {channels: 3, labels: 'hsl'},
+	hsv: {channels: 3, labels: 'hsv'},
+	hwb: {channels: 3, labels: 'hwb'},
+	cmyk: {channels: 4, labels: 'cmyk'},
+	xyz: {channels: 3, labels: 'xyz'},
+	lab: {channels: 3, labels: 'lab'},
+	lch: {channels: 3, labels: 'lch'},
+	hex: {channels: 1, labels: ['hex']},
+	keyword: {channels: 1, labels: ['keyword']},
+	ansi16: {channels: 1, labels: ['ansi16']},
+	ansi256: {channels: 1, labels: ['ansi256']},
+	hcg: {channels: 3, labels: ['h', 'c', 'g']},
+	apple: {channels: 3, labels: ['r16', 'g16', 'b16']},
+	gray: {channels: 1, labels: ['gray']}
+};
+
+module.exports = convert;
+
+// Hide .channels and .labels properties
+for (const model of Object.keys(convert)) {
+	if (!('channels' in convert[model])) {
+		throw new Error('missing channels property: ' + model);
+	}
+
+	if (!('labels' in convert[model])) {
+		throw new Error('missing channel labels property: ' + model);
+	}
+
+	if (convert[model].labels.length !== convert[model].channels) {
+		throw new Error('channel and label counts mismatch: ' + model);
+	}
+
+	const {channels, labels} = convert[model];
+	delete convert[model].channels;
+	delete convert[model].labels;
+	Object.defineProperty(convert[model], 'channels', {value: channels});
+	Object.defineProperty(convert[model], 'labels', {value: labels});
+}
+
+convert.rgb.hsl = function (rgb) {
+	const r = rgb[0] / 255;
+	const g = rgb[1] / 255;
+	const b = rgb[2] / 255;
+	const min = Math.min(r, g, b);
+	const max = Math.max(r, g, b);
+	const delta = max - min;
+	let h;
+	let s;
+
+	if (max === min) {
+		h = 0;
+	} else if (r === max) {
+		h = (g - b) / delta;
+	} else if (g === max) {
+		h = 2 + (b - r) / delta;
+	} else if (b === max) {
+		h = 4 + (r - g) / delta;
+	}
+
+	h = Math.min(h * 60, 360);
+
+	if (h < 0) {
+		h += 360;
+	}
+
+	const l = (min + max) / 2;
+
+	if (max === min) {
+		s = 0;
+	} else if (l <= 0.5) {
+		s = delta / (max + min);
+	} else {
+		s = delta / (2 - max - min);
+	}
+
+	return [h, s * 100, l * 100];
+};
+
+convert.rgb.hsv = function (rgb) {
+	let rdif;
+	let gdif;
+	let bdif;
+	let h;
+	let s;
+
+	const r = rgb[0] / 255;
+	const g = rgb[1] / 255;
+	const b = rgb[2] / 255;
+	const v = Math.max(r, g, b);
+	const diff = v - Math.min(r, g, b);
+	const diffc = function (c) {
+		return (v - c) / 6 / diff + 1 / 2;
+	};
+
+	if (diff === 0) {
+		h = 0;
+		s = 0;
+	} else {
+		s = diff / v;
+		rdif = diffc(r);
+		gdif = diffc(g);
+		bdif = diffc(b);
+
+		if (r === v) {
+			h = bdif - gdif;
+		} else if (g === v) {
+			h = (1 / 3) + rdif - bdif;
+		} else if (b === v) {
+			h = (2 / 3) + gdif - rdif;
+		}
+
+		if (h < 0) {
+			h += 1;
+		} else if (h > 1) {
+			h -= 1;
+		}
+	}
+
+	return [
+		h * 360,
+		s * 100,
+		v * 100
+	];
+};
+
+convert.rgb.hwb = function (rgb) {
+	const r = rgb[0];
+	const g = rgb[1];
+	let b = rgb[2];
+	const h = convert.rgb.hsl(rgb)[0];
+	const w = 1 / 255 * Math.min(r, Math.min(g, b));
+
+	b = 1 - 1 / 255 * Math.max(r, Math.max(g, b));
+
+	return [h, w * 100, b * 100];
+};
+
+convert.rgb.cmyk = function (rgb) {
+	const r = rgb[0] / 255;
+	const g = rgb[1] / 255;
+	const b = rgb[2] / 255;
+
+	const k = Math.min(1 - r, 1 - g, 1 - b);
+	const c = (1 - r - k) / (1 - k) || 0;
+	const m = (1 - g - k) / (1 - k) || 0;
+	const y = (1 - b - k) / (1 - k) || 0;
+
+	return [c * 100, m * 100, y * 100, k * 100];
+};
+
+function comparativeDistance(x, y) {
+	/*
+		See https://en.m.wikipedia.org/wiki/Euclidean_distance#Squared_Euclidean_distance
+	*/
+	return (
+		((x[0] - y[0]) ** 2) +
+		((x[1] - y[1]) ** 2) +
+		((x[2] - y[2]) ** 2)
+	);
+}
+
+convert.rgb.keyword = function (rgb) {
+	const reversed = reverseKeywords[rgb];
+	if (reversed) {
+		return reversed;
+	}
+
+	let currentClosestDistance = Infinity;
+	let currentClosestKeyword;
+
+	for (const keyword of Object.keys(cssKeywords)) {
+		const value = cssKeywords[keyword];
+
+		// Compute comparative distance
+		const distance = comparativeDistance(rgb, value);
+
+		// Check if its less, if so set as closest
+		if (distance < currentClosestDistance) {
+			currentClosestDistance = distance;
+			currentClosestKeyword = keyword;
+		}
+	}
+
+	return currentClosestKeyword;
+};
+
+convert.keyword.rgb = function (keyword) {
+	return cssKeywords[keyword];
+};
+
+convert.rgb.xyz = function (rgb) {
+	let r = rgb[0] / 255;
+	let g = rgb[1] / 255;
+	let b = rgb[2] / 255;
+
+	// Assume sRGB
+	r = r > 0.04045 ? (((r + 0.055) / 1.055) ** 2.4) : (r / 12.92);
+	g = g > 0.04045 ? (((g + 0.055) / 1.055) ** 2.4) : (g / 12.92);
+	b = b > 0.04045 ? (((b + 0.055) / 1.055) ** 2.4) : (b / 12.92);
+
+	const x = (r * 0.4124) + (g * 0.3576) + (b * 0.1805);
+	const y = (r * 0.2126) + (g * 0.7152) + (b * 0.0722);
+	const z = (r * 0.0193) + (g * 0.1192) + (b * 0.9505);
+
+	return [x * 100, y * 100, z * 100];
+};
+
+convert.rgb.lab = function (rgb) {
+	const xyz = convert.rgb.xyz(rgb);
+	let x = xyz[0];
+	let y = xyz[1];
+	let z = xyz[2];
+
+	x /= 95.047;
+	y /= 100;
+	z /= 108.883;
+
+	x = x > 0.008856 ? (x ** (1 / 3)) : (7.787 * x) + (16 / 116);
+	y = y > 0.008856 ? (y ** (1 / 3)) : (7.787 * y) + (16 / 116);
+	z = z > 0.008856 ? (z ** (1 / 3)) : (7.787 * z) + (16 / 116);
+
+	const l = (116 * y) - 16;
+	const a = 500 * (x - y);
+	const b = 200 * (y - z);
+
+	return [l, a, b];
+};
+
+convert.hsl.rgb = function (hsl) {
+	const h = hsl[0] / 360;
+	const s = hsl[1] / 100;
+	const l = hsl[2] / 100;
+	let t2;
+	let t3;
+	let val;
+
+	if (s === 0) {
+		val = l * 255;
+		return [val, val, val];
+	}
+
+	if (l < 0.5) {
+		t2 = l * (1 + s);
+	} else {
+		t2 = l + s - l * s;
+	}
+
+	const t1 = 2 * l - t2;
+
+	const rgb = [0, 0, 0];
+	for (let i = 0; i < 3; i++) {
+		t3 = h + 1 / 3 * -(i - 1);
+		if (t3 < 0) {
+			t3++;
+		}
+
+		if (t3 > 1) {
+			t3--;
+		}
+
+		if (6 * t3 < 1) {
+			val = t1 + (t2 - t1) * 6 * t3;
+		} else if (2 * t3 < 1) {
+			val = t2;
+		} else if (3 * t3 < 2) {
+			val = t1 + (t2 - t1) * (2 / 3 - t3) * 6;
+		} else {
+			val = t1;
+		}
+
+		rgb[i] = val * 255;
+	}
+
+	return rgb;
+};
+
+convert.hsl.hsv = function (hsl) {
+	const h = hsl[0];
+	let s = hsl[1] / 100;
+	let l = hsl[2] / 100;
+	let smin = s;
+	const lmin = Math.max(l, 0.01);
+
+	l *= 2;
+	s *= (l <= 1) ? l : 2 - l;
+	smin *= lmin <= 1 ? lmin : 2 - lmin;
+	const v = (l + s) / 2;
+	const sv = l === 0 ? (2 * smin) / (lmin + smin) : (2 * s) / (l + s);
+
+	return [h, sv * 100, v * 100];
+};
+
+convert.hsv.rgb = function (hsv) {
+	const h = hsv[0] / 60;
+	const s = hsv[1] / 100;
+	let v = hsv[2] / 100;
+	const hi = Math.floor(h) % 6;
+
+	const f = h - Math.floor(h);
+	const p = 255 * v * (1 - s);
+	const q = 255 * v * (1 - (s * f));
+	const t = 255 * v * (1 - (s * (1 - f)));
+	v *= 255;
+
+	switch (hi) {
+		case 0:
+			return [v, t, p];
+		case 1:
+			return [q, v, p];
+		case 2:
+			return [p, v, t];
+		case 3:
+			return [p, q, v];
+		case 4:
+			return [t, p, v];
+		case 5:
+			return [v, p, q];
+	}
+};
+
+convert.hsv.hsl = function (hsv) {
+	const h = hsv[0];
+	const s = hsv[1] / 100;
+	const v = hsv[2] / 100;
+	const vmin = Math.max(v, 0.01);
+	let sl;
+	let l;
+
+	l = (2 - s) * v;
+	const lmin = (2 - s) * vmin;
+	sl = s * vmin;
+	sl /= (lmin <= 1) ? lmin : 2 - lmin;
+	sl = sl || 0;
+	l /= 2;
+
+	return [h, sl * 100, l * 100];
+};
+
+// http://dev.w3.org/csswg/css-color/#hwb-to-rgb
+convert.hwb.rgb = function (hwb) {
+	const h = hwb[0] / 360;
+	let wh = hwb[1] / 100;
+	let bl = hwb[2] / 100;
+	const ratio = wh + bl;
+	let f;
+
+	// Wh + bl cant be > 1
+	if (ratio > 1) {
+		wh /= ratio;
+		bl /= ratio;
+	}
+
+	const i = Math.floor(6 * h);
+	const v = 1 - bl;
+	f = 6 * h - i;
+
+	if ((i & 0x01) !== 0) {
+		f = 1 - f;
+	}
+
+	const n = wh + f * (v - wh); // Linear interpolation
+
+	let r;
+	let g;
+	let b;
+	/* eslint-disable max-statements-per-line,no-multi-spaces */
+	switch (i) {
+		default:
+		case 6:
+		case 0: r = v;  g = n;  b = wh; break;
+		case 1: r = n;  g = v;  b = wh; break;
+		case 2: r = wh; g = v;  b = n; break;
+		case 3: r = wh; g = n;  b = v; break;
+		case 4: r = n;  g = wh; b = v; break;
+		case 5: r = v;  g = wh; b = n; break;
+	}
+	/* eslint-enable max-statements-per-line,no-multi-spaces */
+
+	return [r * 255, g * 255, b * 255];
+};
+
+convert.cmyk.rgb = function (cmyk) {
+	const c = cmyk[0] / 100;
+	const m = cmyk[1] / 100;
+	const y = cmyk[2] / 100;
+	const k = cmyk[3] / 100;
+
+	const r = 1 - Math.min(1, c * (1 - k) + k);
+	const g = 1 - Math.min(1, m * (1 - k) + k);
+	const b = 1 - Math.min(1, y * (1 - k) + k);
+
+	return [r * 255, g * 255, b * 255];
+};
+
+convert.xyz.rgb = function (xyz) {
+	const x = xyz[0] / 100;
+	const y = xyz[1] / 100;
+	const z = xyz[2] / 100;
+	let r;
+	let g;
+	let b;
+
+	r = (x * 3.2406) + (y * -1.5372) + (z * -0.4986);
+	g = (x * -0.9689) + (y * 1.8758) + (z * 0.0415);
+	b = (x * 0.0557) + (y * -0.2040) + (z * 1.0570);
+
+	// Assume sRGB
+	r = r > 0.0031308
+		? ((1.055 * (r ** (1.0 / 2.4))) - 0.055)
+		: r * 12.92;
+
+	g = g > 0.0031308
+		? ((1.055 * (g ** (1.0 / 2.4))) - 0.055)
+		: g * 12.92;
+
+	b = b > 0.0031308
+		? ((1.055 * (b ** (1.0 / 2.4))) - 0.055)
+		: b * 12.92;
+
+	r = Math.min(Math.max(0, r), 1);
+	g = Math.min(Math.max(0, g), 1);
+	b = Math.min(Math.max(0, b), 1);
+
+	return [r * 255, g * 255, b * 255];
+};
+
+convert.xyz.lab = function (xyz) {
+	let x = xyz[0];
+	let y = xyz[1];
+	let z = xyz[2];
+
+	x /= 95.047;
+	y /= 100;
+	z /= 108.883;
+
+	x = x > 0.008856 ? (x ** (1 / 3)) : (7.787 * x) + (16 / 116);
+	y = y > 0.008856 ? (y ** (1 / 3)) : (7.787 * y) + (16 / 116);
+	z = z > 0.008856 ? (z ** (1 / 3)) : (7.787 * z) + (16 / 116);
+
+	const l = (116 * y) - 16;
+	const a = 500 * (x - y);
+	const b = 200 * (y - z);
+
+	return [l, a, b];
+};
+
+convert.lab.xyz = function (lab) {
+	const l = lab[0];
+	const a = lab[1];
+	const b = lab[2];
+	let x;
+	let y;
+	let z;
+
+	y = (l + 16) / 116;
+	x = a / 500 + y;
+	z = y - b / 200;
+
+	const y2 = y ** 3;
+	const x2 = x ** 3;
+	const z2 = z ** 3;
+	y = y2 > 0.008856 ? y2 : (y - 16 / 116) / 7.787;
+	x = x2 > 0.008856 ? x2 : (x - 16 / 116) / 7.787;
+	z = z2 > 0.008856 ? z2 : (z - 16 / 116) / 7.787;
+
+	x *= 95.047;
+	y *= 100;
+	z *= 108.883;
+
+	return [x, y, z];
+};
+
+convert.lab.lch = function (lab) {
+	const l = lab[0];
+	const a = lab[1];
+	const b = lab[2];
+	let h;
+
+	const hr = Math.atan2(b, a);
+	h = hr * 360 / 2 / Math.PI;
+
+	if (h < 0) {
+		h += 360;
+	}
+
+	const c = Math.sqrt(a * a + b * b);
+
+	return [l, c, h];
+};
+
+convert.lch.lab = function (lch) {
+	const l = lch[0];
+	const c = lch[1];
+	const h = lch[2];
+
+	const hr = h / 360 * 2 * Math.PI;
+	const a = c * Math.cos(hr);
+	const b = c * Math.sin(hr);
+
+	return [l, a, b];
+};
+
+convert.rgb.ansi16 = function (args, saturation = null) {
+	const [r, g, b] = args;
+	let value = saturation === null ? convert.rgb.hsv(args)[2] : saturation; // Hsv -> ansi16 optimization
+
+	value = Math.round(value / 50);
+
+	if (value === 0) {
+		return 30;
+	}
+
+	let ansi = 30
+		+ ((Math.round(b / 255) << 2)
+		| (Math.round(g / 255) << 1)
+		| Math.round(r / 255));
+
+	if (value === 2) {
+		ansi += 60;
+	}
+
+	return ansi;
+};
+
+convert.hsv.ansi16 = function (args) {
+	// Optimization here; we already know the value and don't need to get
+	// it converted for us.
+	return convert.rgb.ansi16(convert.hsv.rgb(args), args[2]);
+};
+
+convert.rgb.ansi256 = function (args) {
+	const r = args[0];
+	const g = args[1];
+	const b = args[2];
+
+	// We use the extended greyscale palette here, with the exception of
+	// black and white. normal palette only has 4 greyscale shades.
+	if (r === g && g === b) {
+		if (r < 8) {
+			return 16;
+		}
+
+		if (r > 248) {
+			return 231;
+		}
+
+		return Math.round(((r - 8) / 247) * 24) + 232;
+	}
+
+	const ansi = 16
+		+ (36 * Math.round(r / 255 * 5))
+		+ (6 * Math.round(g / 255 * 5))
+		+ Math.round(b / 255 * 5);
+
+	return ansi;
+};
+
+convert.ansi16.rgb = function (args) {
+	let color = args % 10;
+
+	// Handle greyscale
+	if (color === 0 || color === 7) {
+		if (args > 50) {
+			color += 3.5;
+		}
+
+		color = color / 10.5 * 255;
+
+		return [color, color, color];
+	}
+
+	const mult = (~~(args > 50) + 1) * 0.5;
+	const r = ((color & 1) * mult) * 255;
+	const g = (((color >> 1) & 1) * mult) * 255;
+	const b = (((color >> 2) & 1) * mult) * 255;
+
+	return [r, g, b];
+};
+
+convert.ansi256.rgb = function (args) {
+	// Handle greyscale
+	if (args >= 232) {
+		const c = (args - 232) * 10 + 8;
+		return [c, c, c];
+	}
+
+	args -= 16;
+
+	let rem;
+	const r = Math.floor(args / 36) / 5 * 255;
+	const g = Math.floor((rem = args % 36) / 6) / 5 * 255;
+	const b = (rem % 6) / 5 * 255;
+
+	return [r, g, b];
+};
+
+convert.rgb.hex = function (args) {
+	const integer = ((Math.round(args[0]) & 0xFF) << 16)
+		+ ((Math.round(args[1]) & 0xFF) << 8)
+		+ (Math.round(args[2]) & 0xFF);
+
+	const string = integer.toString(16).toUpperCase();
+	return '000000'.substring(string.length) + string;
+};
+
+convert.hex.rgb = function (args) {
+	const match = args.toString(16).match(/[a-f0-9]{6}|[a-f0-9]{3}/i);
+	if (!match) {
+		return [0, 0, 0];
+	}
+
+	let colorString = match[0];
+
+	if (match[0].length === 3) {
+		colorString = colorString.split('').map(char => {
+			return char + char;
+		}).join('');
+	}
+
+	const integer = parseInt(colorString, 16);
+	const r = (integer >> 16) & 0xFF;
+	const g = (integer >> 8) & 0xFF;
+	const b = integer & 0xFF;
+
+	return [r, g, b];
+};
+
+convert.rgb.hcg = function (rgb) {
+	const r = rgb[0] / 255;
+	const g = rgb[1] / 255;
+	const b = rgb[2] / 255;
+	const max = Math.max(Math.max(r, g), b);
+	const min = Math.min(Math.min(r, g), b);
+	const chroma = (max - min);
+	let grayscale;
+	let hue;
+
+	if (chroma < 1) {
+		grayscale = min / (1 - chroma);
+	} else {
+		grayscale = 0;
+	}
+
+	if (chroma <= 0) {
+		hue = 0;
+	} else
+	if (max === r) {
+		hue = ((g - b) / chroma) % 6;
+	} else
+	if (max === g) {
+		hue = 2 + (b - r) / chroma;
+	} else {
+		hue = 4 + (r - g) / chroma;
+	}
+
+	hue /= 6;
+	hue %= 1;
+
+	return [hue * 360, chroma * 100, grayscale * 100];
+};
+
+convert.hsl.hcg = function (hsl) {
+	const s = hsl[1] / 100;
+	const l = hsl[2] / 100;
+
+	const c = l < 0.5 ? (2.0 * s * l) : (2.0 * s * (1.0 - l));
+
+	let f = 0;
+	if (c < 1.0) {
+		f = (l - 0.5 * c) / (1.0 - c);
+	}
+
+	return [hsl[0], c * 100, f * 100];
+};
+
+convert.hsv.hcg = function (hsv) {
+	const s = hsv[1] / 100;
+	const v = hsv[2] / 100;
+
+	const c = s * v;
+	let f = 0;
+
+	if (c < 1.0) {
+		f = (v - c) / (1 - c);
+	}
+
+	return [hsv[0], c * 100, f * 100];
+};
+
+convert.hcg.rgb = function (hcg) {
+	const h = hcg[0] / 360;
+	const c = hcg[1] / 100;
+	const g = hcg[2] / 100;
+
+	if (c === 0.0) {
+		return [g * 255, g * 255, g * 255];
+	}
+
+	const pure = [0, 0, 0];
+	const hi = (h % 1) * 6;
+	const v = hi % 1;
+	const w = 1 - v;
+	let mg = 0;
+
+	/* eslint-disable max-statements-per-line */
+	switch (Math.floor(hi)) {
+		case 0:
+			pure[0] = 1; pure[1] = v; pure[2] = 0; break;
+		case 1:
+			pure[0] = w; pure[1] = 1; pure[2] = 0; break;
+		case 2:
+			pure[0] = 0; pure[1] = 1; pure[2] = v; break;
+		case 3:
+			pure[0] = 0; pure[1] = w; pure[2] = 1; break;
+		case 4:
+			pure[0] = v; pure[1] = 0; pure[2] = 1; break;
+		default:
+			pure[0] = 1; pure[1] = 0; pure[2] = w;
+	}
+	/* eslint-enable max-statements-per-line */
+
+	mg = (1.0 - c) * g;
+
+	return [
+		(c * pure[0] + mg) * 255,
+		(c * pure[1] + mg) * 255,
+		(c * pure[2] + mg) * 255
+	];
+};
+
+convert.hcg.hsv = function (hcg) {
+	const c = hcg[1] / 100;
+	const g = hcg[2] / 100;
+
+	const v = c + g * (1.0 - c);
+	let f = 0;
+
+	if (v > 0.0) {
+		f = c / v;
+	}
+
+	return [hcg[0], f * 100, v * 100];
+};
+
+convert.hcg.hsl = function (hcg) {
+	const c = hcg[1] / 100;
+	const g = hcg[2] / 100;
+
+	const l = g * (1.0 - c) + 0.5 * c;
+	let s = 0;
+
+	if (l > 0.0 && l < 0.5) {
+		s = c / (2 * l);
+	} else
+	if (l >= 0.5 && l < 1.0) {
+		s = c / (2 * (1 - l));
+	}
+
+	return [hcg[0], s * 100, l * 100];
+};
+
+convert.hcg.hwb = function (hcg) {
+	const c = hcg[1] / 100;
+	const g = hcg[2] / 100;
+	const v = c + g * (1.0 - c);
+	return [hcg[0], (v - c) * 100, (1 - v) * 100];
+};
+
+convert.hwb.hcg = function (hwb) {
+	const w = hwb[1] / 100;
+	const b = hwb[2] / 100;
+	const v = 1 - b;
+	const c = v - w;
+	let g = 0;
+
+	if (c < 1) {
+		g = (v - c) / (1 - c);
+	}
+
+	return [hwb[0], c * 100, g * 100];
+};
+
+convert.apple.rgb = function (apple) {
+	return [(apple[0] / 65535) * 255, (apple[1] / 65535) * 255, (apple[2] / 65535) * 255];
+};
+
+convert.rgb.apple = function (rgb) {
+	return [(rgb[0] / 255) * 65535, (rgb[1] / 255) * 65535, (rgb[2] / 255) * 65535];
+};
+
+convert.gray.rgb = function (args) {
+	return [args[0] / 100 * 255, args[0] / 100 * 255, args[0] / 100 * 255];
+};
+
+convert.gray.hsl = function (args) {
+	return [0, 0, args[0]];
+};
+
+convert.gray.hsv = convert.gray.hsl;
+
+convert.gray.hwb = function (gray) {
+	return [0, 100, gray[0]];
+};
+
+convert.gray.cmyk = function (gray) {
+	return [0, 0, 0, gray[0]];
+};
+
+convert.gray.lab = function (gray) {
+	return [gray[0], 0, 0];
+};
+
+convert.gray.hex = function (gray) {
+	const val = Math.round(gray[0] / 100 * 255) & 0xFF;
+	const integer = (val << 16) + (val << 8) + val;
+
+	const string = integer.toString(16).toUpperCase();
+	return '000000'.substring(string.length) + string;
+};
+
+convert.rgb.gray = function (rgb) {
+	const val = (rgb[0] + rgb[1] + rgb[2]) / 3;
+	return [val / 255 * 100];
+};
+
+
+/***/ }),
+
+/***/ 6931:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const conversions = __nccwpck_require__(7391);
+const route = __nccwpck_require__(880);
+
+const convert = {};
+
+const models = Object.keys(conversions);
+
+function wrapRaw(fn) {
+	const wrappedFn = function (...args) {
+		const arg0 = args[0];
+		if (arg0 === undefined || arg0 === null) {
+			return arg0;
+		}
+
+		if (arg0.length > 1) {
+			args = arg0;
+		}
+
+		return fn(args);
+	};
+
+	// Preserve .conversion property if there is one
+	if ('conversion' in fn) {
+		wrappedFn.conversion = fn.conversion;
+	}
+
+	return wrappedFn;
+}
+
+function wrapRounded(fn) {
+	const wrappedFn = function (...args) {
+		const arg0 = args[0];
+
+		if (arg0 === undefined || arg0 === null) {
+			return arg0;
+		}
+
+		if (arg0.length > 1) {
+			args = arg0;
+		}
+
+		const result = fn(args);
+
+		// We're assuming the result is an array here.
+		// see notice in conversions.js; don't use box types
+		// in conversion functions.
+		if (typeof result === 'object') {
+			for (let len = result.length, i = 0; i < len; i++) {
+				result[i] = Math.round(result[i]);
+			}
+		}
+
+		return result;
+	};
+
+	// Preserve .conversion property if there is one
+	if ('conversion' in fn) {
+		wrappedFn.conversion = fn.conversion;
+	}
+
+	return wrappedFn;
+}
+
+models.forEach(fromModel => {
+	convert[fromModel] = {};
+
+	Object.defineProperty(convert[fromModel], 'channels', {value: conversions[fromModel].channels});
+	Object.defineProperty(convert[fromModel], 'labels', {value: conversions[fromModel].labels});
+
+	const routes = route(fromModel);
+	const routeModels = Object.keys(routes);
+
+	routeModels.forEach(toModel => {
+		const fn = routes[toModel];
+
+		convert[fromModel][toModel] = wrapRounded(fn);
+		convert[fromModel][toModel].raw = wrapRaw(fn);
+	});
+});
+
+module.exports = convert;
+
+
+/***/ }),
+
+/***/ 880:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const conversions = __nccwpck_require__(7391);
+
+/*
+	This function routes a model to all other models.
+
+	all functions that are routed have a property `.conversion` attached
+	to the returned synthetic function. This property is an array
+	of strings, each with the steps in between the 'from' and 'to'
+	color models (inclusive).
+
+	conversions that are not possible simply are not included.
+*/
+
+function buildGraph() {
+	const graph = {};
+	// https://jsperf.com/object-keys-vs-for-in-with-closure/3
+	const models = Object.keys(conversions);
+
+	for (let len = models.length, i = 0; i < len; i++) {
+		graph[models[i]] = {
+			// http://jsperf.com/1-vs-infinity
+			// micro-opt, but this is simple.
+			distance: -1,
+			parent: null
+		};
+	}
+
+	return graph;
+}
+
+// https://en.wikipedia.org/wiki/Breadth-first_search
+function deriveBFS(fromModel) {
+	const graph = buildGraph();
+	const queue = [fromModel]; // Unshift -> queue -> pop
+
+	graph[fromModel].distance = 0;
+
+	while (queue.length) {
+		const current = queue.pop();
+		const adjacents = Object.keys(conversions[current]);
+
+		for (let len = adjacents.length, i = 0; i < len; i++) {
+			const adjacent = adjacents[i];
+			const node = graph[adjacent];
+
+			if (node.distance === -1) {
+				node.distance = graph[current].distance + 1;
+				node.parent = current;
+				queue.unshift(adjacent);
+			}
+		}
+	}
+
+	return graph;
+}
+
+function link(from, to) {
+	return function (args) {
+		return to(from(args));
+	};
+}
+
+function wrapConversion(toModel, graph) {
+	const path = [graph[toModel].parent, toModel];
+	let fn = conversions[graph[toModel].parent][toModel];
+
+	let cur = graph[toModel].parent;
+	while (graph[cur].parent) {
+		path.unshift(graph[cur].parent);
+		fn = link(conversions[graph[cur].parent][cur], fn);
+		cur = graph[cur].parent;
+	}
+
+	fn.conversion = path;
+	return fn;
+}
+
+module.exports = function (fromModel) {
+	const graph = deriveBFS(fromModel);
+	const conversion = {};
+
+	const models = Object.keys(graph);
+	for (let len = models.length, i = 0; i < len; i++) {
+		const toModel = models[i];
+		const node = graph[toModel];
+
+		if (node.parent === null) {
+			// No possible conversion, or this node is the source model.
+			continue;
+		}
+
+		conversion[toModel] = wrapConversion(toModel, graph);
+	}
+
+	return conversion;
+};
+
+
+
+/***/ }),
+
+/***/ 8510:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = {
+	"aliceblue": [240, 248, 255],
+	"antiquewhite": [250, 235, 215],
+	"aqua": [0, 255, 255],
+	"aquamarine": [127, 255, 212],
+	"azure": [240, 255, 255],
+	"beige": [245, 245, 220],
+	"bisque": [255, 228, 196],
+	"black": [0, 0, 0],
+	"blanchedalmond": [255, 235, 205],
+	"blue": [0, 0, 255],
+	"blueviolet": [138, 43, 226],
+	"brown": [165, 42, 42],
+	"burlywood": [222, 184, 135],
+	"cadetblue": [95, 158, 160],
+	"chartreuse": [127, 255, 0],
+	"chocolate": [210, 105, 30],
+	"coral": [255, 127, 80],
+	"cornflowerblue": [100, 149, 237],
+	"cornsilk": [255, 248, 220],
+	"crimson": [220, 20, 60],
+	"cyan": [0, 255, 255],
+	"darkblue": [0, 0, 139],
+	"darkcyan": [0, 139, 139],
+	"darkgoldenrod": [184, 134, 11],
+	"darkgray": [169, 169, 169],
+	"darkgreen": [0, 100, 0],
+	"darkgrey": [169, 169, 169],
+	"darkkhaki": [189, 183, 107],
+	"darkmagenta": [139, 0, 139],
+	"darkolivegreen": [85, 107, 47],
+	"darkorange": [255, 140, 0],
+	"darkorchid": [153, 50, 204],
+	"darkred": [139, 0, 0],
+	"darksalmon": [233, 150, 122],
+	"darkseagreen": [143, 188, 143],
+	"darkslateblue": [72, 61, 139],
+	"darkslategray": [47, 79, 79],
+	"darkslategrey": [47, 79, 79],
+	"darkturquoise": [0, 206, 209],
+	"darkviolet": [148, 0, 211],
+	"deeppink": [255, 20, 147],
+	"deepskyblue": [0, 191, 255],
+	"dimgray": [105, 105, 105],
+	"dimgrey": [105, 105, 105],
+	"dodgerblue": [30, 144, 255],
+	"firebrick": [178, 34, 34],
+	"floralwhite": [255, 250, 240],
+	"forestgreen": [34, 139, 34],
+	"fuchsia": [255, 0, 255],
+	"gainsboro": [220, 220, 220],
+	"ghostwhite": [248, 248, 255],
+	"gold": [255, 215, 0],
+	"goldenrod": [218, 165, 32],
+	"gray": [128, 128, 128],
+	"green": [0, 128, 0],
+	"greenyellow": [173, 255, 47],
+	"grey": [128, 128, 128],
+	"honeydew": [240, 255, 240],
+	"hotpink": [255, 105, 180],
+	"indianred": [205, 92, 92],
+	"indigo": [75, 0, 130],
+	"ivory": [255, 255, 240],
+	"khaki": [240, 230, 140],
+	"lavender": [230, 230, 250],
+	"lavenderblush": [255, 240, 245],
+	"lawngreen": [124, 252, 0],
+	"lemonchiffon": [255, 250, 205],
+	"lightblue": [173, 216, 230],
+	"lightcoral": [240, 128, 128],
+	"lightcyan": [224, 255, 255],
+	"lightgoldenrodyellow": [250, 250, 210],
+	"lightgray": [211, 211, 211],
+	"lightgreen": [144, 238, 144],
+	"lightgrey": [211, 211, 211],
+	"lightpink": [255, 182, 193],
+	"lightsalmon": [255, 160, 122],
+	"lightseagreen": [32, 178, 170],
+	"lightskyblue": [135, 206, 250],
+	"lightslategray": [119, 136, 153],
+	"lightslategrey": [119, 136, 153],
+	"lightsteelblue": [176, 196, 222],
+	"lightyellow": [255, 255, 224],
+	"lime": [0, 255, 0],
+	"limegreen": [50, 205, 50],
+	"linen": [250, 240, 230],
+	"magenta": [255, 0, 255],
+	"maroon": [128, 0, 0],
+	"mediumaquamarine": [102, 205, 170],
+	"mediumblue": [0, 0, 205],
+	"mediumorchid": [186, 85, 211],
+	"mediumpurple": [147, 112, 219],
+	"mediumseagreen": [60, 179, 113],
+	"mediumslateblue": [123, 104, 238],
+	"mediumspringgreen": [0, 250, 154],
+	"mediumturquoise": [72, 209, 204],
+	"mediumvioletred": [199, 21, 133],
+	"midnightblue": [25, 25, 112],
+	"mintcream": [245, 255, 250],
+	"mistyrose": [255, 228, 225],
+	"moccasin": [255, 228, 181],
+	"navajowhite": [255, 222, 173],
+	"navy": [0, 0, 128],
+	"oldlace": [253, 245, 230],
+	"olive": [128, 128, 0],
+	"olivedrab": [107, 142, 35],
+	"orange": [255, 165, 0],
+	"orangered": [255, 69, 0],
+	"orchid": [218, 112, 214],
+	"palegoldenrod": [238, 232, 170],
+	"palegreen": [152, 251, 152],
+	"paleturquoise": [175, 238, 238],
+	"palevioletred": [219, 112, 147],
+	"papayawhip": [255, 239, 213],
+	"peachpuff": [255, 218, 185],
+	"peru": [205, 133, 63],
+	"pink": [255, 192, 203],
+	"plum": [221, 160, 221],
+	"powderblue": [176, 224, 230],
+	"purple": [128, 0, 128],
+	"rebeccapurple": [102, 51, 153],
+	"red": [255, 0, 0],
+	"rosybrown": [188, 143, 143],
+	"royalblue": [65, 105, 225],
+	"saddlebrown": [139, 69, 19],
+	"salmon": [250, 128, 114],
+	"sandybrown": [244, 164, 96],
+	"seagreen": [46, 139, 87],
+	"seashell": [255, 245, 238],
+	"sienna": [160, 82, 45],
+	"silver": [192, 192, 192],
+	"skyblue": [135, 206, 235],
+	"slateblue": [106, 90, 205],
+	"slategray": [112, 128, 144],
+	"slategrey": [112, 128, 144],
+	"snow": [255, 250, 250],
+	"springgreen": [0, 255, 127],
+	"steelblue": [70, 130, 180],
+	"tan": [210, 180, 140],
+	"teal": [0, 128, 128],
+	"thistle": [216, 191, 216],
+	"tomato": [255, 99, 71],
+	"turquoise": [64, 224, 208],
+	"violet": [238, 130, 238],
+	"wheat": [245, 222, 179],
+	"white": [255, 255, 255],
+	"whitesmoke": [245, 245, 245],
+	"yellow": [255, 255, 0],
+	"yellowgreen": [154, 205, 50]
+};
+
 
 /***/ }),
 
@@ -10356,6 +12575,20 @@ formatters.O = function (v) {
 
 /***/ }),
 
+/***/ 8212:
+/***/ ((module) => {
+
+"use strict";
+
+
+module.exports = function () {
+  // https://mths.be/emoji
+  return /\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62(?:\uDB40\uDC65\uDB40\uDC6E\uDB40\uDC67|\uDB40\uDC73\uDB40\uDC63\uDB40\uDC74|\uDB40\uDC77\uDB40\uDC6C\uDB40\uDC73)\uDB40\uDC7F|\uD83D\uDC68(?:\uD83C\uDFFC\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68\uD83C\uDFFB|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFF\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFE])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFE\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFD])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFD\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB\uDFFC])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\u200D(?:\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D)?\uD83D\uDC68|(?:\uD83D[\uDC68\uDC69])\u200D(?:\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67]))|\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67])|(?:\uD83D[\uDC68\uDC69])\u200D(?:\uD83D[\uDC66\uDC67])|[\u2695\u2696\u2708]\uFE0F|\uD83D[\uDC66\uDC67]|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|(?:\uD83C\uDFFB\u200D[\u2695\u2696\u2708]|\uD83C\uDFFF\u200D[\u2695\u2696\u2708]|\uD83C\uDFFE\u200D[\u2695\u2696\u2708]|\uD83C\uDFFD\u200D[\u2695\u2696\u2708]|\uD83C\uDFFC\u200D[\u2695\u2696\u2708])\uFE0F|\uD83C\uDFFB\u200D(?:\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C[\uDFFB-\uDFFF])|(?:\uD83E\uDDD1\uD83C\uDFFB\u200D\uD83E\uDD1D\u200D\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFC\u200D\uD83E\uDD1D\u200D\uD83D\uDC69)\uD83C\uDFFB|\uD83E\uDDD1(?:\uD83C\uDFFF\u200D\uD83E\uDD1D\u200D\uD83E\uDDD1(?:\uD83C[\uDFFB-\uDFFF])|\u200D\uD83E\uDD1D\u200D\uD83E\uDDD1)|(?:\uD83E\uDDD1\uD83C\uDFFE\u200D\uD83E\uDD1D\u200D\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFF\u200D\uD83E\uDD1D\u200D(?:\uD83D[\uDC68\uDC69]))(?:\uD83C[\uDFFB-\uDFFE])|(?:\uD83E\uDDD1\uD83C\uDFFC\u200D\uD83E\uDD1D\u200D\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFD\u200D\uD83E\uDD1D\u200D\uD83D\uDC69)(?:\uD83C[\uDFFB\uDFFC])|\uD83D\uDC69(?:\uD83C\uDFFE\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFD\uDFFF])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFC\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB\uDFFD-\uDFFF])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFB\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFC-\uDFFF])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFD\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB\uDFFC\uDFFE\uDFFF])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\u200D(?:\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D(?:\uD83D[\uDC68\uDC69])|\uD83D[\uDC68\uDC69])|\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFF\u200D(?:\uD83C[\uDF3E\uDF73\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD]))|\uD83D\uDC69\u200D\uD83D\uDC69\u200D(?:\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67]))|(?:\uD83E\uDDD1\uD83C\uDFFD\u200D\uD83E\uDD1D\u200D\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFE\u200D\uD83E\uDD1D\u200D\uD83D\uDC69)(?:\uD83C[\uDFFB-\uDFFD])|\uD83D\uDC69\u200D\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC69\u200D\uD83D\uDC69\u200D(?:\uD83D[\uDC66\uDC67])|(?:\uD83D\uDC41\uFE0F\u200D\uD83D\uDDE8|\uD83D\uDC69(?:\uD83C\uDFFF\u200D[\u2695\u2696\u2708]|\uD83C\uDFFE\u200D[\u2695\u2696\u2708]|\uD83C\uDFFC\u200D[\u2695\u2696\u2708]|\uD83C\uDFFB\u200D[\u2695\u2696\u2708]|\uD83C\uDFFD\u200D[\u2695\u2696\u2708]|\u200D[\u2695\u2696\u2708])|(?:(?:\u26F9|\uD83C[\uDFCB\uDFCC]|\uD83D\uDD75)\uFE0F|\uD83D\uDC6F|\uD83E[\uDD3C\uDDDE\uDDDF])\u200D[\u2640\u2642]|(?:\u26F9|\uD83C[\uDFCB\uDFCC]|\uD83D\uDD75)(?:\uD83C[\uDFFB-\uDFFF])\u200D[\u2640\u2642]|(?:\uD83C[\uDFC3\uDFC4\uDFCA]|\uD83D[\uDC6E\uDC71\uDC73\uDC77\uDC81\uDC82\uDC86\uDC87\uDE45-\uDE47\uDE4B\uDE4D\uDE4E\uDEA3\uDEB4-\uDEB6]|\uD83E[\uDD26\uDD37-\uDD39\uDD3D\uDD3E\uDDB8\uDDB9\uDDCD-\uDDCF\uDDD6-\uDDDD])(?:(?:\uD83C[\uDFFB-\uDFFF])\u200D[\u2640\u2642]|\u200D[\u2640\u2642])|\uD83C\uDFF4\u200D\u2620)\uFE0F|\uD83D\uDC69\u200D\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67])|\uD83C\uDFF3\uFE0F\u200D\uD83C\uDF08|\uD83D\uDC15\u200D\uD83E\uDDBA|\uD83D\uDC69\u200D\uD83D\uDC66|\uD83D\uDC69\u200D\uD83D\uDC67|\uD83C\uDDFD\uD83C\uDDF0|\uD83C\uDDF4\uD83C\uDDF2|\uD83C\uDDF6\uD83C\uDDE6|[#\*0-9]\uFE0F\u20E3|\uD83C\uDDE7(?:\uD83C[\uDDE6\uDDE7\uDDE9-\uDDEF\uDDF1-\uDDF4\uDDF6-\uDDF9\uDDFB\uDDFC\uDDFE\uDDFF])|\uD83C\uDDF9(?:\uD83C[\uDDE6\uDDE8\uDDE9\uDDEB-\uDDED\uDDEF-\uDDF4\uDDF7\uDDF9\uDDFB\uDDFC\uDDFF])|\uD83C\uDDEA(?:\uD83C[\uDDE6\uDDE8\uDDEA\uDDEC\uDDED\uDDF7-\uDDFA])|\uD83E\uDDD1(?:\uD83C[\uDFFB-\uDFFF])|\uD83C\uDDF7(?:\uD83C[\uDDEA\uDDF4\uDDF8\uDDFA\uDDFC])|\uD83D\uDC69(?:\uD83C[\uDFFB-\uDFFF])|\uD83C\uDDF2(?:\uD83C[\uDDE6\uDDE8-\uDDED\uDDF0-\uDDFF])|\uD83C\uDDE6(?:\uD83C[\uDDE8-\uDDEC\uDDEE\uDDF1\uDDF2\uDDF4\uDDF6-\uDDFA\uDDFC\uDDFD\uDDFF])|\uD83C\uDDF0(?:\uD83C[\uDDEA\uDDEC-\uDDEE\uDDF2\uDDF3\uDDF5\uDDF7\uDDFC\uDDFE\uDDFF])|\uD83C\uDDED(?:\uD83C[\uDDF0\uDDF2\uDDF3\uDDF7\uDDF9\uDDFA])|\uD83C\uDDE9(?:\uD83C[\uDDEA\uDDEC\uDDEF\uDDF0\uDDF2\uDDF4\uDDFF])|\uD83C\uDDFE(?:\uD83C[\uDDEA\uDDF9])|\uD83C\uDDEC(?:\uD83C[\uDDE6\uDDE7\uDDE9-\uDDEE\uDDF1-\uDDF3\uDDF5-\uDDFA\uDDFC\uDDFE])|\uD83C\uDDF8(?:\uD83C[\uDDE6-\uDDEA\uDDEC-\uDDF4\uDDF7-\uDDF9\uDDFB\uDDFD-\uDDFF])|\uD83C\uDDEB(?:\uD83C[\uDDEE-\uDDF0\uDDF2\uDDF4\uDDF7])|\uD83C\uDDF5(?:\uD83C[\uDDE6\uDDEA-\uDDED\uDDF0-\uDDF3\uDDF7-\uDDF9\uDDFC\uDDFE])|\uD83C\uDDFB(?:\uD83C[\uDDE6\uDDE8\uDDEA\uDDEC\uDDEE\uDDF3\uDDFA])|\uD83C\uDDF3(?:\uD83C[\uDDE6\uDDE8\uDDEA-\uDDEC\uDDEE\uDDF1\uDDF4\uDDF5\uDDF7\uDDFA\uDDFF])|\uD83C\uDDE8(?:\uD83C[\uDDE6\uDDE8\uDDE9\uDDEB-\uDDEE\uDDF0-\uDDF5\uDDF7\uDDFA-\uDDFF])|\uD83C\uDDF1(?:\uD83C[\uDDE6-\uDDE8\uDDEE\uDDF0\uDDF7-\uDDFB\uDDFE])|\uD83C\uDDFF(?:\uD83C[\uDDE6\uDDF2\uDDFC])|\uD83C\uDDFC(?:\uD83C[\uDDEB\uDDF8])|\uD83C\uDDFA(?:\uD83C[\uDDE6\uDDEC\uDDF2\uDDF3\uDDF8\uDDFE\uDDFF])|\uD83C\uDDEE(?:\uD83C[\uDDE8-\uDDEA\uDDF1-\uDDF4\uDDF6-\uDDF9])|\uD83C\uDDEF(?:\uD83C[\uDDEA\uDDF2\uDDF4\uDDF5])|(?:\uD83C[\uDFC3\uDFC4\uDFCA]|\uD83D[\uDC6E\uDC71\uDC73\uDC77\uDC81\uDC82\uDC86\uDC87\uDE45-\uDE47\uDE4B\uDE4D\uDE4E\uDEA3\uDEB4-\uDEB6]|\uD83E[\uDD26\uDD37-\uDD39\uDD3D\uDD3E\uDDB8\uDDB9\uDDCD-\uDDCF\uDDD6-\uDDDD])(?:\uD83C[\uDFFB-\uDFFF])|(?:\u26F9|\uD83C[\uDFCB\uDFCC]|\uD83D\uDD75)(?:\uD83C[\uDFFB-\uDFFF])|(?:[\u261D\u270A-\u270D]|\uD83C[\uDF85\uDFC2\uDFC7]|\uD83D[\uDC42\uDC43\uDC46-\uDC50\uDC66\uDC67\uDC6B-\uDC6D\uDC70\uDC72\uDC74-\uDC76\uDC78\uDC7C\uDC83\uDC85\uDCAA\uDD74\uDD7A\uDD90\uDD95\uDD96\uDE4C\uDE4F\uDEC0\uDECC]|\uD83E[\uDD0F\uDD18-\uDD1C\uDD1E\uDD1F\uDD30-\uDD36\uDDB5\uDDB6\uDDBB\uDDD2-\uDDD5])(?:\uD83C[\uDFFB-\uDFFF])|(?:[\u231A\u231B\u23E9-\u23EC\u23F0\u23F3\u25FD\u25FE\u2614\u2615\u2648-\u2653\u267F\u2693\u26A1\u26AA\u26AB\u26BD\u26BE\u26C4\u26C5\u26CE\u26D4\u26EA\u26F2\u26F3\u26F5\u26FA\u26FD\u2705\u270A\u270B\u2728\u274C\u274E\u2753-\u2755\u2757\u2795-\u2797\u27B0\u27BF\u2B1B\u2B1C\u2B50\u2B55]|\uD83C[\uDC04\uDCCF\uDD8E\uDD91-\uDD9A\uDDE6-\uDDFF\uDE01\uDE1A\uDE2F\uDE32-\uDE36\uDE38-\uDE3A\uDE50\uDE51\uDF00-\uDF20\uDF2D-\uDF35\uDF37-\uDF7C\uDF7E-\uDF93\uDFA0-\uDFCA\uDFCF-\uDFD3\uDFE0-\uDFF0\uDFF4\uDFF8-\uDFFF]|\uD83D[\uDC00-\uDC3E\uDC40\uDC42-\uDCFC\uDCFF-\uDD3D\uDD4B-\uDD4E\uDD50-\uDD67\uDD7A\uDD95\uDD96\uDDA4\uDDFB-\uDE4F\uDE80-\uDEC5\uDECC\uDED0-\uDED2\uDED5\uDEEB\uDEEC\uDEF4-\uDEFA\uDFE0-\uDFEB]|\uD83E[\uDD0D-\uDD3A\uDD3C-\uDD45\uDD47-\uDD71\uDD73-\uDD76\uDD7A-\uDDA2\uDDA5-\uDDAA\uDDAE-\uDDCA\uDDCD-\uDDFF\uDE70-\uDE73\uDE78-\uDE7A\uDE80-\uDE82\uDE90-\uDE95])|(?:[#\*0-9\xA9\xAE\u203C\u2049\u2122\u2139\u2194-\u2199\u21A9\u21AA\u231A\u231B\u2328\u23CF\u23E9-\u23F3\u23F8-\u23FA\u24C2\u25AA\u25AB\u25B6\u25C0\u25FB-\u25FE\u2600-\u2604\u260E\u2611\u2614\u2615\u2618\u261D\u2620\u2622\u2623\u2626\u262A\u262E\u262F\u2638-\u263A\u2640\u2642\u2648-\u2653\u265F\u2660\u2663\u2665\u2666\u2668\u267B\u267E\u267F\u2692-\u2697\u2699\u269B\u269C\u26A0\u26A1\u26AA\u26AB\u26B0\u26B1\u26BD\u26BE\u26C4\u26C5\u26C8\u26CE\u26CF\u26D1\u26D3\u26D4\u26E9\u26EA\u26F0-\u26F5\u26F7-\u26FA\u26FD\u2702\u2705\u2708-\u270D\u270F\u2712\u2714\u2716\u271D\u2721\u2728\u2733\u2734\u2744\u2747\u274C\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797\u27A1\u27B0\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u3030\u303D\u3297\u3299]|\uD83C[\uDC04\uDCCF\uDD70\uDD71\uDD7E\uDD7F\uDD8E\uDD91-\uDD9A\uDDE6-\uDDFF\uDE01\uDE02\uDE1A\uDE2F\uDE32-\uDE3A\uDE50\uDE51\uDF00-\uDF21\uDF24-\uDF93\uDF96\uDF97\uDF99-\uDF9B\uDF9E-\uDFF0\uDFF3-\uDFF5\uDFF7-\uDFFF]|\uD83D[\uDC00-\uDCFD\uDCFF-\uDD3D\uDD49-\uDD4E\uDD50-\uDD67\uDD6F\uDD70\uDD73-\uDD7A\uDD87\uDD8A-\uDD8D\uDD90\uDD95\uDD96\uDDA4\uDDA5\uDDA8\uDDB1\uDDB2\uDDBC\uDDC2-\uDDC4\uDDD1-\uDDD3\uDDDC-\uDDDE\uDDE1\uDDE3\uDDE8\uDDEF\uDDF3\uDDFA-\uDE4F\uDE80-\uDEC5\uDECB-\uDED2\uDED5\uDEE0-\uDEE5\uDEE9\uDEEB\uDEEC\uDEF0\uDEF3-\uDEFA\uDFE0-\uDFEB]|\uD83E[\uDD0D-\uDD3A\uDD3C-\uDD45\uDD47-\uDD71\uDD73-\uDD76\uDD7A-\uDDA2\uDDA5-\uDDAA\uDDAE-\uDDCA\uDDCD-\uDDFF\uDE70-\uDE73\uDE78-\uDE7A\uDE80-\uDE82\uDE90-\uDE95])\uFE0F|(?:[\u261D\u26F9\u270A-\u270D]|\uD83C[\uDF85\uDFC2-\uDFC4\uDFC7\uDFCA-\uDFCC]|\uD83D[\uDC42\uDC43\uDC46-\uDC50\uDC66-\uDC78\uDC7C\uDC81-\uDC83\uDC85-\uDC87\uDC8F\uDC91\uDCAA\uDD74\uDD75\uDD7A\uDD90\uDD95\uDD96\uDE45-\uDE47\uDE4B-\uDE4F\uDEA3\uDEB4-\uDEB6\uDEC0\uDECC]|\uD83E[\uDD0F\uDD18-\uDD1F\uDD26\uDD30-\uDD39\uDD3C-\uDD3E\uDDB5\uDDB6\uDDB8\uDDB9\uDDBB\uDDCD-\uDDCF\uDDD1-\uDDDD])/g;
+};
+
+
+/***/ }),
+
 /***/ 1205:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -10453,6 +12686,31 @@ var eos = function(stream, opts, callback) {
 };
 
 module.exports = eos;
+
+
+/***/ }),
+
+/***/ 2644:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { dirname, resolve } = __nccwpck_require__(1017);
+const { readdirSync, statSync } = __nccwpck_require__(7147);
+
+module.exports = function (start, callback) {
+	let dir = resolve('.', start);
+	let tmp, stats = statSync(dir);
+
+	if (!stats.isDirectory()) {
+		dir = dirname(dir);
+	}
+
+	while (true) {
+		tmp = callback(dir, readdirSync(dir));
+		if (tmp) return resolve(dir, tmp);
+		dir = dirname(tmp = dir);
+		if (tmp === dir) break;
+	}
+}
 
 
 /***/ }),
@@ -10948,6 +13206,35 @@ module.exports = (__nccwpck_require__(7147).constants) || __nccwpck_require__(20
 
 /***/ }),
 
+/***/ 351:
+/***/ ((module) => {
+
+"use strict";
+
+// Call this function in a another function to find out the file from
+// which that function was called from. (Inspects the v8 stack trace)
+//
+// Inspired by http://stackoverflow.com/questions/13227489
+module.exports = function getCallerFile(position) {
+    if (position === void 0) { position = 2; }
+    if (position >= Error.stackTraceLimit) {
+        throw new TypeError('getCallerFile(position) requires position be less then Error.stackTraceLimit but position was: `' + position + '` and Error.stackTraceLimit was: `' + Error.stackTraceLimit + '`');
+    }
+    var oldPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = function (_, stack) { return stack; };
+    var stack = new Error().stack;
+    Error.prepareStackTrace = oldPrepareStackTrace;
+    if (stack !== null && typeof stack === 'object') {
+        // stack[0] holds this file
+        // stack[1] holds where this function was called
+        // stack[2] holds the file we're interested in
+        return stack[position] ? stack[position].getFileName() : undefined;
+    }
+};
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
 /***/ 1585:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -11404,6 +13691,64 @@ if (typeof Object.create === 'function') {
 
 /***/ }),
 
+/***/ 4882:
+/***/ ((module) => {
+
+"use strict";
+/* eslint-disable yoda */
+
+
+const isFullwidthCodePoint = codePoint => {
+	if (Number.isNaN(codePoint)) {
+		return false;
+	}
+
+	// Code points are derived from:
+	// http://www.unix.org/Public/UNIDATA/EastAsianWidth.txt
+	if (
+		codePoint >= 0x1100 && (
+			codePoint <= 0x115F || // Hangul Jamo
+			codePoint === 0x2329 || // LEFT-POINTING ANGLE BRACKET
+			codePoint === 0x232A || // RIGHT-POINTING ANGLE BRACKET
+			// CJK Radicals Supplement .. Enclosed CJK Letters and Months
+			(0x2E80 <= codePoint && codePoint <= 0x3247 && codePoint !== 0x303F) ||
+			// Enclosed CJK Letters and Months .. CJK Unified Ideographs Extension A
+			(0x3250 <= codePoint && codePoint <= 0x4DBF) ||
+			// CJK Unified Ideographs .. Yi Radicals
+			(0x4E00 <= codePoint && codePoint <= 0xA4C6) ||
+			// Hangul Jamo Extended-A
+			(0xA960 <= codePoint && codePoint <= 0xA97C) ||
+			// Hangul Syllables
+			(0xAC00 <= codePoint && codePoint <= 0xD7A3) ||
+			// CJK Compatibility Ideographs
+			(0xF900 <= codePoint && codePoint <= 0xFAFF) ||
+			// Vertical Forms
+			(0xFE10 <= codePoint && codePoint <= 0xFE19) ||
+			// CJK Compatibility Forms .. Small Form Variants
+			(0xFE30 <= codePoint && codePoint <= 0xFE6B) ||
+			// Halfwidth and Fullwidth Forms
+			(0xFF01 <= codePoint && codePoint <= 0xFF60) ||
+			(0xFFE0 <= codePoint && codePoint <= 0xFFE6) ||
+			// Kana Supplement
+			(0x1B000 <= codePoint && codePoint <= 0x1B001) ||
+			// Enclosed Ideographic Supplement
+			(0x1F200 <= codePoint && codePoint <= 0x1F251) ||
+			// CJK Unified Ideographs Extension B .. Tertiary Ideographic Plane
+			(0x20000 <= codePoint && codePoint <= 0x3FFFD)
+		)
+	) {
+		return true;
+	}
+
+	return false;
+};
+
+module.exports = isFullwidthCodePoint;
+module.exports["default"] = isFullwidthCodePoint;
+
+
+/***/ }),
+
 /***/ 8578:
 /***/ ((module) => {
 
@@ -11794,6 +14139,257 @@ function pendHold(self) {
 function pendGo(self, fn) {
   fn(pendHold(self));
 }
+
+
+/***/ }),
+
+/***/ 892:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+module.exports = __nccwpck_require__(2679);
+
+
+/***/ }),
+
+/***/ 2679:
+/***/ ((module, exports) => {
+
+/*!
+ * node-progress
+ * Copyright(c) 2011 TJ Holowaychuk <tj@vision-media.ca>
+ * MIT Licensed
+ */
+
+/**
+ * Expose `ProgressBar`.
+ */
+
+exports = module.exports = ProgressBar;
+
+/**
+ * Initialize a `ProgressBar` with the given `fmt` string and `options` or
+ * `total`.
+ *
+ * Options:
+ *
+ *   - `curr` current completed index
+ *   - `total` total number of ticks to complete
+ *   - `width` the displayed width of the progress bar defaulting to total
+ *   - `stream` the output stream defaulting to stderr
+ *   - `head` head character defaulting to complete character
+ *   - `complete` completion character defaulting to "="
+ *   - `incomplete` incomplete character defaulting to "-"
+ *   - `renderThrottle` minimum time between updates in milliseconds defaulting to 16
+ *   - `callback` optional function to call when the progress bar completes
+ *   - `clear` will clear the progress bar upon termination
+ *
+ * Tokens:
+ *
+ *   - `:bar` the progress bar itself
+ *   - `:current` current tick number
+ *   - `:total` total ticks
+ *   - `:elapsed` time elapsed in seconds
+ *   - `:percent` completion percentage
+ *   - `:eta` eta in seconds
+ *   - `:rate` rate of ticks per second
+ *
+ * @param {string} fmt
+ * @param {object|number} options or total
+ * @api public
+ */
+
+function ProgressBar(fmt, options) {
+  this.stream = options.stream || process.stderr;
+
+  if (typeof(options) == 'number') {
+    var total = options;
+    options = {};
+    options.total = total;
+  } else {
+    options = options || {};
+    if ('string' != typeof fmt) throw new Error('format required');
+    if ('number' != typeof options.total) throw new Error('total required');
+  }
+
+  this.fmt = fmt;
+  this.curr = options.curr || 0;
+  this.total = options.total;
+  this.width = options.width || this.total;
+  this.clear = options.clear
+  this.chars = {
+    complete   : options.complete || '=',
+    incomplete : options.incomplete || '-',
+    head       : options.head || (options.complete || '=')
+  };
+  this.renderThrottle = options.renderThrottle !== 0 ? (options.renderThrottle || 16) : 0;
+  this.lastRender = -Infinity;
+  this.callback = options.callback || function () {};
+  this.tokens = {};
+  this.lastDraw = '';
+}
+
+/**
+ * "tick" the progress bar with optional `len` and optional `tokens`.
+ *
+ * @param {number|object} len or tokens
+ * @param {object} tokens
+ * @api public
+ */
+
+ProgressBar.prototype.tick = function(len, tokens){
+  if (len !== 0)
+    len = len || 1;
+
+  // swap tokens
+  if ('object' == typeof len) tokens = len, len = 1;
+  if (tokens) this.tokens = tokens;
+
+  // start time for eta
+  if (0 == this.curr) this.start = new Date;
+
+  this.curr += len
+
+  // try to render
+  this.render();
+
+  // progress complete
+  if (this.curr >= this.total) {
+    this.render(undefined, true);
+    this.complete = true;
+    this.terminate();
+    this.callback(this);
+    return;
+  }
+};
+
+/**
+ * Method to render the progress bar with optional `tokens` to place in the
+ * progress bar's `fmt` field.
+ *
+ * @param {object} tokens
+ * @api public
+ */
+
+ProgressBar.prototype.render = function (tokens, force) {
+  force = force !== undefined ? force : false;
+  if (tokens) this.tokens = tokens;
+
+  if (!this.stream.isTTY) return;
+
+  var now = Date.now();
+  var delta = now - this.lastRender;
+  if (!force && (delta < this.renderThrottle)) {
+    return;
+  } else {
+    this.lastRender = now;
+  }
+
+  var ratio = this.curr / this.total;
+  ratio = Math.min(Math.max(ratio, 0), 1);
+
+  var percent = Math.floor(ratio * 100);
+  var incomplete, complete, completeLength;
+  var elapsed = new Date - this.start;
+  var eta = (percent == 100) ? 0 : elapsed * (this.total / this.curr - 1);
+  var rate = this.curr / (elapsed / 1000);
+
+  /* populate the bar template with percentages and timestamps */
+  var str = this.fmt
+    .replace(':current', this.curr)
+    .replace(':total', this.total)
+    .replace(':elapsed', isNaN(elapsed) ? '0.0' : (elapsed / 1000).toFixed(1))
+    .replace(':eta', (isNaN(eta) || !isFinite(eta)) ? '0.0' : (eta / 1000)
+      .toFixed(1))
+    .replace(':percent', percent.toFixed(0) + '%')
+    .replace(':rate', Math.round(rate));
+
+  /* compute the available space (non-zero) for the bar */
+  var availableSpace = Math.max(0, this.stream.columns - str.replace(':bar', '').length);
+  if(availableSpace && process.platform === 'win32'){
+    availableSpace = availableSpace - 1;
+  }
+
+  var width = Math.min(this.width, availableSpace);
+
+  /* TODO: the following assumes the user has one ':bar' token */
+  completeLength = Math.round(width * ratio);
+  complete = Array(Math.max(0, completeLength + 1)).join(this.chars.complete);
+  incomplete = Array(Math.max(0, width - completeLength + 1)).join(this.chars.incomplete);
+
+  /* add head to the complete string */
+  if(completeLength > 0)
+    complete = complete.slice(0, -1) + this.chars.head;
+
+  /* fill in the actual progress bar */
+  str = str.replace(':bar', complete + incomplete);
+
+  /* replace the extra tokens */
+  if (this.tokens) for (var key in this.tokens) str = str.replace(':' + key, this.tokens[key]);
+
+  if (this.lastDraw !== str) {
+    this.stream.cursorTo(0);
+    this.stream.write(str);
+    this.stream.clearLine(1);
+    this.lastDraw = str;
+  }
+};
+
+/**
+ * "update" the progress bar to represent an exact percentage.
+ * The ratio (between 0 and 1) specified will be multiplied by `total` and
+ * floored, representing the closest available "tick." For example, if a
+ * progress bar has a length of 3 and `update(0.5)` is called, the progress
+ * will be set to 1.
+ *
+ * A ratio of 0.5 will attempt to set the progress to halfway.
+ *
+ * @param {number} ratio The ratio (between 0 and 1 inclusive) to set the
+ *   overall completion to.
+ * @api public
+ */
+
+ProgressBar.prototype.update = function (ratio, tokens) {
+  var goal = Math.floor(ratio * this.total);
+  var delta = goal - this.curr;
+
+  this.tick(delta, tokens);
+};
+
+/**
+ * "interrupt" the progress bar and write a message above it.
+ * @param {string} message The message to write.
+ * @api public
+ */
+
+ProgressBar.prototype.interrupt = function (message) {
+  // clear the current line
+  this.stream.clearLine();
+  // move the cursor to the start of the line
+  this.stream.cursorTo(0);
+  // write the message text
+  this.stream.write(message);
+  // terminate the line after writing the message
+  this.stream.write('\n');
+  // re-display the progress bar with its lastDraw
+  this.stream.write(this.lastDraw);
+};
+
+/**
+ * Terminates a progress bar.
+ *
+ * @api public
+ */
+
+ProgressBar.prototype.terminate = function () {
+  if (this.clear) {
+    if (this.stream.clearLine) {
+      this.stream.clearLine();
+      this.stream.cursorTo(0);
+    }
+  } else {
+    this.stream.write('\n');
+  }
+};
 
 
 /***/ }),
@@ -15256,6 +17852,100 @@ if (process.env.READABLE_STREAM === 'disable' && Stream) {
 
 /***/ }),
 
+/***/ 9200:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var fs = __nccwpck_require__(7147),
+  join = (__nccwpck_require__(1017).join),
+  resolve = (__nccwpck_require__(1017).resolve),
+  dirname = (__nccwpck_require__(1017).dirname),
+  defaultOptions = {
+    extensions: ['js', 'json', 'coffee'],
+    recurse: true,
+    rename: function (name) {
+      return name;
+    },
+    visit: function (obj) {
+      return obj;
+    }
+  };
+
+function checkFileInclusion(path, filename, options) {
+  return (
+    // verify file has valid extension
+    (new RegExp('\\.(' + options.extensions.join('|') + ')$', 'i').test(filename)) &&
+
+    // if options.include is a RegExp, evaluate it and make sure the path passes
+    !(options.include && options.include instanceof RegExp && !options.include.test(path)) &&
+
+    // if options.include is a function, evaluate it and make sure the path passes
+    !(options.include && typeof options.include === 'function' && !options.include(path, filename)) &&
+
+    // if options.exclude is a RegExp, evaluate it and make sure the path doesn't pass
+    !(options.exclude && options.exclude instanceof RegExp && options.exclude.test(path)) &&
+
+    // if options.exclude is a function, evaluate it and make sure the path doesn't pass
+    !(options.exclude && typeof options.exclude === 'function' && options.exclude(path, filename))
+  );
+}
+
+function requireDirectory(m, path, options) {
+  var retval = {};
+
+  // path is optional
+  if (path && !options && typeof path !== 'string') {
+    options = path;
+    path = null;
+  }
+
+  // default options
+  options = options || {};
+  for (var prop in defaultOptions) {
+    if (typeof options[prop] === 'undefined') {
+      options[prop] = defaultOptions[prop];
+    }
+  }
+
+  // if no path was passed in, assume the equivelant of __dirname from caller
+  // otherwise, resolve path relative to the equivalent of __dirname
+  path = !path ? dirname(m.filename) : resolve(dirname(m.filename), path);
+
+  // get the path of each file in specified directory, append to current tree node, recurse
+  fs.readdirSync(path).forEach(function (filename) {
+    var joined = join(path, filename),
+      files,
+      key,
+      obj;
+
+    if (fs.statSync(joined).isDirectory() && options.recurse) {
+      // this node is a directory; recurse
+      files = requireDirectory(m, joined, options);
+      // exclude empty directories
+      if (Object.keys(files).length) {
+        retval[options.rename(filename, joined, filename)] = files;
+      }
+    } else {
+      if (joined !== m.filename && checkFileInclusion(joined, filename, options)) {
+        // hash node key shouldn't include file extension
+        key = filename.substring(0, filename.lastIndexOf('.'));
+        obj = m.require(joined);
+        retval[options.rename(key, joined, filename)] = options.visit(obj, joined, filename) || obj;
+      }
+    }
+  });
+
+  return retval;
+}
+
+module.exports = requireDirectory;
+module.exports.defaults = defaultOptions;
+
+
+/***/ }),
+
 /***/ 1867:
 /***/ ((module, exports, __nccwpck_require__) => {
 
@@ -16931,6 +19621,61 @@ function coerce (version, options) {
 
 /***/ }),
 
+/***/ 2577:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+const stripAnsi = __nccwpck_require__(5591);
+const isFullwidthCodePoint = __nccwpck_require__(4882);
+const emojiRegex = __nccwpck_require__(8212);
+
+const stringWidth = string => {
+	if (typeof string !== 'string' || string.length === 0) {
+		return 0;
+	}
+
+	string = stripAnsi(string);
+
+	if (string.length === 0) {
+		return 0;
+	}
+
+	string = string.replace(emojiRegex(), '  ');
+
+	let width = 0;
+
+	for (let i = 0; i < string.length; i++) {
+		const code = string.codePointAt(i);
+
+		// Ignore control characters
+		if (code <= 0x1F || (code >= 0x7F && code <= 0x9F)) {
+			continue;
+		}
+
+		// Ignore combining characters
+		if (code >= 0x300 && code <= 0x36F) {
+			continue;
+		}
+
+		// Surrogates
+		if (code > 0xFFFF) {
+			i++;
+		}
+
+		width += isFullwidthCodePoint(code) ? 2 : 1;
+	}
+
+	return width;
+};
+
+module.exports = stringWidth;
+// TODO: remove this in the next major version
+module.exports["default"] = stringWidth;
+
+
+/***/ }),
+
 /***/ 4841:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -17231,6 +19976,18 @@ function simpleWrite(buf) {
 function simpleEnd(buf) {
   return buf && buf.length ? this.write(buf) : '';
 }
+
+/***/ }),
+
+/***/ 5591:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+const ansiRegex = __nccwpck_require__(5063);
+
+module.exports = string => typeof string === 'string' ? string.replace(ansiRegex(), '') : string;
+
 
 /***/ }),
 
@@ -22159,6 +24916,230 @@ module.exports.implForWrapper = function (wrapper) {
   return wrapper[module.exports.implSymbol];
 };
 
+
+
+/***/ }),
+
+/***/ 9824:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+const stringWidth = __nccwpck_require__(2577);
+const stripAnsi = __nccwpck_require__(5591);
+const ansiStyles = __nccwpck_require__(2068);
+
+const ESCAPES = new Set([
+	'\u001B',
+	'\u009B'
+]);
+
+const END_CODE = 39;
+
+const ANSI_ESCAPE_BELL = '\u0007';
+const ANSI_CSI = '[';
+const ANSI_OSC = ']';
+const ANSI_SGR_TERMINATOR = 'm';
+const ANSI_ESCAPE_LINK = `${ANSI_OSC}8;;`;
+
+const wrapAnsi = code => `${ESCAPES.values().next().value}${ANSI_CSI}${code}${ANSI_SGR_TERMINATOR}`;
+const wrapAnsiHyperlink = uri => `${ESCAPES.values().next().value}${ANSI_ESCAPE_LINK}${uri}${ANSI_ESCAPE_BELL}`;
+
+// Calculate the length of words split on ' ', ignoring
+// the extra characters added by ansi escape codes
+const wordLengths = string => string.split(' ').map(character => stringWidth(character));
+
+// Wrap a long word across multiple rows
+// Ansi escape codes do not count towards length
+const wrapWord = (rows, word, columns) => {
+	const characters = [...word];
+
+	let isInsideEscape = false;
+	let isInsideLinkEscape = false;
+	let visible = stringWidth(stripAnsi(rows[rows.length - 1]));
+
+	for (const [index, character] of characters.entries()) {
+		const characterLength = stringWidth(character);
+
+		if (visible + characterLength <= columns) {
+			rows[rows.length - 1] += character;
+		} else {
+			rows.push(character);
+			visible = 0;
+		}
+
+		if (ESCAPES.has(character)) {
+			isInsideEscape = true;
+			isInsideLinkEscape = characters.slice(index + 1).join('').startsWith(ANSI_ESCAPE_LINK);
+		}
+
+		if (isInsideEscape) {
+			if (isInsideLinkEscape) {
+				if (character === ANSI_ESCAPE_BELL) {
+					isInsideEscape = false;
+					isInsideLinkEscape = false;
+				}
+			} else if (character === ANSI_SGR_TERMINATOR) {
+				isInsideEscape = false;
+			}
+
+			continue;
+		}
+
+		visible += characterLength;
+
+		if (visible === columns && index < characters.length - 1) {
+			rows.push('');
+			visible = 0;
+		}
+	}
+
+	// It's possible that the last row we copy over is only
+	// ansi escape characters, handle this edge-case
+	if (!visible && rows[rows.length - 1].length > 0 && rows.length > 1) {
+		rows[rows.length - 2] += rows.pop();
+	}
+};
+
+// Trims spaces from a string ignoring invisible sequences
+const stringVisibleTrimSpacesRight = string => {
+	const words = string.split(' ');
+	let last = words.length;
+
+	while (last > 0) {
+		if (stringWidth(words[last - 1]) > 0) {
+			break;
+		}
+
+		last--;
+	}
+
+	if (last === words.length) {
+		return string;
+	}
+
+	return words.slice(0, last).join(' ') + words.slice(last).join('');
+};
+
+// The wrap-ansi module can be invoked in either 'hard' or 'soft' wrap mode
+//
+// 'hard' will never allow a string to take up more than columns characters
+//
+// 'soft' allows long words to expand past the column length
+const exec = (string, columns, options = {}) => {
+	if (options.trim !== false && string.trim() === '') {
+		return '';
+	}
+
+	let returnValue = '';
+	let escapeCode;
+	let escapeUrl;
+
+	const lengths = wordLengths(string);
+	let rows = [''];
+
+	for (const [index, word] of string.split(' ').entries()) {
+		if (options.trim !== false) {
+			rows[rows.length - 1] = rows[rows.length - 1].trimStart();
+		}
+
+		let rowLength = stringWidth(rows[rows.length - 1]);
+
+		if (index !== 0) {
+			if (rowLength >= columns && (options.wordWrap === false || options.trim === false)) {
+				// If we start with a new word but the current row length equals the length of the columns, add a new row
+				rows.push('');
+				rowLength = 0;
+			}
+
+			if (rowLength > 0 || options.trim === false) {
+				rows[rows.length - 1] += ' ';
+				rowLength++;
+			}
+		}
+
+		// In 'hard' wrap mode, the length of a line is never allowed to extend past 'columns'
+		if (options.hard && lengths[index] > columns) {
+			const remainingColumns = (columns - rowLength);
+			const breaksStartingThisLine = 1 + Math.floor((lengths[index] - remainingColumns - 1) / columns);
+			const breaksStartingNextLine = Math.floor((lengths[index] - 1) / columns);
+			if (breaksStartingNextLine < breaksStartingThisLine) {
+				rows.push('');
+			}
+
+			wrapWord(rows, word, columns);
+			continue;
+		}
+
+		if (rowLength + lengths[index] > columns && rowLength > 0 && lengths[index] > 0) {
+			if (options.wordWrap === false && rowLength < columns) {
+				wrapWord(rows, word, columns);
+				continue;
+			}
+
+			rows.push('');
+		}
+
+		if (rowLength + lengths[index] > columns && options.wordWrap === false) {
+			wrapWord(rows, word, columns);
+			continue;
+		}
+
+		rows[rows.length - 1] += word;
+	}
+
+	if (options.trim !== false) {
+		rows = rows.map(stringVisibleTrimSpacesRight);
+	}
+
+	const pre = [...rows.join('\n')];
+
+	for (const [index, character] of pre.entries()) {
+		returnValue += character;
+
+		if (ESCAPES.has(character)) {
+			const {groups} = new RegExp(`(?:\\${ANSI_CSI}(?<code>\\d+)m|\\${ANSI_ESCAPE_LINK}(?<uri>.*)${ANSI_ESCAPE_BELL})`).exec(pre.slice(index).join('')) || {groups: {}};
+			if (groups.code !== undefined) {
+				const code = Number.parseFloat(groups.code);
+				escapeCode = code === END_CODE ? undefined : code;
+			} else if (groups.uri !== undefined) {
+				escapeUrl = groups.uri.length === 0 ? undefined : groups.uri;
+			}
+		}
+
+		const code = ansiStyles.codes.get(Number(escapeCode));
+
+		if (pre[index + 1] === '\n') {
+			if (escapeUrl) {
+				returnValue += wrapAnsiHyperlink('');
+			}
+
+			if (escapeCode && code) {
+				returnValue += wrapAnsi(code);
+			}
+		} else if (character === '\n') {
+			if (escapeCode && code) {
+				returnValue += wrapAnsi(escapeCode);
+			}
+
+			if (escapeUrl) {
+				returnValue += wrapAnsiHyperlink(escapeUrl);
+			}
+		}
+	}
+
+	return returnValue;
+};
+
+// For each newline, invoke the method separately
+module.exports = (string, columns, options) => {
+	return String(string)
+		.normalize()
+		.replace(/\r\n/g, '\n')
+		.split('\n')
+		.map(line => exec(line, columns, options))
+		.join('\n');
+};
 
 
 /***/ }),
@@ -27648,6 +30629,101 @@ module.exports.CHROMIUM_REVISION = "1108766";
 
 /***/ }),
 
+/***/ 4351:
+/***/ ((__unused_webpack_module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const fs = __nccwpck_require__(3292);
+const path = __nccwpck_require__(1017);
+const core = __nccwpck_require__(2186);
+const tc = __nccwpck_require__(7784);
+const puppeteer = __nccwpck_require__(4807);
+const { CHROMIUM_REVISION } = __nccwpck_require__(1942);
+
+async function main() {
+  const script = core.getInput("script", { required: true });
+
+  const chromiumPath = await findOrDownloadChromium();
+
+  core.info("Launching browser");
+  const browser = await puppeteer.launch({
+    executablePath: chromiumPath,
+  });
+
+  try {
+    core.info("Script running");
+    const result = JSON.stringify(await callAsyncFunction({ browser }, script));
+    core.debug(`result: ${result}`);
+    core.setOutput("result", result);
+    core.info("Script finished!");
+  } catch (error) {
+    core.error("Error during running script");
+    core.setFailed(error.message);
+  }
+
+  await browser.close();
+  core.info("Browser closed");
+}
+
+async function findOrDownloadChromium() {
+  core.info(`Target Chromium revision: ${CHROMIUM_REVISION}`);
+
+  // Download and create cache if cache is not found
+  const cacheVersion = `0.0.${CHROMIUM_REVISION}`;
+  let cachedPath = tc.find("chromium", cacheVersion);
+  if (cachedPath) {
+    core.info("Using cached Chromium");
+  } else {
+    core.info(`Chromium cache not found; Downloading`);
+    const downloadPath = path.resolve(__dirname, "tmp");
+    const browserFetcher = new puppeteer.BrowserFetcher({
+      path: downloadPath,
+    });
+    const revisionInfo = await browserFetcher.download(
+      CHROMIUM_REVISION,
+      (x, y) => {
+        core.debug(`Download progress: ${x}/${y}`);
+      }
+    );
+    core.info("Download finished!");
+
+    core.debug("Revision info: ", revisionInfo);
+
+    // Create symlink to launch the executable easily
+    await fs.symlink(
+      revisionInfo.executablePath,
+      path.join(revisionInfo.folderPath, "chromium")
+    );
+
+    cachedPath = await tc.cacheDir(
+      revisionInfo.folderPath,
+      "chromium",
+      cacheVersion
+    );
+  }
+
+  core.debug(`Cached path: ${cachedPath}`);
+
+  return path.join(cachedPath, "chromium");
+}
+
+const AsyncFunction = (async () => {}).constructor;
+
+async function callAsyncFunction(args, source) {
+  const fn = new AsyncFunction(...Object.keys(args), source);
+  return fn(...Object.values(args));
+}
+
+function handleError(error) {
+  console.error(error);
+  core.setFailed(error);
+}
+
+main().catch(handleError);
+process.on("unhandledRejection", handleError);
+
+
+/***/ }),
+
 /***/ 1269:
 /***/ ((module) => {
 
@@ -27677,6 +30753,52 @@ module.exports = eval("require")("supports-color");
 
 module.exports = eval("require")("utf-8-validate");
 
+
+/***/ }),
+
+/***/ 5387:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+// TODO: consolidate on using a helpers file at some point in the future, which
+// is the approach currently used to export Parser and applyExtends for ESM:
+const {applyExtends, cjsPlatformShim, Parser, Yargs, processArgv} = __nccwpck_require__(9562)
+Yargs.applyExtends = (config, cwd, mergeExtends) => {
+  return applyExtends(config, cwd, mergeExtends, cjsPlatformShim)
+}
+Yargs.hideBin = processArgv.hideBin
+Yargs.Parser = Parser
+module.exports = Yargs
+
+
+/***/ }),
+
+/***/ 5670:
+/***/ ((module) => {
+
+function webpackEmptyContext(req) {
+	var e = new Error("Cannot find module '" + req + "'");
+	e.code = 'MODULE_NOT_FOUND';
+	throw e;
+}
+webpackEmptyContext.keys = () => ([]);
+webpackEmptyContext.resolve = webpackEmptyContext;
+webpackEmptyContext.id = 5670;
+module.exports = webpackEmptyContext;
+
+/***/ }),
+
+/***/ 9167:
+/***/ ((module) => {
+
+function webpackEmptyContext(req) {
+	var e = new Error("Cannot find module '" + req + "'");
+	e.code = 'MODULE_NOT_FOUND';
+	throw e;
+}
+webpackEmptyContext.keys = () => ([]);
+webpackEmptyContext.resolve = webpackEmptyContext;
+webpackEmptyContext.id = 9167;
+module.exports = webpackEmptyContext;
 
 /***/ }),
 
@@ -27784,6 +30906,14 @@ module.exports = require("path");
 
 /***/ }),
 
+/***/ 7282:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("process");
+
+/***/ }),
+
 /***/ 5477:
 /***/ ((module) => {
 
@@ -27861,6 +30991,2185 @@ module.exports = require("util");
 
 "use strict";
 module.exports = require("zlib");
+
+/***/ }),
+
+/***/ 7971:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+var _CLI_instances, _CLI_cachePath, _CLI_rl, _CLI_defineBrowserParameter, _CLI_definePlatformParameter, _CLI_definePathParameter, _CLI_parseBrowser, _CLI_parseBuildId;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.makeProgressCallback = exports.CLI = void 0;
+const process_1 = __nccwpck_require__(7282);
+const readline = __importStar(__nccwpck_require__(4521));
+const progress_1 = __importDefault(__nccwpck_require__(892));
+const helpers_1 = __nccwpck_require__(6658);
+const yargs_1 = __importDefault(__nccwpck_require__(5387));
+const browser_data_js_1 = __nccwpck_require__(8914);
+const Cache_js_1 = __nccwpck_require__(7629);
+const detectPlatform_js_1 = __nccwpck_require__(2061);
+const install_js_1 = __nccwpck_require__(7108);
+const launch_js_1 = __nccwpck_require__(2178);
+/**
+ * @public
+ */
+class CLI {
+    constructor(cachePath = process.cwd(), rl) {
+        _CLI_instances.add(this);
+        _CLI_cachePath.set(this, void 0);
+        _CLI_rl.set(this, void 0);
+        __classPrivateFieldSet(this, _CLI_cachePath, cachePath, "f");
+        __classPrivateFieldSet(this, _CLI_rl, rl, "f");
+    }
+    async run(argv) {
+        const yargsInstance = (0, yargs_1.default)((0, helpers_1.hideBin)(argv));
+        await yargsInstance
+            .scriptName('@puppeteer/browsers')
+            .command('install <browser>', 'Download and install the specified browser. If successful, the command outputs the actual browser buildId that was installed and the absolute path to the browser executable (format: <browser>@<buildID> <path>).', yargs => {
+            __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_defineBrowserParameter).call(this, yargs);
+            __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_definePlatformParameter).call(this, yargs);
+            __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_definePathParameter).call(this, yargs);
+            yargs.option('base-url', {
+                type: 'string',
+                desc: 'Base URL to download from',
+            });
+            yargs.example('$0 install chrome', 'Install the latest available build of the Chrome browser.');
+            yargs.example('$0 install chrome@latest', 'Install the latest available build for the Chrome browser.');
+            yargs.example('$0 install chromium@1083080', 'Install the revision 1083080 of the Chromium browser.');
+            yargs.example('$0 install firefox', 'Install the latest available build of the Firefox browser.');
+            yargs.example('$0 install firefox --platform mac', 'Install the latest Mac (Intel) build of the Firefox browser.');
+            yargs.example('$0 install firefox --path /tmp/my-browser-cache', 'Install to the specified cache directory.');
+        }, async (argv) => {
+            var _a, _b, _c;
+            const args = argv;
+            (_a = args.platform) !== null && _a !== void 0 ? _a : (args.platform = (0, detectPlatform_js_1.detectBrowserPlatform)());
+            if (!args.platform) {
+                throw new Error(`Could not resolve the current platform`);
+            }
+            args.browser.buildId = await (0, browser_data_js_1.resolveBuildId)(args.browser.name, args.platform, args.browser.buildId);
+            await (0, install_js_1.install)({
+                browser: args.browser.name,
+                buildId: args.browser.buildId,
+                platform: args.platform,
+                cacheDir: (_b = args.path) !== null && _b !== void 0 ? _b : __classPrivateFieldGet(this, _CLI_cachePath, "f"),
+                downloadProgressCallback: makeProgressCallback(args.browser.name, args.browser.buildId),
+                baseUrl: args.baseUrl,
+            });
+            console.log(`${args.browser.name}@${args.browser.buildId} ${(0, launch_js_1.computeExecutablePath)({
+                browser: args.browser.name,
+                buildId: args.browser.buildId,
+                cacheDir: (_c = args.path) !== null && _c !== void 0 ? _c : __classPrivateFieldGet(this, _CLI_cachePath, "f"),
+                platform: args.platform,
+            })}`);
+        })
+            .command('launch <browser>', 'Launch the specified browser', yargs => {
+            __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_defineBrowserParameter).call(this, yargs);
+            __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_definePlatformParameter).call(this, yargs);
+            __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_definePathParameter).call(this, yargs);
+            yargs.option('detached', {
+                type: 'boolean',
+                desc: 'Detach the child process.',
+                default: false,
+            });
+            yargs.option('system', {
+                type: 'boolean',
+                desc: 'Search for a browser installed on the system instead of the cache folder.',
+                default: false,
+            });
+            yargs.example('$0 launch chrome@1083080', 'Launch the Chrome browser identified by the revision 1083080.');
+            yargs.example('$0 launch firefox@112.0a1', 'Launch the Firefox browser identified by the milestone 112.0a1.');
+            yargs.example('$0 launch chrome@1083080 --detached', 'Launch the browser but detach the sub-processes.');
+            yargs.example('$0 launch chrome@canary --system', 'Try to locate the Canary build of Chrome installed on the system and launch it.');
+        }, async (argv) => {
+            var _a;
+            const args = argv;
+            const executablePath = args.system
+                ? (0, launch_js_1.computeSystemExecutablePath)({
+                    browser: args.browser.name,
+                    // TODO: throw an error if not a ChromeReleaseChannel is provided.
+                    channel: args.browser.buildId,
+                    platform: args.platform,
+                })
+                : (0, launch_js_1.computeExecutablePath)({
+                    browser: args.browser.name,
+                    buildId: args.browser.buildId,
+                    cacheDir: (_a = args.path) !== null && _a !== void 0 ? _a : __classPrivateFieldGet(this, _CLI_cachePath, "f"),
+                    platform: args.platform,
+                });
+            (0, launch_js_1.launch)({
+                executablePath,
+                detached: args.detached,
+            });
+        })
+            .command('clear', 'Removes all installed browsers from the specified cache directory', yargs => {
+            __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_definePathParameter).call(this, yargs, true);
+        }, async (argv) => {
+            var _a, _b;
+            const args = argv;
+            const cacheDir = (_a = args.path) !== null && _a !== void 0 ? _a : __classPrivateFieldGet(this, _CLI_cachePath, "f");
+            const rl = (_b = __classPrivateFieldGet(this, _CLI_rl, "f")) !== null && _b !== void 0 ? _b : readline.createInterface({ input: process_1.stdin, output: process_1.stdout });
+            rl.question(`Do you want to permanently and recursively delete the content of ${cacheDir} (yes/No)? `, answer => {
+                rl.close();
+                if (!['y', 'yes'].includes(answer.toLowerCase().trim())) {
+                    console.log('Cancelled.');
+                    return;
+                }
+                const cache = new Cache_js_1.Cache(cacheDir);
+                cache.clear();
+                console.log(`${cacheDir} cleared.`);
+            });
+        })
+            .demandCommand(1)
+            .help()
+            .wrap(Math.min(120, yargsInstance.terminalWidth()))
+            .parse();
+    }
+}
+exports.CLI = CLI;
+_CLI_cachePath = new WeakMap(), _CLI_rl = new WeakMap(), _CLI_instances = new WeakSet(), _CLI_defineBrowserParameter = function _CLI_defineBrowserParameter(yargs) {
+    yargs.positional('browser', {
+        description: 'Which browser to install <browser>[@<buildId|latest>]. `latest` will try to find the latest available build. `buildId` is a browser-specific identifier such as a version or a revision.',
+        type: 'string',
+        coerce: (opt) => {
+            return {
+                name: __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_parseBrowser).call(this, opt),
+                buildId: __classPrivateFieldGet(this, _CLI_instances, "m", _CLI_parseBuildId).call(this, opt),
+            };
+        },
+    });
+}, _CLI_definePlatformParameter = function _CLI_definePlatformParameter(yargs) {
+    yargs.option('platform', {
+        type: 'string',
+        desc: 'Platform that the binary needs to be compatible with.',
+        choices: Object.values(browser_data_js_1.BrowserPlatform),
+        defaultDescription: 'Auto-detected',
+    });
+}, _CLI_definePathParameter = function _CLI_definePathParameter(yargs, required = false) {
+    yargs.option('path', {
+        type: 'string',
+        desc: 'Path to the root folder for the browser downloads and installation. The installation folder structure is compatible with the cache structure used by Puppeteer.',
+        defaultDescription: 'Current working directory',
+        ...(required ? {} : { default: process.cwd() }),
+    });
+    if (required) {
+        yargs.demandOption('path');
+    }
+}, _CLI_parseBrowser = function _CLI_parseBrowser(version) {
+    return version.split('@').shift();
+}, _CLI_parseBuildId = function _CLI_parseBuildId(version) {
+    var _a;
+    return (_a = version.split('@').pop()) !== null && _a !== void 0 ? _a : 'latest';
+};
+/**
+ * @public
+ */
+function makeProgressCallback(browser, buildId) {
+    let progressBar;
+    let lastDownloadedBytes = 0;
+    return (downloadedBytes, totalBytes) => {
+        if (!progressBar) {
+            progressBar = new progress_1.default(`Downloading ${browser} r${buildId} - ${toMegabytes(totalBytes)} [:bar] :percent :etas `, {
+                complete: '=',
+                incomplete: ' ',
+                width: 20,
+                total: totalBytes,
+            });
+        }
+        const delta = downloadedBytes - lastDownloadedBytes;
+        lastDownloadedBytes = downloadedBytes;
+        progressBar.tick(delta);
+    };
+}
+exports.makeProgressCallback = makeProgressCallback;
+function toMegabytes(bytes) {
+    const mb = bytes / 1000 / 1000;
+    return `${Math.round(mb * 10) / 10} MB`;
+}
+//# sourceMappingURL=CLI.js.map
+
+/***/ }),
+
+/***/ 7629:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+var _Cache_rootDir;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Cache = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const browser_data_js_1 = __nccwpck_require__(8914);
+/**
+ * The cache used by Puppeteer relies on the following structure:
+ *
+ * - rootDir
+ *   -- <browser1> | browserRoot(browser1)
+ *   ---- <platform>-<buildId> | installationDir()
+ *   ------ the browser-platform-buildId
+ *   ------ specific structure.
+ *   -- <browser2> | browserRoot(browser2)
+ *   ---- <platform>-<buildId> | installationDir()
+ *   ------ the browser-platform-buildId
+ *   ------ specific structure.
+ *   @internal
+ */
+class Cache {
+    constructor(rootDir) {
+        _Cache_rootDir.set(this, void 0);
+        __classPrivateFieldSet(this, _Cache_rootDir, rootDir, "f");
+    }
+    browserRoot(browser) {
+        // Chromium is a special case for backward compatibility: we install it in
+        // the Chrome folder so that Puppeteer can find it.
+        return path_1.default.join(__classPrivateFieldGet(this, _Cache_rootDir, "f"), browser === browser_data_js_1.Browser.CHROMIUM ? browser_data_js_1.Browser.CHROME : browser);
+    }
+    installationDir(browser, platform, buildId) {
+        return path_1.default.join(this.browserRoot(browser), `${platform}-${buildId}`);
+    }
+    clear() {
+        fs_1.default.rmSync(__classPrivateFieldGet(this, _Cache_rootDir, "f"), {
+            force: true,
+            recursive: true,
+            maxRetries: 10,
+            retryDelay: 500,
+        });
+    }
+    getInstalledBrowsers() {
+        if (!fs_1.default.existsSync(__classPrivateFieldGet(this, _Cache_rootDir, "f"))) {
+            return [];
+        }
+        const types = fs_1.default.readdirSync(__classPrivateFieldGet(this, _Cache_rootDir, "f"));
+        const browsers = types.filter((t) => {
+            return Object.values(browser_data_js_1.Browser).includes(t);
+        });
+        return browsers.flatMap(browser => {
+            const files = fs_1.default.readdirSync(this.browserRoot(browser));
+            return files
+                .map(file => {
+                const result = parseFolderPath(path_1.default.join(this.browserRoot(browser), file));
+                if (!result) {
+                    return null;
+                }
+                return {
+                    path: path_1.default.join(this.browserRoot(browser), file),
+                    browser,
+                    platform: result.platform,
+                    buildId: result.buildId,
+                };
+            })
+                .filter((item) => {
+                return item !== null;
+            });
+        });
+    }
+}
+exports.Cache = Cache;
+_Cache_rootDir = new WeakMap();
+function parseFolderPath(folderPath) {
+    const name = path_1.default.basename(folderPath);
+    const splits = name.split('-');
+    if (splits.length !== 2) {
+        return;
+    }
+    const [platform, buildId] = splits;
+    if (!buildId || !platform) {
+        return;
+    }
+    return { platform, buildId };
+}
+//# sourceMappingURL=Cache.js.map
+
+/***/ }),
+
+/***/ 8914:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveSystemExecutablePath = exports.createProfile = exports.resolveBuildId = exports.ChromeReleaseChannel = exports.BrowserPlatform = exports.Browser = exports.executablePathByBrowser = exports.downloadPaths = exports.downloadUrls = void 0;
+const chrome = __importStar(__nccwpck_require__(6619));
+const chromedriver = __importStar(__nccwpck_require__(6433));
+const chromium = __importStar(__nccwpck_require__(4688));
+const firefox = __importStar(__nccwpck_require__(8580));
+const types_js_1 = __nccwpck_require__(9290);
+Object.defineProperty(exports, "Browser", ({ enumerable: true, get: function () { return types_js_1.Browser; } }));
+Object.defineProperty(exports, "BrowserPlatform", ({ enumerable: true, get: function () { return types_js_1.BrowserPlatform; } }));
+Object.defineProperty(exports, "ChromeReleaseChannel", ({ enumerable: true, get: function () { return types_js_1.ChromeReleaseChannel; } }));
+exports.downloadUrls = {
+    [types_js_1.Browser.CHROMEDRIVER]: chromedriver.resolveDownloadUrl,
+    [types_js_1.Browser.CHROME]: chrome.resolveDownloadUrl,
+    [types_js_1.Browser.CHROMIUM]: chromium.resolveDownloadUrl,
+    [types_js_1.Browser.FIREFOX]: firefox.resolveDownloadUrl,
+};
+exports.downloadPaths = {
+    [types_js_1.Browser.CHROMEDRIVER]: chromedriver.resolveDownloadPath,
+    [types_js_1.Browser.CHROME]: chrome.resolveDownloadPath,
+    [types_js_1.Browser.CHROMIUM]: chromium.resolveDownloadPath,
+    [types_js_1.Browser.FIREFOX]: firefox.resolveDownloadPath,
+};
+exports.executablePathByBrowser = {
+    [types_js_1.Browser.CHROMEDRIVER]: chromedriver.relativeExecutablePath,
+    [types_js_1.Browser.CHROME]: chrome.relativeExecutablePath,
+    [types_js_1.Browser.CHROMIUM]: chromium.relativeExecutablePath,
+    [types_js_1.Browser.FIREFOX]: firefox.relativeExecutablePath,
+};
+/**
+ * @public
+ */
+async function resolveBuildId(browser, platform, tag) {
+    switch (browser) {
+        case types_js_1.Browser.FIREFOX:
+            switch (tag) {
+                case types_js_1.BrowserTag.LATEST:
+                    return await firefox.resolveBuildId('FIREFOX_NIGHTLY');
+            }
+        case types_js_1.Browser.CHROME:
+            switch (tag) {
+                case types_js_1.BrowserTag.LATEST:
+                    // In CfT beta is the latest version.
+                    return await chrome.resolveBuildId(platform, 'beta');
+            }
+        case types_js_1.Browser.CHROMEDRIVER:
+            switch (tag) {
+                case types_js_1.BrowserTag.LATEST:
+                    return await chromedriver.resolveBuildId('latest');
+            }
+        case types_js_1.Browser.CHROMIUM:
+            switch (tag) {
+                case types_js_1.BrowserTag.LATEST:
+                    return await chromium.resolveBuildId(platform, 'latest');
+            }
+    }
+    // We assume the tag is the buildId if it didn't match any keywords.
+    return tag;
+}
+exports.resolveBuildId = resolveBuildId;
+/**
+ * @public
+ */
+async function createProfile(browser, opts) {
+    switch (browser) {
+        case types_js_1.Browser.FIREFOX:
+            return await firefox.createProfile(opts);
+        case types_js_1.Browser.CHROME:
+        case types_js_1.Browser.CHROMIUM:
+            throw new Error(`Profile creation is not support for ${browser} yet`);
+    }
+}
+exports.createProfile = createProfile;
+/**
+ * @public
+ */
+function resolveSystemExecutablePath(browser, platform, channel) {
+    switch (browser) {
+        case types_js_1.Browser.CHROMEDRIVER:
+        case types_js_1.Browser.FIREFOX:
+            throw new Error(`System browser detection is not supported for ${browser} yet.`);
+        case types_js_1.Browser.CHROME:
+            return chromium.resolveSystemExecutablePath(platform, channel);
+        case types_js_1.Browser.CHROMIUM:
+            return chrome.resolveSystemExecutablePath(platform, channel);
+    }
+}
+exports.resolveSystemExecutablePath = resolveSystemExecutablePath;
+//# sourceMappingURL=browser-data.js.map
+
+/***/ }),
+
+/***/ 6619:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveSystemExecutablePath = exports.resolveBuildId = exports.relativeExecutablePath = exports.resolveDownloadPath = exports.resolveDownloadUrl = void 0;
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const httpUtil_js_1 = __nccwpck_require__(8021);
+const types_js_1 = __nccwpck_require__(9290);
+function folder(platform) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.LINUX:
+            return 'linux64';
+        case types_js_1.BrowserPlatform.MAC_ARM:
+            return 'mac-arm64';
+        case types_js_1.BrowserPlatform.MAC:
+            return 'mac-x64';
+        case types_js_1.BrowserPlatform.WIN32:
+            return 'win32';
+        case types_js_1.BrowserPlatform.WIN64:
+            return 'win64';
+    }
+}
+function chromiumDashPlatform(platform) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.LINUX:
+            return 'linux';
+        case types_js_1.BrowserPlatform.MAC_ARM:
+            return 'mac';
+        case types_js_1.BrowserPlatform.MAC:
+            return 'mac';
+        case types_js_1.BrowserPlatform.WIN32:
+            return 'win';
+        case types_js_1.BrowserPlatform.WIN64:
+            return 'win64';
+    }
+}
+function resolveDownloadUrl(platform, buildId, baseUrl = 'https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing') {
+    return `${baseUrl}/${resolveDownloadPath(platform, buildId).join('/')}`;
+}
+exports.resolveDownloadUrl = resolveDownloadUrl;
+function resolveDownloadPath(platform, buildId) {
+    return [buildId, folder(platform), `chrome-${folder(platform)}.zip`];
+}
+exports.resolveDownloadPath = resolveDownloadPath;
+function relativeExecutablePath(platform, _buildId) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.MAC:
+        case types_js_1.BrowserPlatform.MAC_ARM:
+            return path_1.default.join('chrome-' + folder(platform), 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
+        case types_js_1.BrowserPlatform.LINUX:
+            return path_1.default.join('chrome-linux64', 'chrome');
+        case types_js_1.BrowserPlatform.WIN32:
+        case types_js_1.BrowserPlatform.WIN64:
+            return path_1.default.join('chrome-' + folder(platform), 'chrome.exe');
+    }
+}
+exports.relativeExecutablePath = relativeExecutablePath;
+async function resolveBuildId(platform, channel = 'beta') {
+    return new Promise((resolve, reject) => {
+        const request = (0, httpUtil_js_1.httpRequest)(new URL(`https://chromiumdash.appspot.com/fetch_releases?platform=${chromiumDashPlatform(platform)}&channel=${channel}`), 'GET', response => {
+            let data = '';
+            if (response.statusCode && response.statusCode >= 400) {
+                return reject(new Error(`Got status code ${response.statusCode}`));
+            }
+            response.on('data', chunk => {
+                data += chunk;
+            });
+            response.on('end', () => {
+                try {
+                    const response = JSON.parse(String(data));
+                    return resolve(response[0].version);
+                }
+                catch {
+                    return reject(new Error('Chrome version not found'));
+                }
+            });
+        }, false);
+        request.on('error', err => {
+            reject(err);
+        });
+    });
+}
+exports.resolveBuildId = resolveBuildId;
+function resolveSystemExecutablePath(platform, channel) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.WIN64:
+        case types_js_1.BrowserPlatform.WIN32:
+            switch (channel) {
+                case types_js_1.ChromeReleaseChannel.STABLE:
+                    return `${process.env['PROGRAMFILES']}\\Google\\Chrome\\Application\\chrome.exe`;
+                case types_js_1.ChromeReleaseChannel.BETA:
+                    return `${process.env['PROGRAMFILES']}\\Google\\Chrome Beta\\Application\\chrome.exe`;
+                case types_js_1.ChromeReleaseChannel.CANARY:
+                    return `${process.env['PROGRAMFILES']}\\Google\\Chrome SxS\\Application\\chrome.exe`;
+                case types_js_1.ChromeReleaseChannel.DEV:
+                    return `${process.env['PROGRAMFILES']}\\Google\\Chrome Dev\\Application\\chrome.exe`;
+            }
+        case types_js_1.BrowserPlatform.MAC_ARM:
+        case types_js_1.BrowserPlatform.MAC:
+            switch (channel) {
+                case types_js_1.ChromeReleaseChannel.STABLE:
+                    return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+                case types_js_1.ChromeReleaseChannel.BETA:
+                    return '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta';
+                case types_js_1.ChromeReleaseChannel.CANARY:
+                    return '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary';
+                case types_js_1.ChromeReleaseChannel.DEV:
+                    return '/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev';
+            }
+        case types_js_1.BrowserPlatform.LINUX:
+            switch (channel) {
+                case types_js_1.ChromeReleaseChannel.STABLE:
+                    return '/opt/google/chrome/chrome';
+                case types_js_1.ChromeReleaseChannel.BETA:
+                    return '/opt/google/chrome-beta/chrome';
+                case types_js_1.ChromeReleaseChannel.DEV:
+                    return '/opt/google/chrome-unstable/chrome';
+            }
+    }
+    throw new Error(`Unable to detect browser executable path for '${channel}' on ${platform}.`);
+}
+exports.resolveSystemExecutablePath = resolveSystemExecutablePath;
+//# sourceMappingURL=chrome.js.map
+
+/***/ }),
+
+/***/ 6433:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveBuildId = exports.relativeExecutablePath = exports.resolveDownloadPath = exports.resolveDownloadUrl = void 0;
+const httpUtil_js_1 = __nccwpck_require__(8021);
+const types_js_1 = __nccwpck_require__(9290);
+function archive(platform) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.LINUX:
+            return 'chromedriver_linux64';
+        case types_js_1.BrowserPlatform.MAC_ARM:
+            return 'chromedriver_mac_arm64';
+        case types_js_1.BrowserPlatform.MAC:
+            return 'chromedriver_mac64';
+        case types_js_1.BrowserPlatform.WIN32:
+        case types_js_1.BrowserPlatform.WIN64:
+            return 'chromedriver_win32';
+    }
+}
+function resolveDownloadUrl(platform, buildId, baseUrl = 'https://chromedriver.storage.googleapis.com') {
+    return `${baseUrl}/${resolveDownloadPath(platform, buildId).join('/')}`;
+}
+exports.resolveDownloadUrl = resolveDownloadUrl;
+function resolveDownloadPath(platform, buildId) {
+    return [buildId, `${archive(platform)}.zip`];
+}
+exports.resolveDownloadPath = resolveDownloadPath;
+function relativeExecutablePath(platform, _buildId) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.MAC:
+        case types_js_1.BrowserPlatform.MAC_ARM:
+        case types_js_1.BrowserPlatform.LINUX:
+            return 'chromedriver';
+        case types_js_1.BrowserPlatform.WIN32:
+        case types_js_1.BrowserPlatform.WIN64:
+            return 'chromedriver.exe';
+    }
+}
+exports.relativeExecutablePath = relativeExecutablePath;
+async function resolveBuildId(_channel = 'latest') {
+    return new Promise((resolve, reject) => {
+        const request = (0, httpUtil_js_1.httpRequest)(new URL(`https://chromedriver.storage.googleapis.com/LATEST_RELEASE`), 'GET', response => {
+            let data = '';
+            if (response.statusCode && response.statusCode >= 400) {
+                return reject(new Error(`Got status code ${response.statusCode}`));
+            }
+            response.on('data', chunk => {
+                data += chunk;
+            });
+            response.on('end', () => {
+                try {
+                    return resolve(String(data));
+                }
+                catch {
+                    return reject(new Error('Chrome version not found'));
+                }
+            });
+        }, false);
+        request.on('error', err => {
+            reject(err);
+        });
+    });
+}
+exports.resolveBuildId = resolveBuildId;
+//# sourceMappingURL=chromedriver.js.map
+
+/***/ }),
+
+/***/ 4688:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveBuildId = exports.relativeExecutablePath = exports.resolveDownloadPath = exports.resolveDownloadUrl = exports.resolveSystemExecutablePath = void 0;
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const httpUtil_js_1 = __nccwpck_require__(8021);
+const types_js_1 = __nccwpck_require__(9290);
+var chrome_js_1 = __nccwpck_require__(6619);
+Object.defineProperty(exports, "resolveSystemExecutablePath", ({ enumerable: true, get: function () { return chrome_js_1.resolveSystemExecutablePath; } }));
+function archive(platform, buildId) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.LINUX:
+            return 'chrome-linux';
+        case types_js_1.BrowserPlatform.MAC_ARM:
+        case types_js_1.BrowserPlatform.MAC:
+            return 'chrome-mac';
+        case types_js_1.BrowserPlatform.WIN32:
+        case types_js_1.BrowserPlatform.WIN64:
+            // Windows archive name changed at r591479.
+            return parseInt(buildId, 10) > 591479 ? 'chrome-win' : 'chrome-win32';
+    }
+}
+function folder(platform) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.LINUX:
+            return 'Linux_x64';
+        case types_js_1.BrowserPlatform.MAC_ARM:
+            return 'Mac_Arm';
+        case types_js_1.BrowserPlatform.MAC:
+            return 'Mac';
+        case types_js_1.BrowserPlatform.WIN32:
+            return 'Win';
+        case types_js_1.BrowserPlatform.WIN64:
+            return 'Win_x64';
+    }
+}
+function resolveDownloadUrl(platform, buildId, baseUrl = 'https://storage.googleapis.com/chromium-browser-snapshots') {
+    return `${baseUrl}/${resolveDownloadPath(platform, buildId).join('/')}`;
+}
+exports.resolveDownloadUrl = resolveDownloadUrl;
+function resolveDownloadPath(platform, buildId) {
+    return [folder(platform), buildId, `${archive(platform, buildId)}.zip`];
+}
+exports.resolveDownloadPath = resolveDownloadPath;
+function relativeExecutablePath(platform, _buildId) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.MAC:
+        case types_js_1.BrowserPlatform.MAC_ARM:
+            return path_1.default.join('chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium');
+        case types_js_1.BrowserPlatform.LINUX:
+            return path_1.default.join('chrome-linux', 'chrome');
+        case types_js_1.BrowserPlatform.WIN32:
+        case types_js_1.BrowserPlatform.WIN64:
+            return path_1.default.join('chrome-win', 'chrome.exe');
+    }
+}
+exports.relativeExecutablePath = relativeExecutablePath;
+async function resolveBuildId(platform, 
+// We will need it for other channels/keywords.
+_channel = 'latest') {
+    return new Promise((resolve, reject) => {
+        const request = (0, httpUtil_js_1.httpRequest)(new URL(`https://storage.googleapis.com/chromium-browser-snapshots/${folder(platform)}/LAST_CHANGE`), 'GET', response => {
+            let data = '';
+            if (response.statusCode && response.statusCode >= 400) {
+                return reject(new Error(`Got status code ${response.statusCode}`));
+            }
+            response.on('data', chunk => {
+                data += chunk;
+            });
+            response.on('end', () => {
+                try {
+                    return resolve(String(data));
+                }
+                catch {
+                    return reject(new Error('Chrome version not found'));
+                }
+            });
+        }, false);
+        request.on('error', err => {
+            reject(err);
+        });
+    });
+}
+exports.resolveBuildId = resolveBuildId;
+//# sourceMappingURL=chromium.js.map
+
+/***/ }),
+
+/***/ 8580:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createProfile = exports.resolveBuildId = exports.relativeExecutablePath = exports.resolveDownloadPath = exports.resolveDownloadUrl = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const httpUtil_js_1 = __nccwpck_require__(8021);
+const types_js_1 = __nccwpck_require__(9290);
+function archive(platform, buildId) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.LINUX:
+            return `firefox-${buildId}.en-US.${platform}-x86_64.tar.bz2`;
+        case types_js_1.BrowserPlatform.MAC_ARM:
+        case types_js_1.BrowserPlatform.MAC:
+            return `firefox-${buildId}.en-US.mac.dmg`;
+        case types_js_1.BrowserPlatform.WIN32:
+        case types_js_1.BrowserPlatform.WIN64:
+            return `firefox-${buildId}.en-US.${platform}.zip`;
+    }
+}
+function resolveDownloadUrl(platform, buildId, baseUrl = 'https://archive.mozilla.org/pub/firefox/nightly/latest-mozilla-central') {
+    return `${baseUrl}/${resolveDownloadPath(platform, buildId).join('/')}`;
+}
+exports.resolveDownloadUrl = resolveDownloadUrl;
+function resolveDownloadPath(platform, buildId) {
+    return [archive(platform, buildId)];
+}
+exports.resolveDownloadPath = resolveDownloadPath;
+function relativeExecutablePath(platform, _buildId) {
+    switch (platform) {
+        case types_js_1.BrowserPlatform.MAC_ARM:
+        case types_js_1.BrowserPlatform.MAC:
+            return path_1.default.join('Firefox Nightly.app', 'Contents', 'MacOS', 'firefox');
+        case types_js_1.BrowserPlatform.LINUX:
+            return path_1.default.join('firefox', 'firefox');
+        case types_js_1.BrowserPlatform.WIN32:
+        case types_js_1.BrowserPlatform.WIN64:
+            return path_1.default.join('firefox', 'firefox.exe');
+    }
+}
+exports.relativeExecutablePath = relativeExecutablePath;
+async function resolveBuildId(channel = 'FIREFOX_NIGHTLY') {
+    return new Promise((resolve, reject) => {
+        const request = (0, httpUtil_js_1.httpRequest)(new URL('https://product-details.mozilla.org/1.0/firefox_versions.json'), 'GET', response => {
+            let data = '';
+            if (response.statusCode && response.statusCode >= 400) {
+                return reject(new Error(`Got status code ${response.statusCode}`));
+            }
+            response.on('data', chunk => {
+                data += chunk;
+            });
+            response.on('end', () => {
+                try {
+                    const versions = JSON.parse(data);
+                    return resolve(versions[channel]);
+                }
+                catch {
+                    return reject(new Error('Firefox version not found'));
+                }
+            });
+        }, false);
+        request.on('error', err => {
+            reject(err);
+        });
+    });
+}
+exports.resolveBuildId = resolveBuildId;
+async function createProfile(options) {
+    if (!fs_1.default.existsSync(options.path)) {
+        await fs_1.default.promises.mkdir(options.path, {
+            recursive: true,
+        });
+    }
+    await writePreferences({
+        preferences: {
+            ...defaultProfilePreferences(options.preferences),
+            ...options.preferences,
+        },
+        path: options.path,
+    });
+}
+exports.createProfile = createProfile;
+function defaultProfilePreferences(extraPrefs) {
+    const server = 'dummy.test';
+    const defaultPrefs = {
+        // Make sure Shield doesn't hit the network.
+        'app.normandy.api_url': '',
+        // Disable Firefox old build background check
+        'app.update.checkInstallTime': false,
+        // Disable automatically upgrading Firefox
+        'app.update.disabledForTesting': true,
+        // Increase the APZ content response timeout to 1 minute
+        'apz.content_response_timeout': 60000,
+        // Prevent various error message on the console
+        // jest-puppeteer asserts that no error message is emitted by the console
+        'browser.contentblocking.features.standard': '-tp,tpPrivate,cookieBehavior0,-cm,-fp',
+        // Enable the dump function: which sends messages to the system
+        // console
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=1543115
+        'browser.dom.window.dump.enabled': true,
+        // Disable topstories
+        'browser.newtabpage.activity-stream.feeds.system.topstories': false,
+        // Always display a blank page
+        'browser.newtabpage.enabled': false,
+        // Background thumbnails in particular cause grief: and disabling
+        // thumbnails in general cannot hurt
+        'browser.pagethumbnails.capturing_disabled': true,
+        // Disable safebrowsing components.
+        'browser.safebrowsing.blockedURIs.enabled': false,
+        'browser.safebrowsing.downloads.enabled': false,
+        'browser.safebrowsing.malware.enabled': false,
+        'browser.safebrowsing.passwords.enabled': false,
+        'browser.safebrowsing.phishing.enabled': false,
+        // Disable updates to search engines.
+        'browser.search.update': false,
+        // Do not restore the last open set of tabs if the browser has crashed
+        'browser.sessionstore.resume_from_crash': false,
+        // Skip check for default browser on startup
+        'browser.shell.checkDefaultBrowser': false,
+        // Disable newtabpage
+        'browser.startup.homepage': 'about:blank',
+        // Do not redirect user when a milstone upgrade of Firefox is detected
+        'browser.startup.homepage_override.mstone': 'ignore',
+        // Start with a blank page about:blank
+        'browser.startup.page': 0,
+        // Do not allow background tabs to be zombified on Android: otherwise for
+        // tests that open additional tabs: the test harness tab itself might get
+        // unloaded
+        'browser.tabs.disableBackgroundZombification': false,
+        // Do not warn when closing all other open tabs
+        'browser.tabs.warnOnCloseOtherTabs': false,
+        // Do not warn when multiple tabs will be opened
+        'browser.tabs.warnOnOpen': false,
+        // Disable the UI tour.
+        'browser.uitour.enabled': false,
+        // Turn off search suggestions in the location bar so as not to trigger
+        // network connections.
+        'browser.urlbar.suggest.searches': false,
+        // Disable first run splash page on Windows 10
+        'browser.usedOnWindows10.introURL': '',
+        // Do not warn on quitting Firefox
+        'browser.warnOnQuit': false,
+        // Defensively disable data reporting systems
+        'datareporting.healthreport.documentServerURI': `http://${server}/dummy/healthreport/`,
+        'datareporting.healthreport.logging.consoleEnabled': false,
+        'datareporting.healthreport.service.enabled': false,
+        'datareporting.healthreport.service.firstRun': false,
+        'datareporting.healthreport.uploadEnabled': false,
+        // Do not show datareporting policy notifications which can interfere with tests
+        'datareporting.policy.dataSubmissionEnabled': false,
+        'datareporting.policy.dataSubmissionPolicyBypassNotification': true,
+        // DevTools JSONViewer sometimes fails to load dependencies with its require.js.
+        // This doesn't affect Puppeteer but spams console (Bug 1424372)
+        'devtools.jsonview.enabled': false,
+        // Disable popup-blocker
+        'dom.disable_open_during_load': false,
+        // Enable the support for File object creation in the content process
+        // Required for |Page.setFileInputFiles| protocol method.
+        'dom.file.createInChild': true,
+        // Disable the ProcessHangMonitor
+        'dom.ipc.reportProcessHangs': false,
+        // Disable slow script dialogues
+        'dom.max_chrome_script_run_time': 0,
+        'dom.max_script_run_time': 0,
+        // Only load extensions from the application and user profile
+        // AddonManager.SCOPE_PROFILE + AddonManager.SCOPE_APPLICATION
+        'extensions.autoDisableScopes': 0,
+        'extensions.enabledScopes': 5,
+        // Disable metadata caching for installed add-ons by default
+        'extensions.getAddons.cache.enabled': false,
+        // Disable installing any distribution extensions or add-ons.
+        'extensions.installDistroAddons': false,
+        // Disabled screenshots extension
+        'extensions.screenshots.disabled': true,
+        // Turn off extension updates so they do not bother tests
+        'extensions.update.enabled': false,
+        // Turn off extension updates so they do not bother tests
+        'extensions.update.notifyUser': false,
+        // Make sure opening about:addons will not hit the network
+        'extensions.webservice.discoverURL': `http://${server}/dummy/discoveryURL`,
+        // Temporarily force disable BFCache in parent (https://bit.ly/bug-1732263)
+        'fission.bfcacheInParent': false,
+        // Force all web content to use a single content process
+        'fission.webContentIsolationStrategy': 0,
+        // Allow the application to have focus even it runs in the background
+        'focusmanager.testmode': true,
+        // Disable useragent updates
+        'general.useragent.updates.enabled': false,
+        // Always use network provider for geolocation tests so we bypass the
+        // macOS dialog raised by the corelocation provider
+        'geo.provider.testing': true,
+        // Do not scan Wifi
+        'geo.wifi.scan': false,
+        // No hang monitor
+        'hangmonitor.timeout': 0,
+        // Show chrome errors and warnings in the error console
+        'javascript.options.showInConsole': true,
+        // Disable download and usage of OpenH264: and Widevine plugins
+        'media.gmp-manager.updateEnabled': false,
+        // Prevent various error message on the console
+        // jest-puppeteer asserts that no error message is emitted by the console
+        'network.cookie.cookieBehavior': 0,
+        // Disable experimental feature that is only available in Nightly
+        'network.cookie.sameSite.laxByDefault': false,
+        // Do not prompt for temporary redirects
+        'network.http.prompt-temp-redirect': false,
+        // Disable speculative connections so they are not reported as leaking
+        // when they are hanging around
+        'network.http.speculative-parallel-limit': 0,
+        // Do not automatically switch between offline and online
+        'network.manage-offline-status': false,
+        // Make sure SNTP requests do not hit the network
+        'network.sntp.pools': server,
+        // Disable Flash.
+        'plugin.state.flash': 0,
+        'privacy.trackingprotection.enabled': false,
+        // Can be removed once Firefox 89 is no longer supported
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=1710839
+        'remote.enabled': true,
+        // Don't do network connections for mitm priming
+        'security.certerrors.mitm.priming.enabled': false,
+        // Local documents have access to all other local documents,
+        // including directory listings
+        'security.fileuri.strict_origin_policy': false,
+        // Do not wait for the notification button security delay
+        'security.notification_enable_delay': 0,
+        // Ensure blocklist updates do not hit the network
+        'services.settings.server': `http://${server}/dummy/blocklist/`,
+        // Do not automatically fill sign-in forms with known usernames and
+        // passwords
+        'signon.autofillForms': false,
+        // Disable password capture, so that tests that include forms are not
+        // influenced by the presence of the persistent doorhanger notification
+        'signon.rememberSignons': false,
+        // Disable first-run welcome page
+        'startup.homepage_welcome_url': 'about:blank',
+        // Disable first-run welcome page
+        'startup.homepage_welcome_url.additional': '',
+        // Disable browser animations (tabs, fullscreen, sliding alerts)
+        'toolkit.cosmeticAnimations.enabled': false,
+        // Prevent starting into safe mode after application crashes
+        'toolkit.startup.max_resumed_crashes': -1,
+    };
+    return Object.assign(defaultPrefs, extraPrefs);
+}
+/**
+ * Populates the user.js file with custom preferences as needed to allow
+ * Firefox's CDP support to properly function. These preferences will be
+ * automatically copied over to prefs.js during startup of Firefox. To be
+ * able to restore the original values of preferences a backup of prefs.js
+ * will be created.
+ *
+ * @param prefs - List of preferences to add.
+ * @param profilePath - Firefox profile to write the preferences to.
+ */
+async function writePreferences(options) {
+    const lines = Object.entries(options.preferences).map(([key, value]) => {
+        return `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`;
+    });
+    await fs_1.default.promises.writeFile(path_1.default.join(options.path, 'user.js'), lines.join('\n'));
+    // Create a backup of the preferences file if it already exitsts.
+    const prefsPath = path_1.default.join(options.path, 'prefs.js');
+    if (fs_1.default.existsSync(prefsPath)) {
+        const prefsBackupPath = path_1.default.join(options.path, 'prefs.js.puppeteer');
+        await fs_1.default.promises.copyFile(prefsPath, prefsBackupPath);
+    }
+}
+//# sourceMappingURL=firefox.js.map
+
+/***/ }),
+
+/***/ 9290:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ChromeReleaseChannel = exports.BrowserTag = exports.downloadUrls = exports.BrowserPlatform = exports.Browser = void 0;
+const chrome = __importStar(__nccwpck_require__(6619));
+const firefox = __importStar(__nccwpck_require__(8580));
+/**
+ * Supported browsers.
+ *
+ * @public
+ */
+var Browser;
+(function (Browser) {
+    Browser["CHROME"] = "chrome";
+    Browser["CHROMIUM"] = "chromium";
+    Browser["FIREFOX"] = "firefox";
+    Browser["CHROMEDRIVER"] = "chromedriver";
+})(Browser = exports.Browser || (exports.Browser = {}));
+/**
+ * Platform names used to identify a OS platfrom x architecture combination in the way
+ * that is relevant for the browser download.
+ *
+ * @public
+ */
+var BrowserPlatform;
+(function (BrowserPlatform) {
+    BrowserPlatform["LINUX"] = "linux";
+    BrowserPlatform["MAC"] = "mac";
+    BrowserPlatform["MAC_ARM"] = "mac_arm";
+    BrowserPlatform["WIN32"] = "win32";
+    BrowserPlatform["WIN64"] = "win64";
+})(BrowserPlatform = exports.BrowserPlatform || (exports.BrowserPlatform = {}));
+exports.downloadUrls = {
+    [Browser.CHROME]: chrome.resolveDownloadUrl,
+    [Browser.CHROMIUM]: chrome.resolveDownloadUrl,
+    [Browser.FIREFOX]: firefox.resolveDownloadUrl,
+};
+/**
+ * @public
+ */
+var BrowserTag;
+(function (BrowserTag) {
+    BrowserTag["LATEST"] = "latest";
+})(BrowserTag = exports.BrowserTag || (exports.BrowserTag = {}));
+/**
+ * @public
+ */
+var ChromeReleaseChannel;
+(function (ChromeReleaseChannel) {
+    ChromeReleaseChannel["STABLE"] = "stable";
+    ChromeReleaseChannel["DEV"] = "dev";
+    ChromeReleaseChannel["CANARY"] = "canary";
+    ChromeReleaseChannel["BETA"] = "beta";
+})(ChromeReleaseChannel = exports.ChromeReleaseChannel || (exports.ChromeReleaseChannel = {}));
+//# sourceMappingURL=types.js.map
+
+/***/ }),
+
+/***/ 8963:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.debug = void 0;
+const debug_1 = __importDefault(__nccwpck_require__(8237));
+exports.debug = debug_1.default;
+//# sourceMappingURL=debug.js.map
+
+/***/ }),
+
+/***/ 2061:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectBrowserPlatform = void 0;
+const os_1 = __importDefault(__nccwpck_require__(2037));
+const browser_data_js_1 = __nccwpck_require__(8914);
+/**
+ * @public
+ */
+function detectBrowserPlatform() {
+    const platform = os_1.default.platform();
+    switch (platform) {
+        case 'darwin':
+            return os_1.default.arch() === 'arm64'
+                ? browser_data_js_1.BrowserPlatform.MAC_ARM
+                : browser_data_js_1.BrowserPlatform.MAC;
+        case 'linux':
+            return browser_data_js_1.BrowserPlatform.LINUX;
+        case 'win32':
+            return os_1.default.arch() === 'x64' ||
+                // Windows 11 for ARM supports x64 emulation
+                (os_1.default.arch() === 'arm64' && isWindows11(os_1.default.release()))
+                ? browser_data_js_1.BrowserPlatform.WIN64
+                : browser_data_js_1.BrowserPlatform.WIN32;
+        default:
+            return undefined;
+    }
+}
+exports.detectBrowserPlatform = detectBrowserPlatform;
+/**
+ * Windows 11 is identified by the version 10.0.22000 or greater
+ * @internal
+ */
+function isWindows11(version) {
+    const parts = version.split('.');
+    if (parts.length > 2) {
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        const patch = parseInt(parts[2], 10);
+        return (major > 10 ||
+            (major === 10 && minor > 0) ||
+            (major === 10 && minor === 0 && patch >= 22000));
+    }
+    return false;
+}
+//# sourceMappingURL=detectPlatform.js.map
+
+/***/ }),
+
+/***/ 1973:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.unpackArchive = void 0;
+const child_process_1 = __nccwpck_require__(2081);
+const fs_1 = __nccwpck_require__(7147);
+const promises_1 = __nccwpck_require__(3292);
+const path = __importStar(__nccwpck_require__(1017));
+const util_1 = __nccwpck_require__(3837);
+const extract_zip_1 = __importDefault(__nccwpck_require__(460));
+const tar_fs_1 = __importDefault(__nccwpck_require__(366));
+const unbzip2_stream_1 = __importDefault(__nccwpck_require__(3467));
+const exec = (0, util_1.promisify)(child_process_1.exec);
+/**
+ * @internal
+ */
+async function unpackArchive(archivePath, folderPath) {
+    if (archivePath.endsWith('.zip')) {
+        await (0, extract_zip_1.default)(archivePath, { dir: folderPath });
+    }
+    else if (archivePath.endsWith('.tar.bz2')) {
+        await extractTar(archivePath, folderPath);
+    }
+    else if (archivePath.endsWith('.dmg')) {
+        await (0, promises_1.mkdir)(folderPath);
+        await installDMG(archivePath, folderPath);
+    }
+    else {
+        throw new Error(`Unsupported archive format: ${archivePath}`);
+    }
+}
+exports.unpackArchive = unpackArchive;
+/**
+ * @internal
+ */
+function extractTar(tarPath, folderPath) {
+    return new Promise((fulfill, reject) => {
+        const tarStream = tar_fs_1.default.extract(folderPath);
+        tarStream.on('error', reject);
+        tarStream.on('finish', fulfill);
+        const readStream = (0, fs_1.createReadStream)(tarPath);
+        readStream.pipe((0, unbzip2_stream_1.default)()).pipe(tarStream);
+    });
+}
+/**
+ * @internal
+ */
+async function installDMG(dmgPath, folderPath) {
+    const { stdout } = await exec(`hdiutil attach -nobrowse -noautoopen "${dmgPath}"`);
+    const volumes = stdout.match(/\/Volumes\/(.*)/m);
+    if (!volumes) {
+        throw new Error(`Could not find volume path in ${stdout}`);
+    }
+    const mountPath = volumes[0];
+    try {
+        const fileNames = await (0, promises_1.readdir)(mountPath);
+        const appName = fileNames.find(item => {
+            return typeof item === 'string' && item.endsWith('.app');
+        });
+        if (!appName) {
+            throw new Error(`Cannot find app in ${mountPath}`);
+        }
+        const mountedPath = path.join(mountPath, appName);
+        await exec(`cp -R "${mountedPath}" "${folderPath}"`);
+    }
+    finally {
+        await exec(`hdiutil detach "${mountPath}" -quiet`);
+    }
+}
+//# sourceMappingURL=fileUtil.js.map
+
+/***/ }),
+
+/***/ 8021:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.downloadFile = exports.httpRequest = exports.headHttpRequest = void 0;
+const fs_1 = __nccwpck_require__(7147);
+const http = __importStar(__nccwpck_require__(3685));
+const https = __importStar(__nccwpck_require__(5687));
+const url_1 = __nccwpck_require__(7310);
+const https_proxy_agent_1 = __importDefault(__nccwpck_require__(7219));
+const proxy_from_env_1 = __nccwpck_require__(3329);
+function headHttpRequest(url) {
+    return new Promise(resolve => {
+        const request = httpRequest(url, 'HEAD', response => {
+            resolve(response.statusCode === 200);
+        }, false);
+        request.on('error', () => {
+            resolve(false);
+        });
+    });
+}
+exports.headHttpRequest = headHttpRequest;
+function httpRequest(url, method, response, keepAlive = true) {
+    const options = {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        method,
+        headers: keepAlive ? { Connection: 'keep-alive' } : undefined,
+    };
+    const proxyURL = (0, proxy_from_env_1.getProxyForUrl)(url.toString());
+    if (proxyURL) {
+        const proxy = new url_1.URL(proxyURL);
+        if (proxy.protocol === 'http:') {
+            options.path = url.href;
+            options.hostname = proxy.hostname;
+            options.protocol = proxy.protocol;
+            options.port = proxy.port;
+        }
+        else {
+            options.agent = (0, https_proxy_agent_1.default)({
+                host: proxy.host,
+                path: proxy.pathname,
+                port: proxy.port,
+                secureProxy: proxy.protocol === 'https:',
+                headers: options.headers,
+            });
+        }
+    }
+    const requestCallback = (res) => {
+        if (res.statusCode &&
+            res.statusCode >= 300 &&
+            res.statusCode < 400 &&
+            res.headers.location) {
+            httpRequest(new url_1.URL(res.headers.location), method, response);
+        }
+        else {
+            response(res);
+        }
+    };
+    const request = options.protocol === 'https:'
+        ? https.request(options, requestCallback)
+        : http.request(options, requestCallback);
+    request.end();
+    return request;
+}
+exports.httpRequest = httpRequest;
+/**
+ * @internal
+ */
+function downloadFile(url, destinationPath, progressCallback) {
+    return new Promise((resolve, reject) => {
+        let downloadedBytes = 0;
+        let totalBytes = 0;
+        function onData(chunk) {
+            downloadedBytes += chunk.length;
+            progressCallback(downloadedBytes, totalBytes);
+        }
+        const request = httpRequest(url, 'GET', response => {
+            if (response.statusCode !== 200) {
+                const error = new Error(`Download failed: server returned code ${response.statusCode}. URL: ${url}`);
+                // consume response data to free up memory
+                response.resume();
+                reject(error);
+                return;
+            }
+            const file = (0, fs_1.createWriteStream)(destinationPath);
+            file.on('finish', () => {
+                return resolve();
+            });
+            file.on('error', error => {
+                return reject(error);
+            });
+            response.pipe(file);
+            totalBytes = parseInt(response.headers['content-length'], 10);
+            if (progressCallback) {
+                response.on('data', onData);
+            }
+        });
+        request.on('error', error => {
+            return reject(error);
+        });
+    });
+}
+exports.downloadFile = downloadFile;
+//# sourceMappingURL=httpUtil.js.map
+
+/***/ }),
+
+/***/ 7108:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2017 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.canDownload = exports.install = void 0;
+const assert_1 = __importDefault(__nccwpck_require__(9491));
+const fs_1 = __nccwpck_require__(7147);
+const promises_1 = __nccwpck_require__(3292);
+const os_1 = __importDefault(__nccwpck_require__(2037));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const browser_data_js_1 = __nccwpck_require__(8914);
+const Cache_js_1 = __nccwpck_require__(7629);
+const debug_js_1 = __nccwpck_require__(8963);
+const detectPlatform_js_1 = __nccwpck_require__(2061);
+const fileUtil_js_1 = __nccwpck_require__(1973);
+const httpUtil_js_1 = __nccwpck_require__(8021);
+const debugInstall = (0, debug_js_1.debug)('puppeteer:browsers:install');
+const times = new Map();
+function debugTime(label) {
+    times.set(label, process.hrtime());
+}
+function debugTimeEnd(label) {
+    const end = process.hrtime();
+    const start = times.get(label);
+    if (!start) {
+        return;
+    }
+    const duration = end[0] * 1000 + end[1] / 1e6 - (start[0] * 1000 + start[1] / 1e6); // calculate duration in milliseconds
+    debugInstall(`Duration for ${label}: ${duration}ms`);
+}
+/**
+ * @public
+ */
+async function install(options) {
+    var _a, _b;
+    (_a = options.platform) !== null && _a !== void 0 ? _a : (options.platform = (0, detectPlatform_js_1.detectBrowserPlatform)());
+    (_b = options.unpack) !== null && _b !== void 0 ? _b : (options.unpack = true);
+    if (!options.platform) {
+        throw new Error(`Cannot download a binary for the provided platform: ${os_1.default.platform()} (${os_1.default.arch()})`);
+    }
+    const url = getDownloadUrl(options.browser, options.platform, options.buildId, options.baseUrl);
+    const fileName = url.toString().split('/').pop();
+    (0, assert_1.default)(fileName, `A malformed download URL was found: ${url}.`);
+    const structure = new Cache_js_1.Cache(options.cacheDir);
+    const browserRoot = structure.browserRoot(options.browser);
+    const archivePath = path_1.default.join(browserRoot, fileName);
+    if (!(0, fs_1.existsSync)(browserRoot)) {
+        await (0, promises_1.mkdir)(browserRoot, { recursive: true });
+    }
+    if (!options.unpack) {
+        if ((0, fs_1.existsSync)(archivePath)) {
+            return {
+                path: archivePath,
+                browser: options.browser,
+                platform: options.platform,
+                buildId: options.buildId,
+            };
+        }
+        debugInstall(`Downloading binary from ${url}`);
+        debugTime('download');
+        await (0, httpUtil_js_1.downloadFile)(url, archivePath, options.downloadProgressCallback);
+        debugTimeEnd('download');
+        return {
+            path: archivePath,
+            browser: options.browser,
+            platform: options.platform,
+            buildId: options.buildId,
+        };
+    }
+    const outputPath = structure.installationDir(options.browser, options.platform, options.buildId);
+    if ((0, fs_1.existsSync)(outputPath)) {
+        return {
+            path: outputPath,
+            browser: options.browser,
+            platform: options.platform,
+            buildId: options.buildId,
+        };
+    }
+    try {
+        debugInstall(`Downloading binary from ${url}`);
+        try {
+            debugTime('download');
+            await (0, httpUtil_js_1.downloadFile)(url, archivePath, options.downloadProgressCallback);
+        }
+        finally {
+            debugTimeEnd('download');
+        }
+        debugInstall(`Installing ${archivePath} to ${outputPath}`);
+        try {
+            debugTime('extract');
+            await (0, fileUtil_js_1.unpackArchive)(archivePath, outputPath);
+        }
+        finally {
+            debugTimeEnd('extract');
+        }
+    }
+    finally {
+        if ((0, fs_1.existsSync)(archivePath)) {
+            await (0, promises_1.unlink)(archivePath);
+        }
+    }
+    return {
+        path: outputPath,
+        browser: options.browser,
+        platform: options.platform,
+        buildId: options.buildId,
+    };
+}
+exports.install = install;
+/**
+ * @public
+ */
+async function canDownload(options) {
+    var _a;
+    (_a = options.platform) !== null && _a !== void 0 ? _a : (options.platform = (0, detectPlatform_js_1.detectBrowserPlatform)());
+    if (!options.platform) {
+        throw new Error(`Cannot download a binary for the provided platform: ${os_1.default.platform()} (${os_1.default.arch()})`);
+    }
+    return await (0, httpUtil_js_1.headHttpRequest)(getDownloadUrl(options.browser, options.platform, options.buildId, options.baseUrl));
+}
+exports.canDownload = canDownload;
+function getDownloadUrl(browser, platform, buildId, baseUrl) {
+    return new URL(browser_data_js_1.downloadUrls[browser](platform, buildId, baseUrl));
+}
+//# sourceMappingURL=install.js.map
+
+/***/ }),
+
+/***/ 2178:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+var _Process_instances, _Process_executablePath, _Process_args, _Process_browserProcess, _Process_exited, _Process_hooksRan, _Process_onExitHook, _Process_browserProcessExiting, _Process_runHooks, _Process_configureStdio, _Process_clearListeners, _Process_onDriverProcessExit, _Process_onDriverProcessSignal;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TimeoutError = exports.isErrnoException = exports.isErrorLike = exports.Process = exports.WEBDRIVER_BIDI_WEBSOCKET_ENDPOINT_REGEX = exports.CDP_WEBSOCKET_ENDPOINT_REGEX = exports.launch = exports.computeSystemExecutablePath = exports.computeExecutablePath = void 0;
+const child_process_1 = __importDefault(__nccwpck_require__(2081));
+const fs_1 = __nccwpck_require__(7147);
+const os_1 = __importDefault(__nccwpck_require__(2037));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const readline_1 = __importDefault(__nccwpck_require__(4521));
+const browser_data_js_1 = __nccwpck_require__(8914);
+const Cache_js_1 = __nccwpck_require__(7629);
+const debug_js_1 = __nccwpck_require__(8963);
+const detectPlatform_js_1 = __nccwpck_require__(2061);
+const debugLaunch = (0, debug_js_1.debug)('puppeteer:browsers:launcher');
+/**
+ * @public
+ */
+function computeExecutablePath(options) {
+    var _a;
+    (_a = options.platform) !== null && _a !== void 0 ? _a : (options.platform = (0, detectPlatform_js_1.detectBrowserPlatform)());
+    if (!options.platform) {
+        throw new Error(`Cannot download a binary for the provided platform: ${os_1.default.platform()} (${os_1.default.arch()})`);
+    }
+    const installationDir = new Cache_js_1.Cache(options.cacheDir).installationDir(options.browser, options.platform, options.buildId);
+    return path_1.default.join(installationDir, browser_data_js_1.executablePathByBrowser[options.browser](options.platform, options.buildId));
+}
+exports.computeExecutablePath = computeExecutablePath;
+/**
+ * @public
+ */
+function computeSystemExecutablePath(options) {
+    var _a;
+    (_a = options.platform) !== null && _a !== void 0 ? _a : (options.platform = (0, detectPlatform_js_1.detectBrowserPlatform)());
+    if (!options.platform) {
+        throw new Error(`Cannot download a binary for the provided platform: ${os_1.default.platform()} (${os_1.default.arch()})`);
+    }
+    const path = (0, browser_data_js_1.resolveSystemExecutablePath)(options.browser, options.platform, options.channel);
+    try {
+        (0, fs_1.accessSync)(path);
+    }
+    catch (error) {
+        throw new Error(`Could not find Google Chrome executable for channel '${options.channel}' at '${path}'.`);
+    }
+    return path;
+}
+exports.computeSystemExecutablePath = computeSystemExecutablePath;
+/**
+ * @public
+ */
+function launch(opts) {
+    return new Process(opts);
+}
+exports.launch = launch;
+/**
+ * @public
+ */
+exports.CDP_WEBSOCKET_ENDPOINT_REGEX = /^DevTools listening on (ws:\/\/.*)$/;
+/**
+ * @public
+ */
+exports.WEBDRIVER_BIDI_WEBSOCKET_ENDPOINT_REGEX = /^WebDriver BiDi listening on (ws:\/\/.*)$/;
+/**
+ * @public
+ */
+class Process {
+    constructor(opts) {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+        _Process_instances.add(this);
+        _Process_executablePath.set(this, void 0);
+        _Process_args.set(this, void 0);
+        _Process_browserProcess.set(this, void 0);
+        _Process_exited.set(this, false);
+        // The browser process can be closed externally or from the driver process. We
+        // need to invoke the hooks only once though but we don't know how many times
+        // we will be invoked.
+        _Process_hooksRan.set(this, false);
+        _Process_onExitHook.set(this, async () => { });
+        _Process_browserProcessExiting.set(this, void 0);
+        _Process_onDriverProcessExit.set(this, (_code) => {
+            this.kill();
+        });
+        _Process_onDriverProcessSignal.set(this, (signal) => {
+            switch (signal) {
+                case 'SIGINT':
+                    this.kill();
+                    process.exit(130);
+                case 'SIGTERM':
+                case 'SIGHUP':
+                    this.close();
+                    break;
+            }
+        });
+        __classPrivateFieldSet(this, _Process_executablePath, opts.executablePath, "f");
+        __classPrivateFieldSet(this, _Process_args, (_a = opts.args) !== null && _a !== void 0 ? _a : [], "f");
+        (_b = opts.pipe) !== null && _b !== void 0 ? _b : (opts.pipe = false);
+        (_c = opts.dumpio) !== null && _c !== void 0 ? _c : (opts.dumpio = false);
+        (_d = opts.handleSIGINT) !== null && _d !== void 0 ? _d : (opts.handleSIGINT = true);
+        (_e = opts.handleSIGTERM) !== null && _e !== void 0 ? _e : (opts.handleSIGTERM = true);
+        (_f = opts.handleSIGHUP) !== null && _f !== void 0 ? _f : (opts.handleSIGHUP = true);
+        // On non-windows platforms, `detached: true` makes child process a
+        // leader of a new process group, making it possible to kill child
+        // process tree with `.kill(-pid)` command. @see
+        // https://nodejs.org/api/child_process.html#child_process_options_detached
+        (_g = opts.detached) !== null && _g !== void 0 ? _g : (opts.detached = process.platform !== 'win32');
+        const stdio = __classPrivateFieldGet(this, _Process_instances, "m", _Process_configureStdio).call(this, {
+            pipe: opts.pipe,
+            dumpio: opts.dumpio,
+        });
+        debugLaunch(`Launching ${__classPrivateFieldGet(this, _Process_executablePath, "f")} ${__classPrivateFieldGet(this, _Process_args, "f").join(' ')}`, {
+            detached: opts.detached,
+            env: opts.env,
+            stdio,
+        });
+        __classPrivateFieldSet(this, _Process_browserProcess, child_process_1.default.spawn(__classPrivateFieldGet(this, _Process_executablePath, "f"), __classPrivateFieldGet(this, _Process_args, "f"), {
+            detached: opts.detached,
+            env: opts.env,
+            stdio,
+        }), "f");
+        debugLaunch(`Launched ${__classPrivateFieldGet(this, _Process_browserProcess, "f").pid}`);
+        if (opts.dumpio) {
+            (_h = __classPrivateFieldGet(this, _Process_browserProcess, "f").stderr) === null || _h === void 0 ? void 0 : _h.pipe(process.stderr);
+            (_j = __classPrivateFieldGet(this, _Process_browserProcess, "f").stdout) === null || _j === void 0 ? void 0 : _j.pipe(process.stdout);
+        }
+        process.on('exit', __classPrivateFieldGet(this, _Process_onDriverProcessExit, "f"));
+        if (opts.handleSIGINT) {
+            process.on('SIGINT', __classPrivateFieldGet(this, _Process_onDriverProcessSignal, "f"));
+        }
+        if (opts.handleSIGTERM) {
+            process.on('SIGTERM', __classPrivateFieldGet(this, _Process_onDriverProcessSignal, "f"));
+        }
+        if (opts.handleSIGHUP) {
+            process.on('SIGHUP', __classPrivateFieldGet(this, _Process_onDriverProcessSignal, "f"));
+        }
+        if (opts.onExit) {
+            __classPrivateFieldSet(this, _Process_onExitHook, opts.onExit, "f");
+        }
+        __classPrivateFieldSet(this, _Process_browserProcessExiting, new Promise((resolve, reject) => {
+            __classPrivateFieldGet(this, _Process_browserProcess, "f").once('exit', async () => {
+                debugLaunch(`Browser process ${__classPrivateFieldGet(this, _Process_browserProcess, "f").pid} onExit`);
+                __classPrivateFieldGet(this, _Process_instances, "m", _Process_clearListeners).call(this);
+                __classPrivateFieldSet(this, _Process_exited, true, "f");
+                try {
+                    await __classPrivateFieldGet(this, _Process_instances, "m", _Process_runHooks).call(this);
+                }
+                catch (err) {
+                    reject(err);
+                    return;
+                }
+                resolve();
+            });
+        }), "f");
+    }
+    get nodeProcess() {
+        return __classPrivateFieldGet(this, _Process_browserProcess, "f");
+    }
+    async close() {
+        await __classPrivateFieldGet(this, _Process_instances, "m", _Process_runHooks).call(this);
+        if (!__classPrivateFieldGet(this, _Process_exited, "f")) {
+            this.kill();
+        }
+        return __classPrivateFieldGet(this, _Process_browserProcessExiting, "f");
+    }
+    hasClosed() {
+        return __classPrivateFieldGet(this, _Process_browserProcessExiting, "f");
+    }
+    kill() {
+        debugLaunch(`Trying to kill ${__classPrivateFieldGet(this, _Process_browserProcess, "f").pid}`);
+        // If the process failed to launch (for example if the browser executable path
+        // is invalid), then the process does not get a pid assigned. A call to
+        // `proc.kill` would error, as the `pid` to-be-killed can not be found.
+        if (__classPrivateFieldGet(this, _Process_browserProcess, "f") &&
+            __classPrivateFieldGet(this, _Process_browserProcess, "f").pid &&
+            pidExists(__classPrivateFieldGet(this, _Process_browserProcess, "f").pid)) {
+            try {
+                debugLaunch(`Browser process ${__classPrivateFieldGet(this, _Process_browserProcess, "f").pid} exists`);
+                if (process.platform === 'win32') {
+                    try {
+                        child_process_1.default.execSync(`taskkill /pid ${__classPrivateFieldGet(this, _Process_browserProcess, "f").pid} /T /F`);
+                    }
+                    catch (error) {
+                        debugLaunch(`Killing ${__classPrivateFieldGet(this, _Process_browserProcess, "f").pid} using taskkill failed`, error);
+                        // taskkill can fail to kill the process e.g. due to missing permissions.
+                        // Let's kill the process via Node API. This delays killing of all child
+                        // processes of `this.proc` until the main Node.js process dies.
+                        __classPrivateFieldGet(this, _Process_browserProcess, "f").kill();
+                    }
+                }
+                else {
+                    // on linux the process group can be killed with the group id prefixed with
+                    // a minus sign. The process group id is the group leader's pid.
+                    const processGroupId = -__classPrivateFieldGet(this, _Process_browserProcess, "f").pid;
+                    try {
+                        process.kill(processGroupId, 'SIGKILL');
+                    }
+                    catch (error) {
+                        debugLaunch(`Killing ${__classPrivateFieldGet(this, _Process_browserProcess, "f").pid} using process.kill failed`, error);
+                        // Killing the process group can fail due e.g. to missing permissions.
+                        // Let's kill the process via Node API. This delays killing of all child
+                        // processes of `this.proc` until the main Node.js process dies.
+                        __classPrivateFieldGet(this, _Process_browserProcess, "f").kill('SIGKILL');
+                    }
+                }
+            }
+            catch (error) {
+                throw new Error(`${PROCESS_ERROR_EXPLANATION}\nError cause: ${isErrorLike(error) ? error.stack : error}`);
+            }
+        }
+        __classPrivateFieldGet(this, _Process_instances, "m", _Process_clearListeners).call(this);
+    }
+    waitForLineOutput(regex, timeout) {
+        if (!__classPrivateFieldGet(this, _Process_browserProcess, "f").stderr) {
+            throw new Error('`browserProcess` does not have stderr.');
+        }
+        const rl = readline_1.default.createInterface(__classPrivateFieldGet(this, _Process_browserProcess, "f").stderr);
+        let stderr = '';
+        return new Promise((resolve, reject) => {
+            rl.on('line', onLine);
+            rl.on('close', onClose);
+            __classPrivateFieldGet(this, _Process_browserProcess, "f").on('exit', onClose);
+            __classPrivateFieldGet(this, _Process_browserProcess, "f").on('error', onClose);
+            const timeoutId = timeout ? setTimeout(onTimeout, timeout) : 0;
+            const cleanup = () => {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+                rl.off('line', onLine);
+                rl.off('close', onClose);
+                __classPrivateFieldGet(this, _Process_browserProcess, "f").off('exit', onClose);
+                __classPrivateFieldGet(this, _Process_browserProcess, "f").off('error', onClose);
+            };
+            function onClose(error) {
+                cleanup();
+                reject(new Error([
+                    `Failed to launch the browser process!${error ? ' ' + error.message : ''}`,
+                    stderr,
+                    '',
+                    'TROUBLESHOOTING: https://pptr.dev/troubleshooting',
+                    '',
+                ].join('\n')));
+            }
+            function onTimeout() {
+                cleanup();
+                reject(new TimeoutError(`Timed out after ${timeout} ms while waiting for the WS endpoint URL to appear in stdout!`));
+            }
+            function onLine(line) {
+                stderr += line + '\n';
+                const match = line.match(regex);
+                if (!match) {
+                    return;
+                }
+                cleanup();
+                // The RegExp matches, so this will obviously exist.
+                resolve(match[1]);
+            }
+        });
+    }
+}
+exports.Process = Process;
+_Process_executablePath = new WeakMap(), _Process_args = new WeakMap(), _Process_browserProcess = new WeakMap(), _Process_exited = new WeakMap(), _Process_hooksRan = new WeakMap(), _Process_onExitHook = new WeakMap(), _Process_browserProcessExiting = new WeakMap(), _Process_onDriverProcessExit = new WeakMap(), _Process_onDriverProcessSignal = new WeakMap(), _Process_instances = new WeakSet(), _Process_runHooks = async function _Process_runHooks() {
+    if (__classPrivateFieldGet(this, _Process_hooksRan, "f")) {
+        return;
+    }
+    __classPrivateFieldSet(this, _Process_hooksRan, true, "f");
+    await __classPrivateFieldGet(this, _Process_onExitHook, "f").call(this);
+}, _Process_configureStdio = function _Process_configureStdio(opts) {
+    if (opts.pipe) {
+        if (opts.dumpio) {
+            return ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'];
+        }
+        else {
+            return ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'];
+        }
+    }
+    else {
+        if (opts.dumpio) {
+            return ['pipe', 'pipe', 'pipe'];
+        }
+        else {
+            return ['pipe', 'ignore', 'pipe'];
+        }
+    }
+}, _Process_clearListeners = function _Process_clearListeners() {
+    process.off('exit', __classPrivateFieldGet(this, _Process_onDriverProcessExit, "f"));
+    process.off('SIGINT', __classPrivateFieldGet(this, _Process_onDriverProcessSignal, "f"));
+    process.off('SIGTERM', __classPrivateFieldGet(this, _Process_onDriverProcessSignal, "f"));
+    process.off('SIGHUP', __classPrivateFieldGet(this, _Process_onDriverProcessSignal, "f"));
+};
+const PROCESS_ERROR_EXPLANATION = `Puppeteer was unable to kill the process which ran the browser binary.
+This means that, on future Puppeteer launches, Puppeteer might not be able to launch the browser.
+Please check your open processes and ensure that the browser processes that Puppeteer launched have been killed.
+If you think this is a bug, please report it on the Puppeteer issue tracker.`;
+/**
+ * @internal
+ */
+function pidExists(pid) {
+    try {
+        return process.kill(pid, 0);
+    }
+    catch (error) {
+        if (isErrnoException(error)) {
+            if (error.code && error.code === 'ESRCH') {
+                return false;
+            }
+        }
+        throw error;
+    }
+}
+/**
+ * @internal
+ */
+function isErrorLike(obj) {
+    return (typeof obj === 'object' && obj !== null && 'name' in obj && 'message' in obj);
+}
+exports.isErrorLike = isErrorLike;
+/**
+ * @internal
+ */
+function isErrnoException(obj) {
+    return (isErrorLike(obj) &&
+        ('errno' in obj || 'code' in obj || 'path' in obj || 'syscall' in obj));
+}
+exports.isErrnoException = isErrnoException;
+/**
+ * @public
+ */
+class TimeoutError extends Error {
+    /**
+     * @internal
+     */
+    constructor(message) {
+        super(message);
+        this.name = this.constructor.name;
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+exports.TimeoutError = TimeoutError;
+//# sourceMappingURL=launch.js.map
+
+/***/ }),
+
+/***/ 6016:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Cache = exports.makeProgressCallback = exports.CLI = exports.createProfile = exports.ChromeReleaseChannel = exports.BrowserPlatform = exports.Browser = exports.resolveBuildId = exports.detectBrowserPlatform = exports.canDownload = exports.install = exports.Process = exports.WEBDRIVER_BIDI_WEBSOCKET_ENDPOINT_REGEX = exports.CDP_WEBSOCKET_ENDPOINT_REGEX = exports.TimeoutError = exports.computeSystemExecutablePath = exports.computeExecutablePath = exports.launch = void 0;
+var launch_js_1 = __nccwpck_require__(2178);
+Object.defineProperty(exports, "launch", ({ enumerable: true, get: function () { return launch_js_1.launch; } }));
+Object.defineProperty(exports, "computeExecutablePath", ({ enumerable: true, get: function () { return launch_js_1.computeExecutablePath; } }));
+Object.defineProperty(exports, "computeSystemExecutablePath", ({ enumerable: true, get: function () { return launch_js_1.computeSystemExecutablePath; } }));
+Object.defineProperty(exports, "TimeoutError", ({ enumerable: true, get: function () { return launch_js_1.TimeoutError; } }));
+Object.defineProperty(exports, "CDP_WEBSOCKET_ENDPOINT_REGEX", ({ enumerable: true, get: function () { return launch_js_1.CDP_WEBSOCKET_ENDPOINT_REGEX; } }));
+Object.defineProperty(exports, "WEBDRIVER_BIDI_WEBSOCKET_ENDPOINT_REGEX", ({ enumerable: true, get: function () { return launch_js_1.WEBDRIVER_BIDI_WEBSOCKET_ENDPOINT_REGEX; } }));
+Object.defineProperty(exports, "Process", ({ enumerable: true, get: function () { return launch_js_1.Process; } }));
+var install_js_1 = __nccwpck_require__(7108);
+Object.defineProperty(exports, "install", ({ enumerable: true, get: function () { return install_js_1.install; } }));
+Object.defineProperty(exports, "canDownload", ({ enumerable: true, get: function () { return install_js_1.canDownload; } }));
+var detectPlatform_js_1 = __nccwpck_require__(2061);
+Object.defineProperty(exports, "detectBrowserPlatform", ({ enumerable: true, get: function () { return detectPlatform_js_1.detectBrowserPlatform; } }));
+var browser_data_js_1 = __nccwpck_require__(8914);
+Object.defineProperty(exports, "resolveBuildId", ({ enumerable: true, get: function () { return browser_data_js_1.resolveBuildId; } }));
+Object.defineProperty(exports, "Browser", ({ enumerable: true, get: function () { return browser_data_js_1.Browser; } }));
+Object.defineProperty(exports, "BrowserPlatform", ({ enumerable: true, get: function () { return browser_data_js_1.BrowserPlatform; } }));
+Object.defineProperty(exports, "ChromeReleaseChannel", ({ enumerable: true, get: function () { return browser_data_js_1.ChromeReleaseChannel; } }));
+Object.defineProperty(exports, "createProfile", ({ enumerable: true, get: function () { return browser_data_js_1.createProfile; } }));
+var CLI_js_1 = __nccwpck_require__(7971);
+Object.defineProperty(exports, "CLI", ({ enumerable: true, get: function () { return CLI_js_1.CLI; } }));
+Object.defineProperty(exports, "makeProgressCallback", ({ enumerable: true, get: function () { return CLI_js_1.makeProgressCallback; } }));
+var Cache_js_1 = __nccwpck_require__(7629);
+Object.defineProperty(exports, "Cache", ({ enumerable: true, get: function () { return Cache_js_1.Cache; } }));
+//# sourceMappingURL=main.js.map
 
 /***/ }),
 
@@ -28262,7 +33571,7 @@ exports.BrowserContext = BrowserContext;
 /***/ }),
 
 /***/ 3839:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
@@ -28281,6 +33590,12 @@ exports.BrowserContext = BrowserContext;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _ElementHandle_instances, _ElementHandle_asSVGElementHandle, _ElementHandle_getOwnerSVGElement;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ElementHandle = void 0;
 const JSHandle_js_1 = __nccwpck_require__(882);
@@ -28323,6 +33638,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
      */
     constructor(handle) {
         super();
+        _ElementHandle_instances.add(this);
         this.handle = handle;
     }
     /**
@@ -28412,6 +33728,20 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async waitForSelector() {
         throw new Error('Not implemented');
     }
+    /**
+     * Checks if an element is visible using the same mechanism as
+     * {@link ElementHandle.waitForSelector}.
+     */
+    async isVisible() {
+        throw new Error('Not implemented.');
+    }
+    /**
+     * Checks if an element is hidden using the same mechanism as
+     * {@link ElementHandle.waitForSelector}.
+     */
+    async isHidden() {
+        throw new Error('Not implemented.');
+    }
     async waitForXPath() {
         throw new Error('Not implemented');
     }
@@ -28430,7 +33760,7 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     }
     /**
      * This method scrolls element into view if needed, and then
-     * uses {@link Page.mouse} to hover over the center of the element.
+     * uses {@link Page} to hover over the center of the element.
      * If the element is detached from DOM, the method throws an error.
      */
     async hover() {
@@ -28510,11 +33840,88 @@ class ElementHandle extends JSHandle_js_1.JSHandle {
     async screenshot() {
         throw new Error('Not implemented');
     }
-    async isIntersectingViewport() {
+    /**
+     * @internal
+     */
+    async assertConnectedElement() {
+        const error = await this.evaluate(async (element) => {
+            if (!element.isConnected) {
+                return 'Node is detached from document';
+            }
+            if (element.nodeType !== Node.ELEMENT_NODE) {
+                return 'Node is not of type HTMLElement';
+            }
+            return;
+        });
+        if (error) {
+            throw new Error(error);
+        }
+    }
+    /**
+     * Resolves to true if the element is visible in the current viewport. If an
+     * element is an SVG, we check if the svg owner element is in the viewport
+     * instead. See https://crbug.com/963246.
+     *
+     * @param options - Threshold for the intersection between 0 (no intersection) and 1
+     * (full intersection). Defaults to 1.
+     */
+    async isIntersectingViewport(options) {
+        await this.assertConnectedElement();
+        const { threshold = 0 } = options !== null && options !== void 0 ? options : {};
+        const svgHandle = await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_asSVGElementHandle).call(this, this);
+        const intersectionTarget = svgHandle
+            ? await __classPrivateFieldGet(this, _ElementHandle_instances, "m", _ElementHandle_getOwnerSVGElement).call(this, svgHandle)
+            : this;
+        try {
+            return await intersectionTarget.evaluate(async (element, threshold) => {
+                const visibleRatio = await new Promise(resolve => {
+                    const observer = new IntersectionObserver(entries => {
+                        resolve(entries[0].intersectionRatio);
+                        observer.disconnect();
+                    });
+                    observer.observe(element);
+                });
+                return threshold === 1 ? visibleRatio === 1 : visibleRatio > threshold;
+            }, threshold);
+        }
+        finally {
+            if (intersectionTarget !== this) {
+                await intersectionTarget.dispose();
+            }
+        }
+    }
+    /**
+     * Scrolls the element into view using either the automation protocol client
+     * or by calling element.scrollIntoView.
+     */
+    async scrollIntoView() {
         throw new Error('Not implemented');
     }
 }
 exports.ElementHandle = ElementHandle;
+_ElementHandle_instances = new WeakSet(), _ElementHandle_asSVGElementHandle = 
+/**
+ * Returns true if an element is an SVGElement (included svg, path, rect
+ * etc.).
+ */
+async function _ElementHandle_asSVGElementHandle(handle) {
+    if (await handle.evaluate(element => {
+        return element instanceof SVGElement;
+    })) {
+        return handle;
+    }
+    else {
+        return null;
+    }
+}, _ElementHandle_getOwnerSVGElement = async function _ElementHandle_getOwnerSVGElement(handle) {
+    // SVGSVGElement.ownerSVGElement === null.
+    return await handle.evaluateHandle(element => {
+        if (element instanceof SVGSVGElement) {
+            return element;
+        }
+        return element.ownerSVGElement;
+    });
+};
 //# sourceMappingURL=ElementHandle.js.map
 
 /***/ }),
@@ -28598,13 +34005,13 @@ class HTTPRequest {
         this._redirectChain = [];
     }
     /**
-     * @returns the URL of the request
+     * The URL of the request
      */
     url() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns the `ContinueRequestOverrides` that will be used
+     * The `ContinueRequestOverrides` that will be used
      * if the interception is allowed to continue (ie, `abort()` and
      * `respond()` aren't called).
      */
@@ -28612,20 +34019,20 @@ class HTTPRequest {
         throw new Error('Not implemented');
     }
     /**
-     * @returns The `ResponseForRequest` that gets used if the
+     * The `ResponseForRequest` that gets used if the
      * interception is allowed to respond (ie, `abort()` is not called).
      */
     responseForRequest() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns the most recent reason for aborting the request
+     * The most recent reason for aborting the request
      */
     abortErrorReason() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns An InterceptResolutionState object describing the current resolution
+     * An InterceptResolutionState object describing the current resolution
      * action and priority.
      *
      * InterceptResolutionState contains:
@@ -28639,7 +34046,7 @@ class HTTPRequest {
         throw new Error('Not implemented');
     }
     /**
-     * @returns `true` if the intercept resolution has already been handled,
+     * Is `true` if the intercept resolution has already been handled,
      * `false` otherwise.
      */
     isInterceptResolutionHandled() {
@@ -28663,46 +34070,46 @@ class HTTPRequest {
         throw new Error('Not implemented');
     }
     /**
-     * @returns the method used (`GET`, `POST`, etc.)
+     * The method used (`GET`, `POST`, etc.)
      */
     method() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns the request's post body, if any.
+     * The request's post body, if any.
      */
     postData() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns an object with HTTP headers associated with the request. All
+     * An object with HTTP headers associated with the request. All
      * header names are lower-case.
      */
     headers() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns A matching `HTTPResponse` object, or null if the response has not
+     * A matching `HTTPResponse` object, or null if the response has not
      * been received yet.
      */
     response() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns the frame that initiated the request, or null if navigating to
+     * The frame that initiated the request, or null if navigating to
      * error pages.
      */
     frame() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns true if the request is the driver of the current frame's navigation.
+     * True if the request is the driver of the current frame's navigation.
      */
     isNavigationRequest() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns the initiator of the request.
+     * The initiator of the request.
      */
     initiator() {
         throw new Error('Not implemented');
@@ -28916,73 +34323,72 @@ class HTTPResponse {
         throw new Error('Not implemented');
     }
     /**
-     * @returns The IP address and port number used to connect to the remote
+     * The IP address and port number used to connect to the remote
      * server.
      */
     remoteAddress() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns The URL of the response.
+     * The URL of the response.
      */
     url() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns True if the response was successful (status in the range 200-299).
+     * True if the response was successful (status in the range 200-299).
      */
     ok() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns The status code of the response (e.g., 200 for a success).
+     * The status code of the response (e.g., 200 for a success).
      */
     status() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns The status text of the response (e.g. usually an "OK" for a
+     * The status text of the response (e.g. usually an "OK" for a
      * success).
      */
     statusText() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns An object with HTTP headers associated with the response. All
+     * An object with HTTP headers associated with the response. All
      * header names are lower-case.
      */
     headers() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns {@link SecurityDetails} if the response was received over the
+     * {@link SecurityDetails} if the response was received over the
      * secure connection, or `null` otherwise.
      */
     securityDetails() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns Timing information related to the response.
+     * Timing information related to the response.
      */
     timing() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns Promise which resolves to a buffer with response body.
+     * Promise which resolves to a buffer with response body.
      */
     buffer() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns Promise which resolves to a text representation of response body.
+     * Promise which resolves to a text representation of response body.
      */
     async text() {
         const content = await this.buffer();
         return content.toString('utf8');
     }
     /**
-     *
-     * @returns Promise which resolves to a JSON representation of response body.
+     * Promise which resolves to a JSON representation of response body.
      *
      * @remarks
      *
@@ -28994,26 +34400,26 @@ class HTTPResponse {
         return JSON.parse(content);
     }
     /**
-     * @returns A matching {@link HTTPRequest} object.
+     * A matching {@link HTTPRequest} object.
      */
     request() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns True if the response was served from either the browser's disk
+     * True if the response was served from either the browser's disk
      * cache or memory cache.
      */
     fromCache() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns True if the response was served by a service worker.
+     * True if the response was served by a service worker.
      */
     fromServiceWorker() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns A {@link Frame} that initiated this response, or `null` if
+     * A {@link Frame} that initiated this response, or `null` if
      * navigating to error pages.
      */
     frame() {
@@ -29122,7 +34528,7 @@ class JSHandle {
         throw new Error('Not implemented');
     }
     /**
-     * @returns A vanilla object representing the serializable portions of the
+     * A vanilla object representing the serializable portions of the
      * referenced object.
      * @throws Throws if the object cannot be serialized due to circularity.
      *
@@ -29133,7 +34539,7 @@ class JSHandle {
         throw new Error('Not implemented');
     }
     /**
-     * @returns Either `null` or the handle itself if the handle is an
+     * Either `null` or the handle itself if the handle is an
      * instance of {@link ElementHandle}.
      */
     asElement() {
@@ -29203,6 +34609,9 @@ var _Page_handlerMap;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.unitToPixels = exports.supportedMetrics = exports.Page = void 0;
 const EventEmitter_js_1 = __nccwpck_require__(7692);
+const PDFOptions_js_1 = __nccwpck_require__(4302);
+const util_js_1 = __nccwpck_require__(8274);
+const assert_js_1 = __nccwpck_require__(7729);
 /**
  * Page provides methods to interact with a single tab or
  * {@link https://developer.chrome.com/extensions/background_pages | extension background page}
@@ -29261,13 +34670,13 @@ class Page extends EventEmitter_js_1.EventEmitter {
         _Page_handlerMap.set(this, new WeakMap());
     }
     /**
-     * @returns `true` if drag events are being intercepted, `false` otherwise.
+     * `true` if drag events are being intercepted, `false` otherwise.
      */
     isDragInterceptionEnabled() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns `true` if the page has JavaScript enabled, `false` otherwise.
+     * `true` if the page has JavaScript enabled, `false` otherwise.
      */
     isJavaScriptEnabled() {
         throw new Error('Not implemented');
@@ -29314,7 +34723,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         throw new Error('Not implemented');
     }
     /**
-     * @returns A target this page was created from.
+     * A target this page was created from.
      */
     target() {
         throw new Error('Not implemented');
@@ -29332,7 +34741,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         throw new Error('Not implemented');
     }
     /**
-     * @returns The page's main frame.
+     * The page's main frame.
      *
      * @remarks
      * Page is guaranteed to have a main frame which persists during navigations.
@@ -29340,29 +34749,44 @@ class Page extends EventEmitter_js_1.EventEmitter {
     mainFrame() {
         throw new Error('Not implemented');
     }
+    /**
+     * {@inheritDoc Keyboard}
+     */
     get keyboard() {
         throw new Error('Not implemented');
     }
+    /**
+     * {@inheritDoc Touchscreen}
+     */
     get touchscreen() {
         throw new Error('Not implemented');
     }
+    /**
+     * {@inheritDoc Coverage}
+     */
     get coverage() {
         throw new Error('Not implemented');
     }
+    /**
+     * {@inheritDoc Tracing}
+     */
     get tracing() {
         throw new Error('Not implemented');
     }
+    /**
+     * {@inheritDoc Accessibility}
+     */
     get accessibility() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns An array of all frames attached to the page.
+     * An array of all frames attached to the page.
      */
     frames() {
         throw new Error('Not implemented');
     }
     /**
-     * @returns all of the dedicated {@link
+     * All of the dedicated {@link
      * https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API |
      * WebWorkers} associated with the page.
      *
@@ -29391,7 +34815,7 @@ class Page extends EventEmitter_js_1.EventEmitter {
         throw new Error('Not implemented');
     }
     /**
-     * @returns Maximum time in milliseconds.
+     * Maximum time in milliseconds.
      */
     getDefaultTimeout() {
         throw new Error('Not implemented');
@@ -29445,7 +34869,9 @@ class Page extends EventEmitter_js_1.EventEmitter {
         throw new Error('Not implemented');
     }
     /**
-     * @returns Object containing metrics as key/value pairs.
+     * Object containing metrics as key/value pairs.
+     *
+     * @returns
      *
      * - `Timestamp` : The timestamp when the metrics sample was taken.
      *
@@ -29482,14 +34908,16 @@ class Page extends EventEmitter_js_1.EventEmitter {
         throw new Error('Not implemented');
     }
     /**
-     *
-     * @returns
+     * The page's URL.
      * @remarks Shortcut for
      * {@link Frame.url | page.mainFrame().url()}.
      */
     url() {
         throw new Error('Not implemented');
     }
+    /**
+     * The full HTML contents of the page, including the DOCTYPE.
+     */
     async content() {
         throw new Error('Not implemented');
     }
@@ -29593,6 +35021,8 @@ class Page extends EventEmitter_js_1.EventEmitter {
         throw new Error('Not implemented');
     }
     /**
+     * Current page viewport settings.
+     *
      * @returns
      *
      * - `width`: page's width in pixels
@@ -29623,8 +35053,63 @@ class Page extends EventEmitter_js_1.EventEmitter {
     async setCacheEnabled() {
         throw new Error('Not implemented');
     }
+    /**
+     * @internal
+     */
+    async _maybeWriteBufferToFile(path, buffer) {
+        if (!path) {
+            return;
+        }
+        const fs = await (0, util_js_1.importFSPromises)();
+        await fs.writeFile(path, buffer);
+    }
     async screenshot() {
         throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    _getPDFOptions(options = {}, lengthUnit = 'in') {
+        var _a, _b, _c, _d, _e, _f;
+        const defaults = {
+            scale: 1,
+            displayHeaderFooter: false,
+            headerTemplate: '',
+            footerTemplate: '',
+            printBackground: false,
+            landscape: false,
+            pageRanges: '',
+            preferCSSPageSize: false,
+            omitBackground: false,
+            timeout: 30000,
+        };
+        let width = 8.5;
+        let height = 11;
+        if (options.format) {
+            const format = PDFOptions_js_1.paperFormats[options.format.toLowerCase()];
+            (0, assert_js_1.assert)(format, 'Unknown paper format: ' + options.format);
+            width = format.width;
+            height = format.height;
+        }
+        else {
+            width = (_a = convertPrintParameterToInches(options.width, lengthUnit)) !== null && _a !== void 0 ? _a : width;
+            height =
+                (_b = convertPrintParameterToInches(options.height, lengthUnit)) !== null && _b !== void 0 ? _b : height;
+        }
+        const margin = {
+            top: convertPrintParameterToInches((_c = options.margin) === null || _c === void 0 ? void 0 : _c.top, lengthUnit) || 0,
+            left: convertPrintParameterToInches((_d = options.margin) === null || _d === void 0 ? void 0 : _d.left, lengthUnit) || 0,
+            bottom: convertPrintParameterToInches((_e = options.margin) === null || _e === void 0 ? void 0 : _e.bottom, lengthUnit) || 0,
+            right: convertPrintParameterToInches((_f = options.margin) === null || _f === void 0 ? void 0 : _f.right, lengthUnit) || 0,
+        };
+        const output = {
+            ...defaults,
+            ...options,
+            width,
+            height,
+            margin,
+        };
+        return output;
     }
     async createPDFStream() {
         throw new Error('Not implemented');
@@ -29633,7 +35118,8 @@ class Page extends EventEmitter_js_1.EventEmitter {
         throw new Error('Not implemented');
     }
     /**
-     * @returns The page's title
+     * The page's title
+     *
      * @remarks
      * Shortcut for {@link Frame.title | page.mainFrame().title()}.
      */
@@ -29650,6 +35136,9 @@ class Page extends EventEmitter_js_1.EventEmitter {
     isClosed() {
         throw new Error('Not implemented');
     }
+    /**
+     * {@inheritDoc Mouse}
+     */
     get mouse() {
         throw new Error('Not implemented');
     }
@@ -29716,6 +35205,37 @@ exports.unitToPixels = {
     cm: 37.8,
     mm: 3.78,
 };
+function convertPrintParameterToInches(parameter, lengthUnit = 'in') {
+    if (typeof parameter === 'undefined') {
+        return undefined;
+    }
+    let pixels;
+    if ((0, util_js_1.isNumber)(parameter)) {
+        // Treat numbers as pixel values to be aligned with phantom's paperSize.
+        pixels = parameter;
+    }
+    else if ((0, util_js_1.isString)(parameter)) {
+        const text = parameter;
+        let unit = text.substring(text.length - 2).toLowerCase();
+        let valueText = '';
+        if (unit in exports.unitToPixels) {
+            valueText = text.substring(0, text.length - 2);
+        }
+        else {
+            // In case of unknown unit try to parse the whole parameter as number of pixels.
+            // This is consistent with phantom's paperSize behavior.
+            unit = 'px';
+            valueText = text;
+        }
+        const value = Number(valueText);
+        (0, assert_js_1.assert)(!isNaN(value), 'Failed to parse parameter value: ' + text);
+        pixels = value * exports.unitToPixels[unit];
+    }
+    else {
+        throw new Error('page.pdf() Cannot handle parameter type: ' + typeof parameter);
+    }
+    return pixels / exports.unitToPixels[lengthUnit];
+}
 //# sourceMappingURL=Page.js.map
 
 /***/ }),
@@ -30454,6 +35974,7 @@ exports.CDPBrowserContext = exports.CDPBrowser = void 0;
 const Browser_js_1 = __nccwpck_require__(3469);
 const BrowserContext_js_1 = __nccwpck_require__(2185);
 const assert_js_1 = __nccwpck_require__(7729);
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const ChromeTargetManager_js_1 = __nccwpck_require__(2264);
 const Connection_js_1 = __nccwpck_require__(370);
 const FirefoxTargetManager_js_1 = __nccwpck_require__(9806);
@@ -30750,11 +36271,7 @@ class CDPBrowser extends Browser_js_1.Browser {
      */
     async waitForTarget(predicate, options = {}) {
         const { timeout = 30000 } = options;
-        let resolve;
-        let isResolved = false;
-        const targetPromise = new Promise(x => {
-            return (resolve = x);
-        });
+        const targetPromise = (0, DeferredPromise_js_1.createDeferredPromise)();
         this.on("targetcreated" /* BrowserEmittedEvents.TargetCreated */, check);
         this.on("targetchanged" /* BrowserEmittedEvents.TargetChanged */, check);
         try {
@@ -30769,9 +36286,8 @@ class CDPBrowser extends Browser_js_1.Browser {
             this.off("targetchanged" /* BrowserEmittedEvents.TargetChanged */, check);
         }
         async function check(target) {
-            if ((await predicate(target)) && !isResolved) {
-                isResolved = true;
-                resolve(target);
+            if ((await predicate(target)) && !targetPromise.resolved()) {
+                targetPromise.resolve(target);
             }
         }
     }
@@ -31223,10 +36739,11 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _ChromeTargetManager_instances, _ChromeTargetManager_connection, _ChromeTargetManager_discoveredTargetsByTargetId, _ChromeTargetManager_attachedTargetsByTargetId, _ChromeTargetManager_attachedTargetsBySessionId, _ChromeTargetManager_ignoredTargets, _ChromeTargetManager_targetFilterCallback, _ChromeTargetManager_targetFactory, _ChromeTargetManager_targetInterceptors, _ChromeTargetManager_attachedToTargetListenersBySession, _ChromeTargetManager_detachedFromTargetListenersBySession, _ChromeTargetManager_initializeCallback, _ChromeTargetManager_initializePromise, _ChromeTargetManager_targetsIdsForInit, _ChromeTargetManager_storeExistingTargetsForInit, _ChromeTargetManager_setupAttachmentListeners, _ChromeTargetManager_removeAttachmentListeners, _ChromeTargetManager_onSessionDetached, _ChromeTargetManager_onTargetCreated, _ChromeTargetManager_onTargetDestroyed, _ChromeTargetManager_onTargetInfoChanged, _ChromeTargetManager_onAttachedToTarget, _ChromeTargetManager_finishInitializationIfReady, _ChromeTargetManager_onDetachedFromTarget;
+var _ChromeTargetManager_instances, _ChromeTargetManager_connection, _ChromeTargetManager_discoveredTargetsByTargetId, _ChromeTargetManager_attachedTargetsByTargetId, _ChromeTargetManager_attachedTargetsBySessionId, _ChromeTargetManager_ignoredTargets, _ChromeTargetManager_targetFilterCallback, _ChromeTargetManager_targetFactory, _ChromeTargetManager_targetInterceptors, _ChromeTargetManager_attachedToTargetListenersBySession, _ChromeTargetManager_detachedFromTargetListenersBySession, _ChromeTargetManager_initializePromise, _ChromeTargetManager_targetsIdsForInit, _ChromeTargetManager_storeExistingTargetsForInit, _ChromeTargetManager_setupAttachmentListeners, _ChromeTargetManager_removeAttachmentListeners, _ChromeTargetManager_onSessionDetached, _ChromeTargetManager_onTargetCreated, _ChromeTargetManager_onTargetDestroyed, _ChromeTargetManager_onTargetInfoChanged, _ChromeTargetManager_onAttachedToTarget, _ChromeTargetManager_finishInitializationIfReady, _ChromeTargetManager_onDetachedFromTarget;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ChromeTargetManager = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const Connection_js_1 = __nccwpck_require__(370);
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 const util_js_1 = __nccwpck_require__(8274);
@@ -31259,7 +36776,6 @@ class ChromeTargetManager extends EventEmitter_js_1.EventEmitter {
          */
         _ChromeTargetManager_attachedTargetsByTargetId.set(this, new Map());
         /**
-         *
          * Tracks which sessions attach to which target.
          */
         _ChromeTargetManager_attachedTargetsBySessionId.set(this, new Map());
@@ -31273,10 +36789,7 @@ class ChromeTargetManager extends EventEmitter_js_1.EventEmitter {
         _ChromeTargetManager_targetInterceptors.set(this, new WeakMap());
         _ChromeTargetManager_attachedToTargetListenersBySession.set(this, new WeakMap());
         _ChromeTargetManager_detachedFromTargetListenersBySession.set(this, new WeakMap());
-        _ChromeTargetManager_initializeCallback.set(this, () => { });
-        _ChromeTargetManager_initializePromise.set(this, new Promise(resolve => {
-            __classPrivateFieldSet(this, _ChromeTargetManager_initializeCallback, resolve, "f");
-        }));
+        _ChromeTargetManager_initializePromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _ChromeTargetManager_targetsIdsForInit.set(this, new Set());
         _ChromeTargetManager_storeExistingTargetsForInit.set(this, () => {
             for (const [targetId, targetInfo,] of __classPrivateFieldGet(this, _ChromeTargetManager_discoveredTargetsByTargetId, "f").entries()) {
@@ -31471,7 +36984,7 @@ class ChromeTargetManager extends EventEmitter_js_1.EventEmitter {
     }
 }
 exports.ChromeTargetManager = ChromeTargetManager;
-_ChromeTargetManager_connection = new WeakMap(), _ChromeTargetManager_discoveredTargetsByTargetId = new WeakMap(), _ChromeTargetManager_attachedTargetsByTargetId = new WeakMap(), _ChromeTargetManager_attachedTargetsBySessionId = new WeakMap(), _ChromeTargetManager_ignoredTargets = new WeakMap(), _ChromeTargetManager_targetFilterCallback = new WeakMap(), _ChromeTargetManager_targetFactory = new WeakMap(), _ChromeTargetManager_targetInterceptors = new WeakMap(), _ChromeTargetManager_attachedToTargetListenersBySession = new WeakMap(), _ChromeTargetManager_detachedFromTargetListenersBySession = new WeakMap(), _ChromeTargetManager_initializeCallback = new WeakMap(), _ChromeTargetManager_initializePromise = new WeakMap(), _ChromeTargetManager_targetsIdsForInit = new WeakMap(), _ChromeTargetManager_storeExistingTargetsForInit = new WeakMap(), _ChromeTargetManager_onSessionDetached = new WeakMap(), _ChromeTargetManager_onTargetCreated = new WeakMap(), _ChromeTargetManager_onTargetDestroyed = new WeakMap(), _ChromeTargetManager_onTargetInfoChanged = new WeakMap(), _ChromeTargetManager_onAttachedToTarget = new WeakMap(), _ChromeTargetManager_onDetachedFromTarget = new WeakMap(), _ChromeTargetManager_instances = new WeakSet(), _ChromeTargetManager_setupAttachmentListeners = function _ChromeTargetManager_setupAttachmentListeners(session) {
+_ChromeTargetManager_connection = new WeakMap(), _ChromeTargetManager_discoveredTargetsByTargetId = new WeakMap(), _ChromeTargetManager_attachedTargetsByTargetId = new WeakMap(), _ChromeTargetManager_attachedTargetsBySessionId = new WeakMap(), _ChromeTargetManager_ignoredTargets = new WeakMap(), _ChromeTargetManager_targetFilterCallback = new WeakMap(), _ChromeTargetManager_targetFactory = new WeakMap(), _ChromeTargetManager_targetInterceptors = new WeakMap(), _ChromeTargetManager_attachedToTargetListenersBySession = new WeakMap(), _ChromeTargetManager_detachedFromTargetListenersBySession = new WeakMap(), _ChromeTargetManager_initializePromise = new WeakMap(), _ChromeTargetManager_targetsIdsForInit = new WeakMap(), _ChromeTargetManager_storeExistingTargetsForInit = new WeakMap(), _ChromeTargetManager_onSessionDetached = new WeakMap(), _ChromeTargetManager_onTargetCreated = new WeakMap(), _ChromeTargetManager_onTargetDestroyed = new WeakMap(), _ChromeTargetManager_onTargetInfoChanged = new WeakMap(), _ChromeTargetManager_onAttachedToTarget = new WeakMap(), _ChromeTargetManager_onDetachedFromTarget = new WeakMap(), _ChromeTargetManager_instances = new WeakSet(), _ChromeTargetManager_setupAttachmentListeners = function _ChromeTargetManager_setupAttachmentListeners(session) {
     const listener = (event) => {
         return __classPrivateFieldGet(this, _ChromeTargetManager_onAttachedToTarget, "f").call(this, session, event);
     };
@@ -31496,7 +37009,7 @@ _ChromeTargetManager_connection = new WeakMap(), _ChromeTargetManager_discovered
 }, _ChromeTargetManager_finishInitializationIfReady = function _ChromeTargetManager_finishInitializationIfReady(targetId) {
     targetId !== undefined && __classPrivateFieldGet(this, _ChromeTargetManager_targetsIdsForInit, "f").delete(targetId);
     if (__classPrivateFieldGet(this, _ChromeTargetManager_targetsIdsForInit, "f").size === 0) {
-        __classPrivateFieldGet(this, _ChromeTargetManager_initializeCallback, "f").call(this);
+        __classPrivateFieldGet(this, _ChromeTargetManager_initializePromise, "f").resolve();
     }
 };
 //# sourceMappingURL=ChromeTargetManager.js.map
@@ -31600,7 +37113,7 @@ class Callback {
         __classPrivateFieldSet(this, _Callback_label, label, "f");
         if (timeout) {
             __classPrivateFieldSet(this, _Callback_timer, setTimeout(() => {
-                __classPrivateFieldGet(this, _Callback_promise, "f").reject(rewriteError(__classPrivateFieldGet(this, _Callback_error, "f"), `${label} timed out.`));
+                __classPrivateFieldGet(this, _Callback_promise, "f").reject(rewriteError(__classPrivateFieldGet(this, _Callback_error, "f"), `${label} timed out. Increase the 'protocolTimeout' setting in launch/connect calls for a higher timeout if needed.`));
             }, timeout), "f");
         }
     }
@@ -31700,7 +37213,7 @@ class Connection extends EventEmitter_js_1.EventEmitter {
         _Connection_callbacks.set(this, new CallbackRegistry());
         __classPrivateFieldSet(this, _Connection_url, url, "f");
         __classPrivateFieldSet(this, _Connection_delay, delay, "f");
-        __classPrivateFieldSet(this, _Connection_timeout, timeout !== null && timeout !== void 0 ? timeout : 30000, "f");
+        __classPrivateFieldSet(this, _Connection_timeout, timeout !== null && timeout !== void 0 ? timeout : 180000, "f");
         __classPrivateFieldSet(this, _Connection_transport, transport, "f");
         __classPrivateFieldGet(this, _Connection_transport, "f").onmessage = this.onMessage.bind(this);
         __classPrivateFieldGet(this, _Connection_transport, "f").onclose = __classPrivateFieldGet(this, _Connection_instances, "m", _Connection_onClose).bind(this);
@@ -31757,6 +37270,12 @@ class Connection extends EventEmitter_js_1.EventEmitter {
             debugProtocolSend(stringifiedMessage);
             __classPrivateFieldGet(this, _Connection_transport, "f").send(stringifiedMessage);
         });
+    }
+    /**
+     * @internal
+     */
+    async closeBrowser() {
+        await this.send('Browser.close');
     }
     /**
      * @internal
@@ -32100,32 +37619,32 @@ class ConsoleMessage {
         __classPrivateFieldSet(this, _ConsoleMessage_stackTraceLocations, stackTraceLocations, "f");
     }
     /**
-     * @returns The type of the console message.
+     * The type of the console message.
      */
     type() {
         return __classPrivateFieldGet(this, _ConsoleMessage_type, "f");
     }
     /**
-     * @returns The text of the console message.
+     * The text of the console message.
      */
     text() {
         return __classPrivateFieldGet(this, _ConsoleMessage_text, "f");
     }
     /**
-     * @returns An array of arguments passed to the console.
+     * An array of arguments passed to the console.
      */
     args() {
         return __classPrivateFieldGet(this, _ConsoleMessage_args, "f");
     }
     /**
-     * @returns The location of the console message.
+     * The location of the console message.
      */
     location() {
         var _a;
         return (_a = __classPrivateFieldGet(this, _ConsoleMessage_stackTraceLocations, "f")[0]) !== null && _a !== void 0 ? _a : {};
     }
     /**
-     * @returns The array of locations on the stack of the console message.
+     * The array of locations on the stack of the console message.
      */
     stackTrace() {
         return __classPrivateFieldGet(this, _ConsoleMessage_stackTraceLocations, "f");
@@ -32176,7 +37695,7 @@ const ExecutionContext_js_1 = __nccwpck_require__(8272);
 const util_js_1 = __nccwpck_require__(8274);
 const util_js_2 = __nccwpck_require__(8274);
 /**
- * The Coverage class provides methods to gathers information about parts of
+ * The Coverage class provides methods to gather information about parts of
  * JavaScript and CSS that were used by the page.
  *
  * @remarks
@@ -32236,7 +37755,7 @@ class Coverage {
         return await __classPrivateFieldGet(this, _Coverage_jsCoverage, "f").start(options);
     }
     /**
-     * @returns Promise that resolves to the array of coverage reports for
+     * Promise that resolves to the array of coverage reports for
      * all scripts.
      *
      * @remarks
@@ -32255,8 +37774,9 @@ class Coverage {
         return await __classPrivateFieldGet(this, _Coverage_cssCoverage, "f").start(options);
     }
     /**
-     * @returns Promise that resolves to the array of coverage reports
+     * Promise that resolves to the array of coverage reports
      * for all stylesheets.
+     *
      * @remarks
      * CSS Coverage doesn't include dynamically injected style tags
      * without sourceURLs.
@@ -34620,29 +40140,30 @@ class Dialog {
         __classPrivateFieldSet(this, _Dialog_defaultValue, defaultValue, "f");
     }
     /**
-     * @returns The type of the dialog.
+     * The type of the dialog.
      */
     type() {
         return __classPrivateFieldGet(this, _Dialog_type, "f");
     }
     /**
-     * @returns The message displayed in the dialog.
+     * The message displayed in the dialog.
      */
     message() {
         return __classPrivateFieldGet(this, _Dialog_message, "f");
     }
     /**
-     * @returns The default value of the prompt, or an empty string if the dialog
+     * The default value of the prompt, or an empty string if the dialog
      * is not a `prompt`.
      */
     defaultValue() {
         return __classPrivateFieldGet(this, _Dialog_defaultValue, "f");
     }
     /**
+     * A promise that resolves when the dialog has been accepted.
+     *
      * @param promptText - optional text that will be entered in the dialog
      * prompt. Has no effect if the dialog's type is not `prompt`.
      *
-     * @returns A promise that resolves when the dialog has been accepted.
      */
     async accept(promptText) {
         (0, assert_js_1.assert)(!__classPrivateFieldGet(this, _Dialog_handled, "f"), 'Cannot accept dialog which is already handled!');
@@ -34653,7 +40174,7 @@ class Dialog {
         });
     }
     /**
-     * @returns A promise which will resolve once the dialog has been dismissed
+     * A promise which will resolve once the dialog has been dismissed
      */
     async dismiss() {
         (0, assert_js_1.assert)(!__classPrivateFieldGet(this, _Dialog_handled, "f"), 'Cannot dismiss dialog which is already handled!');
@@ -34723,14 +40244,16 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _CDPElementHandle_instances, _CDPElementHandle_frame, _CDPElementHandle_frameManager_get, _CDPElementHandle_page_get, _CDPElementHandle_scrollIntoViewIfNeeded, _CDPElementHandle_getOOPIFOffsets, _CDPElementHandle_getBoxModel, _CDPElementHandle_fromProtocolQuad, _CDPElementHandle_intersectQuadWithViewport;
+var _CDPElementHandle_instances, _CDPElementHandle_frame, _CDPElementHandle_frameManager_get, _CDPElementHandle_page_get, _CDPElementHandle_checkVisibility, _CDPElementHandle_scrollIntoViewIfNeeded, _CDPElementHandle_getOOPIFOffsets, _CDPElementHandle_getBoxModel, _CDPElementHandle_fromProtocolQuad, _CDPElementHandle_intersectQuadWithViewport;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CDPElementHandle = void 0;
 const ElementHandle_js_1 = __nccwpck_require__(3839);
 const assert_js_1 = __nccwpck_require__(7729);
 const AsyncIterableUtil_js_1 = __nccwpck_require__(6992);
 const GetQueryHandler_js_1 = __nccwpck_require__(3465);
+const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
 const JSHandle_js_1 = __nccwpck_require__(2045);
+const LazyArg_js_1 = __nccwpck_require__(4897);
 const util_js_1 = __nccwpck_require__(8274);
 const applyOffsetsToQuad = (quad, offsetX, offsetY) => {
     return quad.map(part => {
@@ -34816,6 +40339,12 @@ class CDPElementHandle extends ElementHandle_js_1.ElementHandle {
         }
         return this.waitForSelector(`xpath/${xpath}`, options);
     }
+    async isVisible() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_checkVisibility).call(this, true);
+    }
+    async isHidden() {
+        return __classPrivateFieldGet(this, _CDPElementHandle_instances, "m", _CDPElementHandle_checkVisibility).call(this, false);
+    }
     async toElement(tagName) {
         const isMatchingTagName = await this.evaluate((node, tagName) => {
             return node.nodeName === tagName.toUpperCase();
@@ -34833,6 +40362,28 @@ class CDPElementHandle extends ElementHandle_js_1.ElementHandle {
             return null;
         }
         return __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_frameManager_get).frame(nodeInfo.node.frameId);
+    }
+    async scrollIntoView() {
+        await this.assertConnectedElement();
+        try {
+            await this.client.send('DOM.scrollIntoViewIfNeeded', {
+                objectId: this.remoteObject().objectId,
+            });
+        }
+        catch (error) {
+            (0, util_js_1.debugError)(error);
+            // Fallback to Element.scrollIntoView if DOM.scrollIntoViewIfNeeded is not supported
+            await this.evaluate(async (element) => {
+                element.scrollIntoView({
+                    block: 'center',
+                    inline: 'center',
+                    // @ts-expect-error Chrome still supports behavior: instant but
+                    // it's not in the spec so TS shouts We don't want to make this
+                    // breaking change in Puppeteer yet so we'll ignore the line.
+                    behavior: 'instant',
+                });
+            });
+        }
     }
     async clickablePoint(offset) {
         const [result, layoutMetrics] = await Promise.all([
@@ -35136,67 +40687,31 @@ class CDPElementHandle extends ElementHandle_js_1.ElementHandle {
         }
         return imageData;
     }
-    async isIntersectingViewport(options) {
-        const { threshold = 0 } = options !== null && options !== void 0 ? options : {};
-        return await this.evaluate(async (element, threshold) => {
-            const visibleRatio = await new Promise(resolve => {
-                const observer = new IntersectionObserver(entries => {
-                    resolve(entries[0].intersectionRatio);
-                    observer.disconnect();
-                });
-                observer.observe(element);
-            });
-            return threshold === 1 ? visibleRatio === 1 : visibleRatio > threshold;
-        }, threshold);
-    }
 }
 exports.CDPElementHandle = CDPElementHandle;
 _CDPElementHandle_frame = new WeakMap(), _CDPElementHandle_instances = new WeakSet(), _CDPElementHandle_frameManager_get = function _CDPElementHandle_frameManager_get() {
     return __classPrivateFieldGet(this, _CDPElementHandle_frame, "f")._frameManager;
 }, _CDPElementHandle_page_get = function _CDPElementHandle_page_get() {
     return __classPrivateFieldGet(this, _CDPElementHandle_frame, "f").page();
-}, _CDPElementHandle_scrollIntoViewIfNeeded = async function _CDPElementHandle_scrollIntoViewIfNeeded() {
-    const error = await this.evaluate(async (element) => {
-        if (!element.isConnected) {
-            return 'Node is detached from document';
-        }
-        if (element.nodeType !== Node.ELEMENT_NODE) {
-            return 'Node is not of type HTMLElement';
-        }
-        return;
-    });
-    if (error) {
-        throw new Error(error);
-    }
+}, _CDPElementHandle_checkVisibility = async function _CDPElementHandle_checkVisibility(visibility) {
+    const element = await this.frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].adoptHandle(this);
     try {
-        await this.client.send('DOM.scrollIntoViewIfNeeded', {
-            objectId: this.remoteObject().objectId,
-        });
+        return await this.frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].evaluate(async (PuppeteerUtil, element, visibility) => {
+            return Boolean(PuppeteerUtil.checkVisibility(element, visibility));
+        }, LazyArg_js_1.LazyArg.create(context => {
+            return context.puppeteerUtil;
+        }), element, visibility);
     }
-    catch (_err) {
-        // Fallback to Element.scrollIntoView if DOM.scrollIntoViewIfNeeded is not supported
-        await this.evaluate(async (element, pageJavascriptEnabled) => {
-            const visibleRatio = async () => {
-                return await new Promise(resolve => {
-                    const observer = new IntersectionObserver(entries => {
-                        resolve(entries[0].intersectionRatio);
-                        observer.disconnect();
-                    });
-                    observer.observe(element);
-                });
-            };
-            if (!pageJavascriptEnabled || (await visibleRatio()) !== 1.0) {
-                element.scrollIntoView({
-                    block: 'center',
-                    inline: 'center',
-                    // @ts-expect-error Chrome still supports behavior: instant but
-                    // it's not in the spec so TS shouts We don't want to make this
-                    // breaking change in Puppeteer yet so we'll ignore the line.
-                    behavior: 'instant',
-                });
-            }
-        }, __classPrivateFieldGet(this, _CDPElementHandle_instances, "a", _CDPElementHandle_page_get).isJavaScriptEnabled());
+    finally {
+        await element.dispose();
     }
+}, _CDPElementHandle_scrollIntoViewIfNeeded = async function _CDPElementHandle_scrollIntoViewIfNeeded() {
+    if (await this.isIntersectingViewport({
+        threshold: 1,
+    })) {
+        return;
+    }
+    await this.scrollIntoView();
 }, _CDPElementHandle_getOOPIFOffsets = async function _CDPElementHandle_getOOPIFOffsets(frame) {
     let offsetX = 0;
     let offsetY = 0;
@@ -35357,7 +40872,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 };
 var _ProtocolError_code, _ProtocolError_originalMessage;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.errors = exports.ProtocolError = exports.TimeoutError = exports.CustomError = void 0;
+exports.errors = exports.ProtocolError = exports.AbortError = exports.TimeoutError = exports.CustomError = void 0;
 /**
  * @deprecated Do not use.
  *
@@ -35387,6 +40902,18 @@ exports.CustomError = CustomError;
 class TimeoutError extends CustomError {
 }
 exports.TimeoutError = TimeoutError;
+/**
+ * AbortError is emitted whenever certain operations are terminated due to
+ * an abort request.
+ *
+ * @remarks
+ * Example operations are {@link Page.waitForSelector | page.waitForSelector}.
+ *
+ * @public
+ */
+class AbortError extends CustomError {
+}
+exports.AbortError = AbortError;
 /**
  * ProtocolError is emitted whenever there is an error from the protocol.
  *
@@ -35625,7 +41152,7 @@ var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
     return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
 };
-var _ExecutionContext_instances, _ExecutionContext_puppeteerUtil, _ExecutionContext_installGlobalBinding, _ExecutionContext_evaluate;
+var _ExecutionContext_instances, _ExecutionContext_bindingsInstalled, _ExecutionContext_puppeteerUtil, _ExecutionContext_installGlobalBinding, _ExecutionContext_evaluate;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ExecutionContext = exports.EVALUATION_SCRIPT_URL = void 0;
 const AsyncIterableUtil_js_1 = __nccwpck_require__(6992);
@@ -35667,6 +41194,7 @@ const SOURCE_URL_REGEX = /^[\040\t]*\/\/[@#] sourceURL=\s*(\S*?)\s*$/m;
 class ExecutionContext {
     constructor(client, contextPayload, world) {
         _ExecutionContext_instances.add(this);
+        _ExecutionContext_bindingsInstalled.set(this, false);
         _ExecutionContext_puppeteerUtil.set(this, void 0);
         this._client = client;
         this._world = world;
@@ -35676,13 +41204,9 @@ class ExecutionContext {
         }
     }
     get puppeteerUtil() {
-        ScriptInjector_js_1.scriptInjector.inject(script => {
-            if (__classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f")) {
-                __classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f").then(handle => {
-                    handle.dispose();
-                });
-            }
-            __classPrivateFieldSet(this, _ExecutionContext_puppeteerUtil, Promise.all([
+        let promise = Promise.resolve();
+        if (!__classPrivateFieldGet(this, _ExecutionContext_bindingsInstalled, "f")) {
+            promise = Promise.all([
                 __classPrivateFieldGet(this, _ExecutionContext_instances, "m", _ExecutionContext_installGlobalBinding).call(this, new Binding_js_1.Binding('__ariaQuerySelector', AriaQueryHandler_js_1.ARIAQueryHandler.queryOne)),
                 __classPrivateFieldGet(this, _ExecutionContext_instances, "m", _ExecutionContext_installGlobalBinding).call(this, new Binding_js_1.Binding('__ariaQuerySelectorAll', (async (element, selector) => {
                     const results = AriaQueryHandler_js_1.ARIAQueryHandler.queryAll(element, selector);
@@ -35690,7 +41214,16 @@ class ExecutionContext {
                         return elements;
                     }, ...(await AsyncIterableUtil_js_1.AsyncIterableUtil.collect(results)));
                 }))),
-            ]).then(() => {
+            ]);
+            __classPrivateFieldSet(this, _ExecutionContext_bindingsInstalled, true, "f");
+        }
+        ScriptInjector_js_1.scriptInjector.inject(script => {
+            if (__classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f")) {
+                __classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f").then(handle => {
+                    handle.dispose();
+                });
+            }
+            __classPrivateFieldSet(this, _ExecutionContext_puppeteerUtil, promise.then(() => {
                 return this.evaluateHandle(script);
             }), "f");
         }, !__classPrivateFieldGet(this, _ExecutionContext_puppeteerUtil, "f"));
@@ -35793,7 +41326,7 @@ class ExecutionContext {
     }
 }
 exports.ExecutionContext = ExecutionContext;
-_ExecutionContext_puppeteerUtil = new WeakMap(), _ExecutionContext_instances = new WeakSet(), _ExecutionContext_installGlobalBinding = async function _ExecutionContext_installGlobalBinding(binding) {
+_ExecutionContext_bindingsInstalled = new WeakMap(), _ExecutionContext_puppeteerUtil = new WeakMap(), _ExecutionContext_instances = new WeakSet(), _ExecutionContext_installGlobalBinding = async function _ExecutionContext_installGlobalBinding(binding) {
     try {
         if (this._world) {
             this._world._bindings.set(binding.name, binding);
@@ -35991,16 +41524,18 @@ class FileChooser {
         return __classPrivateFieldGet(this, _FileChooser_multiple, "f");
     }
     /**
-     * Accept the file chooser request with given paths.
+     * Accept the file chooser request with the given file paths.
      *
-     * @param filePaths - If some of the `filePaths` are relative paths, then
-     * they are resolved relative to the
+     * @remarks This will not validate whether the file paths exists. Also, if a
+     * path is relative, then it is resolved against the
      * {@link https://nodejs.org/api/process.html#process_process_cwd | current working directory}.
+     * For locals script connecting to remote chrome environments, paths must be
+     * absolute.
      */
-    async accept(filePaths) {
+    async accept(paths) {
         (0, assert_js_1.assert)(!__classPrivateFieldGet(this, _FileChooser_handled, "f"), 'Cannot accept FileChooser which is already handled!');
         __classPrivateFieldSet(this, _FileChooser_handled, true, "f");
-        await __classPrivateFieldGet(this, _FileChooser_element, "f").uploadFile(...filePaths);
+        await __classPrivateFieldGet(this, _FileChooser_element, "f").uploadFile(...paths);
     }
     /**
      * Closes the file chooser without selecting any files.
@@ -36047,10 +41582,11 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _FirefoxTargetManager_instances, _FirefoxTargetManager_connection, _FirefoxTargetManager_discoveredTargetsByTargetId, _FirefoxTargetManager_availableTargetsByTargetId, _FirefoxTargetManager_availableTargetsBySessionId, _FirefoxTargetManager_ignoredTargets, _FirefoxTargetManager_targetFilterCallback, _FirefoxTargetManager_targetFactory, _FirefoxTargetManager_targetInterceptors, _FirefoxTargetManager_attachedToTargetListenersBySession, _FirefoxTargetManager_initializeCallback, _FirefoxTargetManager_initializePromise, _FirefoxTargetManager_targetsIdsForInit, _FirefoxTargetManager_onSessionDetached, _FirefoxTargetManager_onTargetCreated, _FirefoxTargetManager_onTargetDestroyed, _FirefoxTargetManager_onAttachedToTarget, _FirefoxTargetManager_finishInitializationIfReady;
+var _FirefoxTargetManager_instances, _FirefoxTargetManager_connection, _FirefoxTargetManager_discoveredTargetsByTargetId, _FirefoxTargetManager_availableTargetsByTargetId, _FirefoxTargetManager_availableTargetsBySessionId, _FirefoxTargetManager_ignoredTargets, _FirefoxTargetManager_targetFilterCallback, _FirefoxTargetManager_targetFactory, _FirefoxTargetManager_targetInterceptors, _FirefoxTargetManager_attachedToTargetListenersBySession, _FirefoxTargetManager_initializePromise, _FirefoxTargetManager_targetsIdsForInit, _FirefoxTargetManager_onSessionDetached, _FirefoxTargetManager_onTargetCreated, _FirefoxTargetManager_onTargetDestroyed, _FirefoxTargetManager_onAttachedToTarget, _FirefoxTargetManager_finishInitializationIfReady;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FirefoxTargetManager = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const Connection_js_1 = __nccwpck_require__(370);
 const EventEmitter_js_1 = __nccwpck_require__(7692);
 /**
@@ -36103,10 +41639,7 @@ class FirefoxTargetManager extends EventEmitter_js_1.EventEmitter {
         _FirefoxTargetManager_targetFactory.set(this, void 0);
         _FirefoxTargetManager_targetInterceptors.set(this, new WeakMap());
         _FirefoxTargetManager_attachedToTargetListenersBySession.set(this, new WeakMap());
-        _FirefoxTargetManager_initializeCallback.set(this, () => { });
-        _FirefoxTargetManager_initializePromise.set(this, new Promise(resolve => {
-            __classPrivateFieldSet(this, _FirefoxTargetManager_initializeCallback, resolve, "f");
-        }));
+        _FirefoxTargetManager_initializePromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _FirefoxTargetManager_targetsIdsForInit.set(this, new Set());
         _FirefoxTargetManager_onSessionDetached.set(this, (session) => {
             this.removeSessionListeners(session);
@@ -36204,16 +41737,19 @@ class FirefoxTargetManager extends EventEmitter_js_1.EventEmitter {
         __classPrivateFieldGet(this, _FirefoxTargetManager_connection, "f").off('Target.targetDestroyed', __classPrivateFieldGet(this, _FirefoxTargetManager_onTargetDestroyed, "f"));
     }
     async initialize() {
-        await __classPrivateFieldGet(this, _FirefoxTargetManager_connection, "f").send('Target.setDiscoverTargets', { discover: true });
+        await __classPrivateFieldGet(this, _FirefoxTargetManager_connection, "f").send('Target.setDiscoverTargets', {
+            discover: true,
+            filter: [{}],
+        });
         __classPrivateFieldSet(this, _FirefoxTargetManager_targetsIdsForInit, new Set(__classPrivateFieldGet(this, _FirefoxTargetManager_discoveredTargetsByTargetId, "f").keys()), "f");
         await __classPrivateFieldGet(this, _FirefoxTargetManager_initializePromise, "f");
     }
 }
 exports.FirefoxTargetManager = FirefoxTargetManager;
-_FirefoxTargetManager_connection = new WeakMap(), _FirefoxTargetManager_discoveredTargetsByTargetId = new WeakMap(), _FirefoxTargetManager_availableTargetsByTargetId = new WeakMap(), _FirefoxTargetManager_availableTargetsBySessionId = new WeakMap(), _FirefoxTargetManager_ignoredTargets = new WeakMap(), _FirefoxTargetManager_targetFilterCallback = new WeakMap(), _FirefoxTargetManager_targetFactory = new WeakMap(), _FirefoxTargetManager_targetInterceptors = new WeakMap(), _FirefoxTargetManager_attachedToTargetListenersBySession = new WeakMap(), _FirefoxTargetManager_initializeCallback = new WeakMap(), _FirefoxTargetManager_initializePromise = new WeakMap(), _FirefoxTargetManager_targetsIdsForInit = new WeakMap(), _FirefoxTargetManager_onSessionDetached = new WeakMap(), _FirefoxTargetManager_onTargetCreated = new WeakMap(), _FirefoxTargetManager_onTargetDestroyed = new WeakMap(), _FirefoxTargetManager_onAttachedToTarget = new WeakMap(), _FirefoxTargetManager_instances = new WeakSet(), _FirefoxTargetManager_finishInitializationIfReady = function _FirefoxTargetManager_finishInitializationIfReady(targetId) {
+_FirefoxTargetManager_connection = new WeakMap(), _FirefoxTargetManager_discoveredTargetsByTargetId = new WeakMap(), _FirefoxTargetManager_availableTargetsByTargetId = new WeakMap(), _FirefoxTargetManager_availableTargetsBySessionId = new WeakMap(), _FirefoxTargetManager_ignoredTargets = new WeakMap(), _FirefoxTargetManager_targetFilterCallback = new WeakMap(), _FirefoxTargetManager_targetFactory = new WeakMap(), _FirefoxTargetManager_targetInterceptors = new WeakMap(), _FirefoxTargetManager_attachedToTargetListenersBySession = new WeakMap(), _FirefoxTargetManager_initializePromise = new WeakMap(), _FirefoxTargetManager_targetsIdsForInit = new WeakMap(), _FirefoxTargetManager_onSessionDetached = new WeakMap(), _FirefoxTargetManager_onTargetCreated = new WeakMap(), _FirefoxTargetManager_onTargetDestroyed = new WeakMap(), _FirefoxTargetManager_onAttachedToTarget = new WeakMap(), _FirefoxTargetManager_instances = new WeakSet(), _FirefoxTargetManager_finishInitializationIfReady = function _FirefoxTargetManager_finishInitializationIfReady(targetId) {
     __classPrivateFieldGet(this, _FirefoxTargetManager_targetsIdsForInit, "f").delete(targetId);
     if (__classPrivateFieldGet(this, _FirefoxTargetManager_targetsIdsForInit, "f").size === 0) {
-        __classPrivateFieldGet(this, _FirefoxTargetManager_initializeCallback, "f").call(this);
+        __classPrivateFieldGet(this, _FirefoxTargetManager_initializePromise, "f").resolve();
     }
 };
 //# sourceMappingURL=FirefoxTargetManager.js.map
@@ -36240,29 +41776,6 @@ _FirefoxTargetManager_connection = new WeakMap(), _FirefoxTargetManager_discover
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
@@ -36377,13 +41890,13 @@ class Frame {
         };
     }
     /**
-     * @returns The page associated with the frame.
+     * The page associated with the frame.
      */
     page() {
         return this._frameManager.page();
     }
     /**
-     * @returns `true` if the frame is an out-of-process (OOP) frame. Otherwise,
+     * Is `true` if the frame is an out-of-process (OOP) frame. Otherwise,
      * `false`.
      */
     isOOPFrame() {
@@ -36729,7 +42242,7 @@ class Frame {
         return this.worlds[IsolatedWorlds_js_1.MAIN_WORLD].waitForFunction(pageFunction, options, ...args);
     }
     /**
-     * @returns The full HTML contents of the frame, including the DOCTYPE.
+     * The full HTML contents of the frame, including the DOCTYPE.
      */
     async content() {
         return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].content();
@@ -36745,7 +42258,7 @@ class Frame {
         return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].setContent(html, options);
     }
     /**
-     * @returns The frame's `name` attribute as specified in the tag.
+     * The frame's `name` attribute as specified in the tag.
      *
      * @remarks
      * If the name is empty, it returns the `id` attribute instead.
@@ -36758,25 +42271,25 @@ class Frame {
         return this._name || '';
     }
     /**
-     * @returns The frame's URL.
+     * The frame's URL.
      */
     url() {
         return __classPrivateFieldGet(this, _Frame_url, "f");
     }
     /**
-     * @returns The parent frame, if any. Detached and main frames return `null`.
+     * The parent frame, if any. Detached and main frames return `null`.
      */
     parentFrame() {
         return this._frameManager._frameTree.parentFrame(this._id) || null;
     }
     /**
-     * @returns An array of child frames.
+     * An array of child frames.
      */
     childFrames() {
         return this._frameManager._frameTree.childFrames(this._id);
     }
     /**
-     * @returns `true` if the frame has been detached. Otherwise, `false`.
+     * Is`true` if the frame has been detached. Otherwise, `false`.
      */
     isDetached() {
         return __classPrivateFieldGet(this, _Frame_detached, "f");
@@ -36795,16 +42308,7 @@ class Frame {
             throw new Error('Exactly one of `url`, `path`, or `content` must be specified.');
         }
         if (path) {
-            let fs;
-            try {
-                fs = (await Promise.resolve().then(() => __importStar(__nccwpck_require__(7147)))).promises;
-            }
-            catch (error) {
-                if (error instanceof TypeError) {
-                    throw new Error('Can only pass a file path in a Node-like environment.');
-                }
-                throw error;
-            }
+            const fs = await (0, util_js_1.importFSPromises)();
             content = await fs.readFile(path, 'utf8');
             content += `//# sourceURL=${path.replace(/\n/g, '')}`;
         }
@@ -36844,16 +42348,7 @@ class Frame {
             throw new Error('Exactly one of `url`, `path`, or `content` must be specified.');
         }
         if (path) {
-            let fs;
-            try {
-                fs = (await (0, util_js_1.importFS)()).promises;
-            }
-            catch (error) {
-                if (error instanceof TypeError) {
-                    throw new Error('Can only pass a file path in a Node-like environment.');
-                }
-                throw error;
-            }
+            const fs = await (0, util_js_1.importFSPromises)();
             content = await fs.readFile(path, 'utf8');
             content += '/*# sourceURL=' + path.replace(/\n/g, '') + '*/';
             options.content = content;
@@ -37005,7 +42500,7 @@ class Frame {
         });
     }
     /**
-     * @returns the frame's title.
+     * The frame's title.
      */
     async title() {
         return this.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].title();
@@ -37718,7 +43213,7 @@ class HTTPRequest extends HTTPRequest_js_1.HTTPRequest {
     get client() {
         return __classPrivateFieldGet(this, _HTTPRequest_client, "f");
     }
-    constructor(client, frame, interceptionId, allowInterception, event, redirectChain) {
+    constructor(client, frame, interceptionId, allowInterception, data, redirectChain) {
         super();
         _HTTPRequest_instances.add(this);
         this._failureText = null;
@@ -37743,20 +43238,20 @@ class HTTPRequest extends HTTPRequest_js_1.HTTPRequest {
         _HTTPRequest_interceptHandlers.set(this, void 0);
         _HTTPRequest_initiator.set(this, void 0);
         __classPrivateFieldSet(this, _HTTPRequest_client, client, "f");
-        this._requestId = event.requestId;
-        __classPrivateFieldSet(this, _HTTPRequest_isNavigationRequest, event.requestId === event.loaderId && event.type === 'Document', "f");
+        this._requestId = data.requestId;
+        __classPrivateFieldSet(this, _HTTPRequest_isNavigationRequest, data.requestId === data.loaderId && data.type === 'Document', "f");
         this._interceptionId = interceptionId;
         __classPrivateFieldSet(this, _HTTPRequest_allowInterception, allowInterception, "f");
-        __classPrivateFieldSet(this, _HTTPRequest_url, event.request.url, "f");
-        __classPrivateFieldSet(this, _HTTPRequest_resourceType, (event.type || 'other').toLowerCase(), "f");
-        __classPrivateFieldSet(this, _HTTPRequest_method, event.request.method, "f");
-        __classPrivateFieldSet(this, _HTTPRequest_postData, event.request.postData, "f");
+        __classPrivateFieldSet(this, _HTTPRequest_url, data.request.url, "f");
+        __classPrivateFieldSet(this, _HTTPRequest_resourceType, (data.type || 'other').toLowerCase(), "f");
+        __classPrivateFieldSet(this, _HTTPRequest_method, data.request.method, "f");
+        __classPrivateFieldSet(this, _HTTPRequest_postData, data.request.postData, "f");
         __classPrivateFieldSet(this, _HTTPRequest_frame, frame, "f");
         this._redirectChain = redirectChain;
         __classPrivateFieldSet(this, _HTTPRequest_continueRequestOverrides, {}, "f");
         __classPrivateFieldSet(this, _HTTPRequest_interceptHandlers, [], "f");
-        __classPrivateFieldSet(this, _HTTPRequest_initiator, event.initiator, "f");
-        for (const [key, value] of Object.entries(event.request.headers)) {
+        __classPrivateFieldSet(this, _HTTPRequest_initiator, data.initiator, "f");
+        for (const [key, value] of Object.entries(data.request.headers)) {
             __classPrivateFieldGet(this, _HTTPRequest_headers, "f")[key.toLowerCase()] = value;
         }
     }
@@ -37834,26 +43329,6 @@ class HTTPRequest extends HTTPRequest_js_1.HTTPRequest {
     redirectChain() {
         return this._redirectChain.slice();
     }
-    /**
-     * Access information about the request's failure.
-     *
-     * @remarks
-     *
-     * @example
-     *
-     * Example of logging all failed requests:
-     *
-     * ```ts
-     * page.on('requestfailed', request => {
-     *   console.log(request.url() + ' ' + request.failure().errorText);
-     * });
-     * ```
-     *
-     * @returns `null` unless the request failed. If the request fails this can
-     * return an object with `errorText` containing a human-readable error
-     * message, e.g. `net::ERR_FAILED`. It is not guaranteed that there will be
-     * failure text if the request fails.
-     */
     failure() {
         if (!this._failureText) {
             return null;
@@ -37862,35 +43337,6 @@ class HTTPRequest extends HTTPRequest_js_1.HTTPRequest {
             errorText: this._failureText,
         };
     }
-    /**
-     * Continues request with optional request overrides.
-     *
-     * @remarks
-     *
-     * To use this, request
-     * interception should be enabled with {@link Page.setRequestInterception}.
-     *
-     * Exception is immediately thrown if the request interception is not enabled.
-     *
-     * @example
-     *
-     * ```ts
-     * await page.setRequestInterception(true);
-     * page.on('request', request => {
-     *   // Override headers
-     *   const headers = Object.assign({}, request.headers(), {
-     *     foo: 'bar', // set "foo" header
-     *     origin: undefined, // remove "origin" header
-     *   });
-     *   request.continue({headers});
-     * });
-     * ```
-     *
-     * @param overrides - optional overrides to apply to the request.
-     * @param priority - If provided, intercept is resolved using
-     * cooperative handling rules. Otherwise, intercept is resolved
-     * immediately.
-     */
     async continue(overrides = {}, priority) {
         // Request interception is not supported for data: urls.
         if (__classPrivateFieldGet(this, _HTTPRequest_url, "f").startsWith('data:')) {
@@ -38086,10 +43532,11 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _HTTPResponse_instances, _HTTPResponse_client, _HTTPResponse_request, _HTTPResponse_contentPromise, _HTTPResponse_bodyLoadedPromise, _HTTPResponse_bodyLoadedPromiseFulfill, _HTTPResponse_remoteAddress, _HTTPResponse_status, _HTTPResponse_statusText, _HTTPResponse_url, _HTTPResponse_fromDiskCache, _HTTPResponse_fromServiceWorker, _HTTPResponse_headers, _HTTPResponse_securityDetails, _HTTPResponse_timing, _HTTPResponse_parseStatusTextFromExtrInfo;
+var _HTTPResponse_instances, _HTTPResponse_client, _HTTPResponse_request, _HTTPResponse_contentPromise, _HTTPResponse_bodyLoadedPromise, _HTTPResponse_remoteAddress, _HTTPResponse_status, _HTTPResponse_statusText, _HTTPResponse_url, _HTTPResponse_fromDiskCache, _HTTPResponse_fromServiceWorker, _HTTPResponse_headers, _HTTPResponse_securityDetails, _HTTPResponse_timing, _HTTPResponse_parseStatusTextFromExtrInfo;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HTTPResponse = void 0;
 const HTTPResponse_js_1 = __nccwpck_require__(607);
+const DeferredPromise_js_1 = __nccwpck_require__(7015);
 const Errors_js_1 = __nccwpck_require__(6315);
 const SecurityDetails_js_1 = __nccwpck_require__(8762);
 /**
@@ -38102,8 +43549,7 @@ class HTTPResponse extends HTTPResponse_js_1.HTTPResponse {
         _HTTPResponse_client.set(this, void 0);
         _HTTPResponse_request.set(this, void 0);
         _HTTPResponse_contentPromise.set(this, null);
-        _HTTPResponse_bodyLoadedPromise.set(this, void 0);
-        _HTTPResponse_bodyLoadedPromiseFulfill.set(this, () => { });
+        _HTTPResponse_bodyLoadedPromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _HTTPResponse_remoteAddress.set(this, void 0);
         _HTTPResponse_status.set(this, void 0);
         _HTTPResponse_statusText.set(this, void 0);
@@ -38115,9 +43561,6 @@ class HTTPResponse extends HTTPResponse_js_1.HTTPResponse {
         _HTTPResponse_timing.set(this, void 0);
         __classPrivateFieldSet(this, _HTTPResponse_client, client, "f");
         __classPrivateFieldSet(this, _HTTPResponse_request, request, "f");
-        __classPrivateFieldSet(this, _HTTPResponse_bodyLoadedPromise, new Promise(fulfill => {
-            __classPrivateFieldSet(this, _HTTPResponse_bodyLoadedPromiseFulfill, fulfill, "f");
-        }), "f");
         __classPrivateFieldSet(this, _HTTPResponse_remoteAddress, {
             ip: responsePayload.remoteIPAddress,
             port: responsePayload.remotePort,
@@ -38139,9 +43582,9 @@ class HTTPResponse extends HTTPResponse_js_1.HTTPResponse {
     }
     _resolveBody(err) {
         if (err) {
-            return __classPrivateFieldGet(this, _HTTPResponse_bodyLoadedPromiseFulfill, "f").call(this, err);
+            return __classPrivateFieldGet(this, _HTTPResponse_bodyLoadedPromise, "f").resolve(err);
         }
-        return __classPrivateFieldGet(this, _HTTPResponse_bodyLoadedPromiseFulfill, "f").call(this);
+        return __classPrivateFieldGet(this, _HTTPResponse_bodyLoadedPromise, "f").resolve();
     }
     remoteAddress() {
         return __classPrivateFieldGet(this, _HTTPResponse_remoteAddress, "f");
@@ -38205,7 +43648,7 @@ class HTTPResponse extends HTTPResponse_js_1.HTTPResponse {
     }
 }
 exports.HTTPResponse = HTTPResponse;
-_HTTPResponse_client = new WeakMap(), _HTTPResponse_request = new WeakMap(), _HTTPResponse_contentPromise = new WeakMap(), _HTTPResponse_bodyLoadedPromise = new WeakMap(), _HTTPResponse_bodyLoadedPromiseFulfill = new WeakMap(), _HTTPResponse_remoteAddress = new WeakMap(), _HTTPResponse_status = new WeakMap(), _HTTPResponse_statusText = new WeakMap(), _HTTPResponse_url = new WeakMap(), _HTTPResponse_fromDiskCache = new WeakMap(), _HTTPResponse_fromServiceWorker = new WeakMap(), _HTTPResponse_headers = new WeakMap(), _HTTPResponse_securityDetails = new WeakMap(), _HTTPResponse_timing = new WeakMap(), _HTTPResponse_instances = new WeakSet(), _HTTPResponse_parseStatusTextFromExtrInfo = function _HTTPResponse_parseStatusTextFromExtrInfo(extraInfo) {
+_HTTPResponse_client = new WeakMap(), _HTTPResponse_request = new WeakMap(), _HTTPResponse_contentPromise = new WeakMap(), _HTTPResponse_bodyLoadedPromise = new WeakMap(), _HTTPResponse_remoteAddress = new WeakMap(), _HTTPResponse_status = new WeakMap(), _HTTPResponse_statusText = new WeakMap(), _HTTPResponse_url = new WeakMap(), _HTTPResponse_fromDiskCache = new WeakMap(), _HTTPResponse_fromServiceWorker = new WeakMap(), _HTTPResponse_headers = new WeakMap(), _HTTPResponse_securityDetails = new WeakMap(), _HTTPResponse_timing = new WeakMap(), _HTTPResponse_instances = new WeakSet(), _HTTPResponse_parseStatusTextFromExtrInfo = function _HTTPResponse_parseStatusTextFromExtrInfo(extraInfo) {
     if (!extraInfo || !extraInfo.headersText) {
         return;
     }
@@ -38257,7 +43700,7 @@ const DEFAULT_BATCH_SIZE = 20;
  * @param size - The number of elements to transpose. This should be something
  * reasonable.
  */
-async function* fastTransposeIteratorHandle(iterator, size = DEFAULT_BATCH_SIZE) {
+async function* fastTransposeIteratorHandle(iterator, size) {
     const array = await iterator.evaluateHandle(async (iterator, size) => {
         const results = [];
         while (results.length < size) {
@@ -38279,8 +43722,11 @@ async function* fastTransposeIteratorHandle(iterator, size = DEFAULT_BATCH_SIZE)
  * of {@link fastTransposeIteratorHandle}.
  */
 async function* transposeIteratorHandle(iterator) {
+    let size = DEFAULT_BATCH_SIZE;
     try {
-        while (!(yield* fastTransposeIteratorHandle(iterator))) { }
+        while (!(yield* fastTransposeIteratorHandle(iterator, size))) {
+            size <<= 1;
+        }
     }
     finally {
         await iterator.dispose();
@@ -38332,9 +43778,9 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _Keyboard_instances, _Keyboard_client, _Keyboard_pressedKeys, _Keyboard_modifierBit, _Keyboard_keyDescriptionForString, _Mouse_client, _Mouse_keyboard, _Mouse_x, _Mouse_y, _Mouse_button, _Touchscreen_client, _Touchscreen_keyboard;
+var _Keyboard_instances, _Keyboard_client, _Keyboard_pressedKeys, _Keyboard_modifierBit, _Keyboard_keyDescriptionForString, _Mouse_instances, _Mouse_client, _Mouse_keyboard, _Mouse__state, _Mouse_state_get, _Mouse_transactions, _Mouse_createTransaction, _Mouse_withTransaction, _Touchscreen_client, _Touchscreen_keyboard;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Touchscreen = exports.Mouse = exports.Keyboard = void 0;
+exports.Touchscreen = exports.Mouse = exports.MouseButton = exports.Keyboard = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
 const USKeyboardLayout_js_1 = __nccwpck_require__(9931);
 /**
@@ -38616,6 +44062,54 @@ _Keyboard_client = new WeakMap(), _Keyboard_pressedKeys = new WeakMap(), _Keyboa
     return description;
 };
 /**
+ * Enum of valid mouse buttons.
+ *
+ * @public
+ */
+exports.MouseButton = Object.freeze({
+    Left: 'left',
+    Right: 'right',
+    Middle: 'middle',
+    Back: 'back',
+    Forward: 'forward',
+});
+const getFlag = (button) => {
+    switch (button) {
+        case exports.MouseButton.Left:
+            return 1 /* MouseButtonFlag.Left */;
+        case exports.MouseButton.Right:
+            return 2 /* MouseButtonFlag.Right */;
+        case exports.MouseButton.Middle:
+            return 4 /* MouseButtonFlag.Middle */;
+        case exports.MouseButton.Back:
+            return 8 /* MouseButtonFlag.Back */;
+        case exports.MouseButton.Forward:
+            return 16 /* MouseButtonFlag.Forward */;
+    }
+};
+/**
+ * This should match
+ * https://source.chromium.org/chromium/chromium/src/+/refs/heads/main:content/browser/renderer_host/input/web_input_event_builders_mac.mm;drc=a61b95c63b0b75c1cfe872d9c8cdf927c226046e;bpv=1;bpt=1;l=221.
+ */
+const getButtonFromPressedButtons = (buttons) => {
+    if (buttons & 1 /* MouseButtonFlag.Left */) {
+        return exports.MouseButton.Left;
+    }
+    else if (buttons & 2 /* MouseButtonFlag.Right */) {
+        return exports.MouseButton.Right;
+    }
+    else if (buttons & 4 /* MouseButtonFlag.Middle */) {
+        return exports.MouseButton.Middle;
+    }
+    else if (buttons & 8 /* MouseButtonFlag.Back */) {
+        return exports.MouseButton.Back;
+    }
+    else if (buttons & 16 /* MouseButtonFlag.Forward */) {
+        return exports.MouseButton.Forward;
+    }
+    return 'none';
+};
+/**
  * The Mouse class operates in main-frame CSS pixels
  * relative to the top-left corner of the viewport.
  * @remarks
@@ -38691,84 +44185,134 @@ class Mouse {
      * @internal
      */
     constructor(client, keyboard) {
+        _Mouse_instances.add(this);
         _Mouse_client.set(this, void 0);
         _Mouse_keyboard.set(this, void 0);
-        _Mouse_x.set(this, 0);
-        _Mouse_y.set(this, 0);
-        _Mouse_button.set(this, 'none');
+        _Mouse__state.set(this, {
+            position: { x: 0, y: 0 },
+            buttons: 0 /* MouseButtonFlag.None */,
+        });
+        // Transactions can run in parallel, so we store each of thme in this array.
+        _Mouse_transactions.set(this, []);
         __classPrivateFieldSet(this, _Mouse_client, client, "f");
         __classPrivateFieldSet(this, _Mouse_keyboard, keyboard, "f");
     }
     /**
-     * Dispatches a `mousemove` event.
+     * Moves the mouse to the given coordinate.
+     *
      * @param x - Horizontal position of the mouse.
      * @param y - Vertical position of the mouse.
-     * @param options - Optional object. If specified, the `steps` property
-     * sends intermediate `mousemove` events when set to `1` (default).
+     * @param options - Options to configure behavior.
      */
     async move(x, y, options = {}) {
         const { steps = 1 } = options;
-        const fromX = __classPrivateFieldGet(this, _Mouse_x, "f"), fromY = __classPrivateFieldGet(this, _Mouse_y, "f");
-        __classPrivateFieldSet(this, _Mouse_x, x, "f");
-        __classPrivateFieldSet(this, _Mouse_y, y, "f");
+        const from = __classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get).position;
+        const to = { x, y };
         for (let i = 1; i <= steps; i++) {
-            await __classPrivateFieldGet(this, _Mouse_client, "f").send('Input.dispatchMouseEvent', {
-                type: 'mouseMoved',
-                button: __classPrivateFieldGet(this, _Mouse_button, "f"),
-                x: fromX + (__classPrivateFieldGet(this, _Mouse_x, "f") - fromX) * (i / steps),
-                y: fromY + (__classPrivateFieldGet(this, _Mouse_y, "f") - fromY) * (i / steps),
-                modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
+            await __classPrivateFieldGet(this, _Mouse_instances, "m", _Mouse_withTransaction).call(this, updateState => {
+                updateState({
+                    position: {
+                        x: from.x + (to.x - from.x) * (i / steps),
+                        y: from.y + (to.y - from.y) * (i / steps),
+                    },
+                });
+                const { buttons, position } = __classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get);
+                return __classPrivateFieldGet(this, _Mouse_client, "f").send('Input.dispatchMouseEvent', {
+                    type: 'mouseMoved',
+                    modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
+                    buttons,
+                    button: getButtonFromPressedButtons(buttons),
+                    ...position,
+                });
             });
         }
+    }
+    /**
+     * Presses the mouse.
+     *
+     * @param options - Options to configure behavior.
+     */
+    async down(options = {}) {
+        const { button = exports.MouseButton.Left, clickCount = 1 } = options;
+        const flag = getFlag(button);
+        if (!flag) {
+            throw new Error(`Unsupported mouse button: ${button}`);
+        }
+        if (__classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get).buttons & flag) {
+            throw new Error(`'${button}' is already pressed.`);
+        }
+        await __classPrivateFieldGet(this, _Mouse_instances, "m", _Mouse_withTransaction).call(this, updateState => {
+            updateState({
+                buttons: __classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get).buttons | flag,
+            });
+            const { buttons, position } = __classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get);
+            return __classPrivateFieldGet(this, _Mouse_client, "f").send('Input.dispatchMouseEvent', {
+                type: 'mousePressed',
+                modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
+                clickCount,
+                buttons,
+                button,
+                ...position,
+            });
+        });
+    }
+    /**
+     * Releases the mouse.
+     *
+     * @param options - Options to configure behavior.
+     */
+    async up(options = {}) {
+        const { button = exports.MouseButton.Left, clickCount = 1 } = options;
+        const flag = getFlag(button);
+        if (!flag) {
+            throw new Error(`Unsupported mouse button: ${button}`);
+        }
+        if (!(__classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get).buttons & flag)) {
+            throw new Error(`'${button}' is not pressed.`);
+        }
+        await __classPrivateFieldGet(this, _Mouse_instances, "m", _Mouse_withTransaction).call(this, updateState => {
+            updateState({
+                buttons: __classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get).buttons & ~flag,
+            });
+            const { buttons, position } = __classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get);
+            return __classPrivateFieldGet(this, _Mouse_client, "f").send('Input.dispatchMouseEvent', {
+                type: 'mouseReleased',
+                modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
+                clickCount,
+                buttons,
+                button,
+                ...position,
+            });
+        });
     }
     /**
      * Shortcut for `mouse.move`, `mouse.down` and `mouse.up`.
+     *
      * @param x - Horizontal position of the mouse.
      * @param y - Vertical position of the mouse.
-     * @param options - Optional `MouseOptions`.
+     * @param options - Options to configure behavior.
      */
     async click(x, y, options = {}) {
-        const { delay = null } = options;
-        await this.move(x, y);
-        await this.down(options);
-        if (delay !== null) {
-            await new Promise(f => {
-                return setTimeout(f, delay);
+        const { delay, count = 1, clickCount = count } = options;
+        if (count < 1) {
+            throw new Error('Click must occur a positive number of times.');
+        }
+        const actions = [this.move(x, y)];
+        if (clickCount === count) {
+            for (let i = 1; i < count; ++i) {
+                actions.push(this.down({ ...options, clickCount: i }), this.up({ ...options, clickCount: i }));
+            }
+        }
+        actions.push(this.down({ ...options, clickCount }));
+        if (typeof delay === 'number') {
+            await Promise.all(actions);
+            actions.length = 0;
+            await new Promise(resolve => {
+                setTimeout(resolve, delay);
             });
         }
-        await this.up(options);
-    }
-    /**
-     * Dispatches a `mousedown` event.
-     * @param options - Optional `MouseOptions`.
-     */
-    async down(options = {}) {
-        const { button = 'left', clickCount = 1 } = options;
-        __classPrivateFieldSet(this, _Mouse_button, button, "f");
-        await __classPrivateFieldGet(this, _Mouse_client, "f").send('Input.dispatchMouseEvent', {
-            type: 'mousePressed',
-            button,
-            x: __classPrivateFieldGet(this, _Mouse_x, "f"),
-            y: __classPrivateFieldGet(this, _Mouse_y, "f"),
-            modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
-            clickCount,
-        });
-    }
-    /**
-     * Dispatches a `mouseup` event.
-     * @param options - Optional `MouseOptions`.
-     */
-    async up(options = {}) {
-        const { button = 'left', clickCount = 1 } = options;
-        __classPrivateFieldSet(this, _Mouse_button, 'none', "f");
-        await __classPrivateFieldGet(this, _Mouse_client, "f").send('Input.dispatchMouseEvent', {
-            type: 'mouseReleased',
-            button,
-            x: __classPrivateFieldGet(this, _Mouse_x, "f"),
-            y: __classPrivateFieldGet(this, _Mouse_y, "f"),
-            modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
-            clickCount,
-        });
+        actions.push(this.up({ ...options, clickCount }));
+        await Promise.all(actions);
     }
     /**
      * Dispatches a `mousewheel` event.
@@ -38794,14 +44338,15 @@ class Mouse {
      */
     async wheel(options = {}) {
         const { deltaX = 0, deltaY = 0 } = options;
+        const { position, buttons } = __classPrivateFieldGet(this, _Mouse_instances, "a", _Mouse_state_get);
         await __classPrivateFieldGet(this, _Mouse_client, "f").send('Input.dispatchMouseEvent', {
             type: 'mouseWheel',
-            x: __classPrivateFieldGet(this, _Mouse_x, "f"),
-            y: __classPrivateFieldGet(this, _Mouse_y, "f"),
-            deltaX,
-            deltaY,
-            modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
             pointerType: 'mouse',
+            modifiers: __classPrivateFieldGet(this, _Mouse_keyboard, "f")._modifiers,
+            deltaY,
+            deltaX,
+            buttons,
+            ...position,
         });
     }
     /**
@@ -38885,7 +44430,40 @@ class Mouse {
     }
 }
 exports.Mouse = Mouse;
-_Mouse_client = new WeakMap(), _Mouse_keyboard = new WeakMap(), _Mouse_x = new WeakMap(), _Mouse_y = new WeakMap(), _Mouse_button = new WeakMap();
+_Mouse_client = new WeakMap(), _Mouse_keyboard = new WeakMap(), _Mouse__state = new WeakMap(), _Mouse_transactions = new WeakMap(), _Mouse_instances = new WeakSet(), _Mouse_state_get = function _Mouse_state_get() {
+    return Object.assign({ ...__classPrivateFieldGet(this, _Mouse__state, "f") }, ...__classPrivateFieldGet(this, _Mouse_transactions, "f"));
+}, _Mouse_createTransaction = function _Mouse_createTransaction() {
+    const transaction = {};
+    __classPrivateFieldGet(this, _Mouse_transactions, "f").push(transaction);
+    const popTransaction = () => {
+        __classPrivateFieldGet(this, _Mouse_transactions, "f").splice(__classPrivateFieldGet(this, _Mouse_transactions, "f").indexOf(transaction), 1);
+    };
+    return {
+        update: (updates) => {
+            Object.assign(transaction, updates);
+        },
+        commit: () => {
+            __classPrivateFieldSet(this, _Mouse__state, { ...__classPrivateFieldGet(this, _Mouse__state, "f"), ...transaction }, "f");
+            popTransaction();
+        },
+        rollback: popTransaction,
+    };
+}, _Mouse_withTransaction = 
+/**
+ * This is a shortcut for a typical update, commit/rollback lifecycle based on
+ * the error of the action.
+ */
+async function _Mouse_withTransaction(action) {
+    const { update, commit, rollback } = __classPrivateFieldGet(this, _Mouse_instances, "m", _Mouse_createTransaction).call(this);
+    try {
+        await action(update);
+        commit();
+    }
+    catch (error) {
+        rollback();
+        throw error;
+    }
+};
 /**
  * The Touchscreen class exposes touchscreen events.
  * @public
@@ -39137,7 +44715,7 @@ class IsolatedWorld {
             throw error;
         }
     }
-    async click(selector, options) {
+    async click(selector, options = {}) {
         const handle = await this.$(selector);
         (0, assert_js_1.assert)(handle, `No element found for selector: ${selector}`);
         await handle.click(options);
@@ -39208,7 +44786,7 @@ class IsolatedWorld {
         }
     }
     waitForFunction(pageFunction, options = {}, ...args) {
-        const { polling = 'raf', timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).timeout(), root, } = options;
+        const { polling = 'raf', timeout = __classPrivateFieldGet(this, _IsolatedWorld_instances, "a", _IsolatedWorld_timeoutSettings_get).timeout(), root, signal, } = options;
         if (typeof polling === 'number' && polling < 0) {
             throw new Error('Cannot poll with non-positive interval');
         }
@@ -39216,6 +44794,7 @@ class IsolatedWorld {
             polling,
             root,
             timeout,
+            signal,
         }, pageFunction, ...args);
         return waitTask.result;
     }
@@ -39438,7 +45017,7 @@ class CDPJSHandle extends JSHandle_js_1.JSHandle {
         return value;
     }
     /**
-     * @returns Either `null` or the handle itself if the handle is an
+     * Either `null` or the handle itself if the handle is an
      * instance of {@link ElementHandle}.
      */
     asElement() {
@@ -39559,7 +45138,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _LifecycleWatcher_instances, _LifecycleWatcher_expectedLifecycle, _LifecycleWatcher_frameManager, _LifecycleWatcher_frame, _LifecycleWatcher_timeout, _LifecycleWatcher_navigationRequest, _LifecycleWatcher_eventListeners, _LifecycleWatcher_initialLoaderId, _LifecycleWatcher_sameDocumentNavigationCompleteCallback, _LifecycleWatcher_sameDocumentNavigationPromise, _LifecycleWatcher_lifecycleCallback, _LifecycleWatcher_lifecyclePromise, _LifecycleWatcher_newDocumentNavigationCompleteCallback, _LifecycleWatcher_newDocumentNavigationPromise, _LifecycleWatcher_terminationCallback, _LifecycleWatcher_terminationPromise, _LifecycleWatcher_timeoutPromise, _LifecycleWatcher_maximumTimer, _LifecycleWatcher_hasSameDocumentNavigation, _LifecycleWatcher_swapped, _LifecycleWatcher_navigationResponseReceived, _LifecycleWatcher_onRequest, _LifecycleWatcher_onRequestFailed, _LifecycleWatcher_onResponse, _LifecycleWatcher_onFrameDetached, _LifecycleWatcher_terminate, _LifecycleWatcher_createTimeoutPromise, _LifecycleWatcher_navigatedWithinDocument, _LifecycleWatcher_navigated, _LifecycleWatcher_frameSwapped, _LifecycleWatcher_checkLifecycleComplete;
+var _LifecycleWatcher_instances, _LifecycleWatcher_expectedLifecycle, _LifecycleWatcher_frameManager, _LifecycleWatcher_frame, _LifecycleWatcher_timeout, _LifecycleWatcher_navigationRequest, _LifecycleWatcher_eventListeners, _LifecycleWatcher_initialLoaderId, _LifecycleWatcher_sameDocumentNavigationPromise, _LifecycleWatcher_lifecyclePromise, _LifecycleWatcher_newDocumentNavigationPromise, _LifecycleWatcher_terminationPromise, _LifecycleWatcher_timeoutPromise, _LifecycleWatcher_maximumTimer, _LifecycleWatcher_hasSameDocumentNavigation, _LifecycleWatcher_swapped, _LifecycleWatcher_navigationResponseReceived, _LifecycleWatcher_onRequest, _LifecycleWatcher_onRequestFailed, _LifecycleWatcher_onResponse, _LifecycleWatcher_onFrameDetached, _LifecycleWatcher_terminate, _LifecycleWatcher_createTimeoutPromise, _LifecycleWatcher_navigatedWithinDocument, _LifecycleWatcher_navigated, _LifecycleWatcher_frameSwapped, _LifecycleWatcher_checkLifecycleComplete;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LifecycleWatcher = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
@@ -39589,22 +45168,10 @@ class LifecycleWatcher {
         _LifecycleWatcher_navigationRequest.set(this, null);
         _LifecycleWatcher_eventListeners.set(this, void 0);
         _LifecycleWatcher_initialLoaderId.set(this, void 0);
-        _LifecycleWatcher_sameDocumentNavigationCompleteCallback.set(this, noop);
-        _LifecycleWatcher_sameDocumentNavigationPromise.set(this, new Promise(fulfill => {
-            __classPrivateFieldSet(this, _LifecycleWatcher_sameDocumentNavigationCompleteCallback, fulfill, "f");
-        }));
-        _LifecycleWatcher_lifecycleCallback.set(this, noop);
-        _LifecycleWatcher_lifecyclePromise.set(this, new Promise(fulfill => {
-            __classPrivateFieldSet(this, _LifecycleWatcher_lifecycleCallback, fulfill, "f");
-        }));
-        _LifecycleWatcher_newDocumentNavigationCompleteCallback.set(this, noop);
-        _LifecycleWatcher_newDocumentNavigationPromise.set(this, new Promise(fulfill => {
-            __classPrivateFieldSet(this, _LifecycleWatcher_newDocumentNavigationCompleteCallback, fulfill, "f");
-        }));
-        _LifecycleWatcher_terminationCallback.set(this, noop);
-        _LifecycleWatcher_terminationPromise.set(this, new Promise(fulfill => {
-            __classPrivateFieldSet(this, _LifecycleWatcher_terminationCallback, fulfill, "f");
-        }));
+        _LifecycleWatcher_sameDocumentNavigationPromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
+        _LifecycleWatcher_lifecyclePromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
+        _LifecycleWatcher_newDocumentNavigationPromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
+        _LifecycleWatcher_terminationPromise.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _LifecycleWatcher_timeoutPromise.set(this, void 0);
         _LifecycleWatcher_maximumTimer.set(this, void 0);
         _LifecycleWatcher_hasSameDocumentNavigation.set(this, void 0);
@@ -39663,7 +45230,7 @@ class LifecycleWatcher {
     }
 }
 exports.LifecycleWatcher = LifecycleWatcher;
-_LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameManager = new WeakMap(), _LifecycleWatcher_frame = new WeakMap(), _LifecycleWatcher_timeout = new WeakMap(), _LifecycleWatcher_navigationRequest = new WeakMap(), _LifecycleWatcher_eventListeners = new WeakMap(), _LifecycleWatcher_initialLoaderId = new WeakMap(), _LifecycleWatcher_sameDocumentNavigationCompleteCallback = new WeakMap(), _LifecycleWatcher_sameDocumentNavigationPromise = new WeakMap(), _LifecycleWatcher_lifecycleCallback = new WeakMap(), _LifecycleWatcher_lifecyclePromise = new WeakMap(), _LifecycleWatcher_newDocumentNavigationCompleteCallback = new WeakMap(), _LifecycleWatcher_newDocumentNavigationPromise = new WeakMap(), _LifecycleWatcher_terminationCallback = new WeakMap(), _LifecycleWatcher_terminationPromise = new WeakMap(), _LifecycleWatcher_timeoutPromise = new WeakMap(), _LifecycleWatcher_maximumTimer = new WeakMap(), _LifecycleWatcher_hasSameDocumentNavigation = new WeakMap(), _LifecycleWatcher_swapped = new WeakMap(), _LifecycleWatcher_navigationResponseReceived = new WeakMap(), _LifecycleWatcher_instances = new WeakSet(), _LifecycleWatcher_onRequest = function _LifecycleWatcher_onRequest(request) {
+_LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameManager = new WeakMap(), _LifecycleWatcher_frame = new WeakMap(), _LifecycleWatcher_timeout = new WeakMap(), _LifecycleWatcher_navigationRequest = new WeakMap(), _LifecycleWatcher_eventListeners = new WeakMap(), _LifecycleWatcher_initialLoaderId = new WeakMap(), _LifecycleWatcher_sameDocumentNavigationPromise = new WeakMap(), _LifecycleWatcher_lifecyclePromise = new WeakMap(), _LifecycleWatcher_newDocumentNavigationPromise = new WeakMap(), _LifecycleWatcher_terminationPromise = new WeakMap(), _LifecycleWatcher_timeoutPromise = new WeakMap(), _LifecycleWatcher_maximumTimer = new WeakMap(), _LifecycleWatcher_hasSameDocumentNavigation = new WeakMap(), _LifecycleWatcher_swapped = new WeakMap(), _LifecycleWatcher_navigationResponseReceived = new WeakMap(), _LifecycleWatcher_instances = new WeakSet(), _LifecycleWatcher_onRequest = function _LifecycleWatcher_onRequest(request) {
     var _a, _b;
     if (request.frame() !== __classPrivateFieldGet(this, _LifecycleWatcher_frame, "f") || !request.isNavigationRequest()) {
         return;
@@ -39691,12 +45258,12 @@ _LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameMana
     (_b = __classPrivateFieldGet(this, _LifecycleWatcher_navigationResponseReceived, "f")) === null || _b === void 0 ? void 0 : _b.resolve();
 }, _LifecycleWatcher_onFrameDetached = function _LifecycleWatcher_onFrameDetached(frame) {
     if (__classPrivateFieldGet(this, _LifecycleWatcher_frame, "f") === frame) {
-        __classPrivateFieldGet(this, _LifecycleWatcher_terminationCallback, "f").call(null, new Error('Navigating frame was detached'));
+        __classPrivateFieldGet(this, _LifecycleWatcher_terminationPromise, "f").resolve(new Error('Navigating frame was detached'));
         return;
     }
     __classPrivateFieldGet(this, _LifecycleWatcher_instances, "m", _LifecycleWatcher_checkLifecycleComplete).call(this);
 }, _LifecycleWatcher_terminate = function _LifecycleWatcher_terminate(error) {
-    __classPrivateFieldGet(this, _LifecycleWatcher_terminationCallback, "f").call(null, error);
+    __classPrivateFieldGet(this, _LifecycleWatcher_terminationPromise, "f").resolve(error);
 }, _LifecycleWatcher_createTimeoutPromise = async function _LifecycleWatcher_createTimeoutPromise() {
     if (!__classPrivateFieldGet(this, _LifecycleWatcher_timeout, "f")) {
         return new Promise(noop);
@@ -39728,12 +45295,12 @@ _LifecycleWatcher_expectedLifecycle = new WeakMap(), _LifecycleWatcher_frameMana
     if (!checkLifecycle(__classPrivateFieldGet(this, _LifecycleWatcher_frame, "f"), __classPrivateFieldGet(this, _LifecycleWatcher_expectedLifecycle, "f"))) {
         return;
     }
-    __classPrivateFieldGet(this, _LifecycleWatcher_lifecycleCallback, "f").call(this);
+    __classPrivateFieldGet(this, _LifecycleWatcher_lifecyclePromise, "f").resolve();
     if (__classPrivateFieldGet(this, _LifecycleWatcher_hasSameDocumentNavigation, "f")) {
-        __classPrivateFieldGet(this, _LifecycleWatcher_sameDocumentNavigationCompleteCallback, "f").call(this);
+        __classPrivateFieldGet(this, _LifecycleWatcher_sameDocumentNavigationPromise, "f").resolve(undefined);
     }
     if (__classPrivateFieldGet(this, _LifecycleWatcher_swapped, "f") || __classPrivateFieldGet(this, _LifecycleWatcher_frame, "f")._loaderId !== __classPrivateFieldGet(this, _LifecycleWatcher_initialLoaderId, "f")) {
-        __classPrivateFieldGet(this, _LifecycleWatcher_newDocumentNavigationCompleteCallback, "f").call(this);
+        __classPrivateFieldGet(this, _LifecycleWatcher_newDocumentNavigationPromise, "f").resolve(undefined);
     }
     function checkLifecycle(frame, expectedLifecycle) {
         for (const event of expectedLifecycle) {
@@ -39941,7 +45508,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _NetworkManager_instances, _NetworkManager_client, _NetworkManager_ignoreHTTPSErrors, _NetworkManager_frameManager, _NetworkManager_networkEventManager, _NetworkManager_extraHTTPHeaders, _NetworkManager_credentials, _NetworkManager_attemptedAuthentications, _NetworkManager_userRequestInterceptionEnabled, _NetworkManager_protocolRequestInterceptionEnabled, _NetworkManager_userCacheDisabled, _NetworkManager_emulatedNetworkConditions, _NetworkManager_deferredInitPromise, _NetworkManager_updateNetworkConditions, _NetworkManager_updateProtocolRequestInterception, _NetworkManager_cacheDisabled, _NetworkManager_updateProtocolCacheDisabled, _NetworkManager_onRequestWillBeSent, _NetworkManager_onAuthRequired, _NetworkManager_onRequestPaused, _NetworkManager_patchRequestEventHeaders, _NetworkManager_onRequest, _NetworkManager_onRequestServedFromCache, _NetworkManager_handleRequestRedirect, _NetworkManager_emitResponseEvent, _NetworkManager_onResponseReceived, _NetworkManager_onResponseReceivedExtraInfo, _NetworkManager_forgetRequest, _NetworkManager_onLoadingFinished, _NetworkManager_emitLoadingFinished, _NetworkManager_onLoadingFailed, _NetworkManager_emitLoadingFailed;
+var _NetworkManager_instances, _NetworkManager_client, _NetworkManager_ignoreHTTPSErrors, _NetworkManager_frameManager, _NetworkManager_networkEventManager, _NetworkManager_extraHTTPHeaders, _NetworkManager_credentials, _NetworkManager_attemptedAuthentications, _NetworkManager_userRequestInterceptionEnabled, _NetworkManager_protocolRequestInterceptionEnabled, _NetworkManager_userCacheDisabled, _NetworkManager_emulatedNetworkConditions, _NetworkManager_deferredInitPromise, _NetworkManager_updateNetworkConditions, _NetworkManager_updateProtocolRequestInterception, _NetworkManager_cacheDisabled, _NetworkManager_updateProtocolCacheDisabled, _NetworkManager_onRequestWillBeSent, _NetworkManager_onAuthRequired, _NetworkManager_onRequestPaused, _NetworkManager_patchRequestEventHeaders, _NetworkManager_onRequestWithoutNetworkInstrumentation, _NetworkManager_onRequest, _NetworkManager_onRequestServedFromCache, _NetworkManager_handleRequestRedirect, _NetworkManager_emitResponseEvent, _NetworkManager_onResponseReceived, _NetworkManager_onResponseReceivedExtraInfo, _NetworkManager_forgetRequest, _NetworkManager_onLoadingFinished, _NetworkManager_emitLoadingFinished, _NetworkManager_onLoadingFailed, _NetworkManager_emitLoadingFailed;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.NetworkManager = exports.NetworkManagerEmittedEvents = void 0;
 const assert_js_1 = __nccwpck_require__(7729);
@@ -40163,6 +45730,7 @@ _NetworkManager_client = new WeakMap(), _NetworkManager_ignoreHTTPSErrors = new 
     }
     const { networkId: networkRequestId, requestId: fetchRequestId } = event;
     if (!networkRequestId) {
+        __classPrivateFieldGet(this, _NetworkManager_instances, "m", _NetworkManager_onRequestWithoutNetworkInstrumentation).call(this, event);
         return;
     }
     const requestWillBeSentEvent = (() => {
@@ -40189,6 +45757,15 @@ _NetworkManager_client = new WeakMap(), _NetworkManager_ignoreHTTPSErrors = new 
         // includes extra headers, like: Accept, Origin
         ...requestPausedEvent.request.headers,
     };
+}, _NetworkManager_onRequestWithoutNetworkInstrumentation = function _NetworkManager_onRequestWithoutNetworkInstrumentation(event) {
+    // If an event has no networkId it should not have any network events. We
+    // still want to dispatch it for the interception by the user.
+    const frame = event.frameId
+        ? __classPrivateFieldGet(this, _NetworkManager_frameManager, "f").frame(event.frameId)
+        : null;
+    const request = new HTTPRequest_js_1.HTTPRequest(__classPrivateFieldGet(this, _NetworkManager_client, "f"), frame, event.requestId, __classPrivateFieldGet(this, _NetworkManager_userRequestInterceptionEnabled, "f"), event, []);
+    this.emit(exports.NetworkManagerEmittedEvents.Request, request);
+    request.finalizeInterceptions();
 }, _NetworkManager_onRequest = function _NetworkManager_onRequest(event, fetchRequestId) {
     let redirectChain = [];
     if (event.redirectResponse) {
@@ -40251,6 +45828,12 @@ _NetworkManager_client = new WeakMap(), _NetworkManager_ignoreHTTPSErrors = new 
     if (extraInfos.length) {
         (0, util_js_1.debugError)(new Error('Unexpected extraInfo events for request ' +
             responseReceived.requestId));
+    }
+    // Chromium sends wrong extraInfo events for responses served from cache.
+    // See https://github.com/puppeteer/puppeteer/issues/9965 and
+    // https://crbug.com/1340398.
+    if (responseReceived.response.fromDiskCache) {
+        extraInfo = null;
     }
     const response = new HTTPResponse_js_1.HTTPResponse(__classPrivateFieldGet(this, _NetworkManager_client, "f"), request, responseReceived.response, extraInfo);
     request._response = response;
@@ -40470,11 +46053,11 @@ _NodeWebSocketTransport_ws = new WeakMap();
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports._paperFormats = void 0;
+exports.paperFormats = void 0;
 /**
  * @internal
  */
-exports._paperFormats = {
+exports.paperFormats = {
     letter: { width: 8.5, height: 11 },
     legal: { width: 8.5, height: 14 },
     tabloid: { width: 11, height: 17 },
@@ -40580,7 +46163,6 @@ const FrameManager_js_1 = __nccwpck_require__(490);
 const Input_js_1 = __nccwpck_require__(7773);
 const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
 const NetworkManager_js_1 = __nccwpck_require__(5381);
-const PDFOptions_js_1 = __nccwpck_require__(4302);
 const TimeoutSettings_js_1 = __nccwpck_require__(7258);
 const Tracing_js_1 = __nccwpck_require__(5321);
 const util_js_1 = __nccwpck_require__(8274);
@@ -41253,24 +46835,7 @@ class CDPPage extends Page_js_1.Page {
         });
     }
     async createPDFStream(options = {}) {
-        const { scale = 1, displayHeaderFooter = false, headerTemplate = '', footerTemplate = '', printBackground = false, landscape = false, pageRanges = '', preferCSSPageSize = false, margin = {}, omitBackground = false, timeout = 30000, } = options;
-        let paperWidth = 8.5;
-        let paperHeight = 11;
-        if (options.format) {
-            const format = PDFOptions_js_1._paperFormats[options.format.toLowerCase()];
-            (0, assert_js_1.assert)(format, 'Unknown paper format: ' + options.format);
-            paperWidth = format.width;
-            paperHeight = format.height;
-        }
-        else {
-            paperWidth = convertPrintParameterToInches(options.width) || paperWidth;
-            paperHeight =
-                convertPrintParameterToInches(options.height) || paperHeight;
-        }
-        const marginTop = convertPrintParameterToInches(margin.top) || 0;
-        const marginLeft = convertPrintParameterToInches(margin.left) || 0;
-        const marginBottom = convertPrintParameterToInches(margin.bottom) || 0;
-        const marginRight = convertPrintParameterToInches(margin.right) || 0;
+        const { landscape, displayHeaderFooter, headerTemplate, footerTemplate, printBackground, scale, width: paperWidth, height: paperHeight, margin, pageRanges, preferCSSPageSize, omitBackground, timeout, } = this._getPDFOptions(options);
         if (omitBackground) {
             await __classPrivateFieldGet(this, _CDPPage_instances, "m", _CDPPage_setTransparentBackgroundColor).call(this);
         }
@@ -41284,10 +46849,10 @@ class CDPPage extends Page_js_1.Page {
             scale,
             paperWidth,
             paperHeight,
-            marginTop,
-            marginBottom,
-            marginLeft,
-            marginRight,
+            marginTop: margin.top,
+            marginBottom: margin.bottom,
+            marginLeft: margin.left,
+            marginRight: margin.right,
             pageRanges,
             preferCSSPageSize,
         });
@@ -41619,21 +47184,11 @@ async function _CDPPage_setTransparentBackgroundColor() {
     if (options.fullPage && __classPrivateFieldGet(this, _CDPPage_viewport, "f")) {
         await this.setViewport(__classPrivateFieldGet(this, _CDPPage_viewport, "f"));
     }
-    const buffer = options.encoding === 'base64'
-        ? result.data
-        : Buffer.from(result.data, 'base64');
-    if (options.path) {
-        try {
-            const fs = (await (0, util_js_1.importFS)()).promises;
-            await fs.writeFile(options.path, buffer);
-        }
-        catch (error) {
-            if (error instanceof TypeError) {
-                throw new Error('Screenshots can only be written to a file path in a Node-like environment.');
-            }
-            throw error;
-        }
+    if (options.encoding === 'base64') {
+        return result.data;
     }
+    const buffer = Buffer.from(result.data, 'base64');
+    await this._maybeWriteBufferToFile(options.path, buffer);
     return buffer;
     function processClip(clip) {
         const x = Math.round(clip.x);
@@ -41658,43 +47213,6 @@ const supportedMetrics = new Set([
     'JSHeapUsedSize',
     'JSHeapTotalSize',
 ]);
-const unitToPixels = {
-    px: 1,
-    in: 96,
-    cm: 37.8,
-    mm: 3.78,
-};
-function convertPrintParameterToInches(parameter) {
-    if (typeof parameter === 'undefined') {
-        return undefined;
-    }
-    let pixels;
-    if ((0, util_js_1.isNumber)(parameter)) {
-        // Treat numbers as pixel values to be aligned with phantom's paperSize.
-        pixels = parameter;
-    }
-    else if ((0, util_js_1.isString)(parameter)) {
-        const text = parameter;
-        let unit = text.substring(text.length - 2).toLowerCase();
-        let valueText = '';
-        if (unit in unitToPixels) {
-            valueText = text.substring(0, text.length - 2);
-        }
-        else {
-            // In case of unknown unit try to parse the whole parameter as number of pixels.
-            // This is consistent with phantom's paperSize behavior.
-            unit = 'px';
-            valueText = text;
-        }
-        const value = Number(valueText);
-        (0, assert_js_1.assert)(!isNaN(value), 'Failed to parse parameter value: ' + text);
-        pixels = value * unitToPixels[unit];
-    }
-    else {
-        throw new Error('page.pdf() Cannot handle parameter type: ' + typeof parameter);
-    }
-    return pixels / 96;
-}
 //# sourceMappingURL=Page.js.map
 
 /***/ }),
@@ -41978,6 +47496,7 @@ const ElementHandle_js_1 = __nccwpck_require__(3839);
 const assert_js_1 = __nccwpck_require__(7729);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
 const Function_js_1 = __nccwpck_require__(2329);
+const Errors_js_1 = __nccwpck_require__(6315);
 const HandleIterator_js_1 = __nccwpck_require__(5718);
 const IsolatedWorlds_js_1 = __nccwpck_require__(2296);
 const LazyArg_js_1 = __nccwpck_require__(4897);
@@ -42067,8 +47586,11 @@ class QueryHandler {
             frame = elementOrFrame.frame;
             element = await frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].adoptHandle(elementOrFrame);
         }
-        const { visible = false, hidden = false, timeout } = options;
+        const { visible = false, hidden = false, timeout, signal } = options;
         try {
+            if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+                throw new Errors_js_1.AbortError('QueryHander.waitFor has been aborted.');
+            }
             const handle = await frame.worlds[IsolatedWorlds_js_1.PUPPETEER_WORLD].waitForFunction(async (PuppeteerUtil, query, selector, root, visible) => {
                 const querySelector = PuppeteerUtil.createFunction(query);
                 const node = await querySelector(root !== null && root !== void 0 ? root : document, selector, PuppeteerUtil);
@@ -42077,9 +47599,14 @@ class QueryHandler {
                 polling: visible || hidden ? 'raf' : 'mutation',
                 root: element,
                 timeout,
+                signal,
             }, LazyArg_js_1.LazyArg.create(context => {
                 return context.puppeteerUtil;
             }), (0, Function_js_1.stringifyFunction)(this._querySelector), selector, element, visible ? true : hidden ? false : undefined);
+            if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+                await handle.dispose();
+                throw new Errors_js_1.AbortError('QueryHander.waitFor has been aborted.');
+            }
             if (!(handle instanceof ElementHandle_js_1.ElementHandle)) {
                 await handle.dispose();
                 return null;
@@ -42231,39 +47758,39 @@ class SecurityDetails {
         __classPrivateFieldSet(this, _SecurityDetails_sanList, securityPayload.sanList, "f");
     }
     /**
-     * @returns The name of the issuer of the certificate.
+     * The name of the issuer of the certificate.
      */
     issuer() {
         return __classPrivateFieldGet(this, _SecurityDetails_issuer, "f");
     }
     /**
-     * @returns {@link https://en.wikipedia.org/wiki/Unix_time | Unix timestamp}
+     * {@link https://en.wikipedia.org/wiki/Unix_time | Unix timestamp}
      * marking the start of the certificate's validity.
      */
     validFrom() {
         return __classPrivateFieldGet(this, _SecurityDetails_validFrom, "f");
     }
     /**
-     * @returns {@link https://en.wikipedia.org/wiki/Unix_time | Unix timestamp}
+     * {@link https://en.wikipedia.org/wiki/Unix_time | Unix timestamp}
      * marking the end of the certificate's validity.
      */
     validTo() {
         return __classPrivateFieldGet(this, _SecurityDetails_validTo, "f");
     }
     /**
-     * @returns The security protocol being used, e.g. "TLS 1.2".
+     * The security protocol being used, e.g. "TLS 1.2".
      */
     protocol() {
         return __classPrivateFieldGet(this, _SecurityDetails_protocol, "f");
     }
     /**
-     * @returns The name of the subject to which the certificate was issued.
+     * The name of the subject to which the certificate was issued.
      */
     subjectName() {
         return __classPrivateFieldGet(this, _SecurityDetails_subjectName, "f");
     }
     /**
-     * @returns The list of {@link https://en.wikipedia.org/wiki/Subject_Alternative_Name | subject alternative names (SANs)} of the certificate.
+     * The list of {@link https://en.wikipedia.org/wiki/Subject_Alternative_Name | subject alternative names (SANs)} of the certificate.
      */
     subjectAlternativeNames() {
         return __classPrivateFieldGet(this, _SecurityDetails_sanList, "f");
@@ -43276,7 +48803,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _WaitTask_world, _WaitTask_polling, _WaitTask_root, _WaitTask_fn, _WaitTask_args, _WaitTask_timeout, _WaitTask_result, _WaitTask_poller, _TaskManager_tasks;
+var _WaitTask_world, _WaitTask_polling, _WaitTask_root, _WaitTask_fn, _WaitTask_args, _WaitTask_timeout, _WaitTask_result, _WaitTask_poller, _WaitTask_signal, _TaskManager_tasks;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TaskManager = exports.WaitTask = void 0;
 const DeferredPromise_js_1 = __nccwpck_require__(7015);
@@ -43288,6 +48815,7 @@ const LazyArg_js_1 = __nccwpck_require__(4897);
  */
 class WaitTask {
     constructor(world, options, fn, ...args) {
+        var _a;
         _WaitTask_world.set(this, void 0);
         _WaitTask_polling.set(this, void 0);
         _WaitTask_root.set(this, void 0);
@@ -43296,9 +48824,16 @@ class WaitTask {
         _WaitTask_timeout.set(this, void 0);
         _WaitTask_result.set(this, (0, DeferredPromise_js_1.createDeferredPromise)());
         _WaitTask_poller.set(this, void 0);
+        _WaitTask_signal.set(this, void 0);
         __classPrivateFieldSet(this, _WaitTask_world, world, "f");
         __classPrivateFieldSet(this, _WaitTask_polling, options.polling, "f");
         __classPrivateFieldSet(this, _WaitTask_root, options.root, "f");
+        __classPrivateFieldSet(this, _WaitTask_signal, options.signal, "f");
+        (_a = __classPrivateFieldGet(this, _WaitTask_signal, "f")) === null || _a === void 0 ? void 0 : _a.addEventListener('abort', () => {
+            this.terminate(new Errors_js_1.AbortError('WaitTask has been aborted.'));
+        }, {
+            once: true,
+        });
         switch (typeof fn) {
             case 'string':
                 __classPrivateFieldSet(this, _WaitTask_fn, `() => {return (${fn});}`, "f");
@@ -43418,7 +48953,7 @@ class WaitTask {
     }
 }
 exports.WaitTask = WaitTask;
-_WaitTask_world = new WeakMap(), _WaitTask_polling = new WeakMap(), _WaitTask_root = new WeakMap(), _WaitTask_fn = new WeakMap(), _WaitTask_args = new WeakMap(), _WaitTask_timeout = new WeakMap(), _WaitTask_result = new WeakMap(), _WaitTask_poller = new WeakMap();
+_WaitTask_world = new WeakMap(), _WaitTask_polling = new WeakMap(), _WaitTask_root = new WeakMap(), _WaitTask_fn = new WeakMap(), _WaitTask_args = new WeakMap(), _WaitTask_timeout = new WeakMap(), _WaitTask_result = new WeakMap(), _WaitTask_poller = new WeakMap(), _WaitTask_signal = new WeakMap();
 /**
  * @internal
  */
@@ -43534,10 +49069,16 @@ class WebWorker extends EventEmitter_js_1.EventEmitter {
         return __classPrivateFieldGet(this, _WebWorker_executionContext, "f");
     }
     /**
-     * @returns The URL of this web worker.
+     * The URL of this web worker.
      */
     url() {
         return __classPrivateFieldGet(this, _WebWorker_url, "f");
+    }
+    /**
+     * The CDP session client the WebWorker belongs to.
+     */
+    get client() {
+        return __classPrivateFieldGet(this, _WebWorker_client, "f");
     }
     /**
      * If the function passed to the `worker.evaluate` returns a Promise, then
@@ -44005,7 +49546,7 @@ class Connection extends EventEmitter_js_1.EventEmitter {
         _Connection_callbacks.set(this, new Connection_js_1.CallbackRegistry());
         _Connection_contexts.set(this, new Map());
         __classPrivateFieldSet(this, _Connection_delay, delay, "f");
-        __classPrivateFieldSet(this, _Connection_timeout, timeout, "f");
+        __classPrivateFieldSet(this, _Connection_timeout, timeout !== null && timeout !== void 0 ? timeout : 180000, "f");
         __classPrivateFieldSet(this, _Connection_transport, transport, "f");
         __classPrivateFieldGet(this, _Connection_transport, "f").onmessage = this.onMessage.bind(this);
         __classPrivateFieldGet(this, _Connection_transport, "f").onclose = __classPrivateFieldGet(this, _Connection_instances, "m", _Connection_onClose).bind(this);
@@ -44061,11 +49602,11 @@ exports.Connection = Connection;
 _Connection_transport = new WeakMap(), _Connection_delay = new WeakMap(), _Connection_timeout = new WeakMap(), _Connection_closed = new WeakMap(), _Connection_callbacks = new WeakMap(), _Connection_contexts = new WeakMap(), _Connection_instances = new WeakSet(), _Connection_maybeEmitOnContext = function _Connection_maybeEmitOnContext(event) {
     let context;
     // Context specific events
-    if ('context' in event.params) {
+    if ('context' in event.params && event.params.context) {
         context = __classPrivateFieldGet(this, _Connection_contexts, "f").get(event.params.context);
         // `log.entryAdded` specific context
     }
-    else if ('source' in event.params && !!event.params.source.context) {
+    else if ('source' in event.params && event.params.source.context) {
         context = __classPrivateFieldGet(this, _Connection_contexts, "f").get(event.params.source.context);
     }
     context === null || context === void 0 ? void 0 : context.emit(event.method, event.params);
@@ -44486,6 +50027,29 @@ _JSHandle_disposed = new WeakMap(), _JSHandle_context = new WeakMap(), _JSHandle
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
@@ -44580,6 +50144,54 @@ class Page extends Page_js_1.Page {
             }
             return retVal;
         });
+    }
+    async pdf(options = {}) {
+        const { path = undefined } = options;
+        const { printBackground: background, margin, landscape, width, height, pageRanges, scale, preferCSSPageSize, timeout, } = this._getPDFOptions(options, 'cm');
+        const { result } = await (0, util_js_1.waitWithTimeout)(__classPrivateFieldGet(this, _Page_context, "f").connection.send('browsingContext.print', {
+            context: __classPrivateFieldGet(this, _Page_context, "f")._contextId,
+            background,
+            margin,
+            orientation: landscape ? 'landscape' : 'portrait',
+            page: {
+                width,
+                height,
+            },
+            pageRanges: pageRanges.split(', '),
+            scale,
+            shrinkToFit: !preferCSSPageSize,
+        }), 'browsingContext.print', timeout);
+        const buffer = Buffer.from(result.data, 'base64');
+        await this._maybeWriteBufferToFile(path, buffer);
+        return buffer;
+    }
+    async createPDFStream(options) {
+        const buffer = await this.pdf(options);
+        try {
+            const { Readable } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(2781)));
+            return Readable.from(buffer);
+        }
+        catch (error) {
+            if (error instanceof TypeError) {
+                throw new Error('Can only pass a file path in a Node-like environment.');
+            }
+            throw error;
+        }
+    }
+    async screenshot(options = {}) {
+        const { path = undefined, encoding, ...args } = options;
+        if (Object.keys(args).length >= 1) {
+            throw new Error('BiDi only supports "encoding" and "path" options');
+        }
+        const { result } = await __classPrivateFieldGet(this, _Page_context, "f").connection.send('browsingContext.captureScreenshot', {
+            context: __classPrivateFieldGet(this, _Page_context, "f")._contextId,
+        });
+        if (encoding === 'base64') {
+            return result.data;
+        }
+        const buffer = Buffer.from(result.data, 'base64');
+        await this._maybeWriteBufferToFile(path, buffer);
+        return buffer;
     }
 }
 exports.Page = Page;
@@ -45039,6 +50651,7 @@ __exportStar(__nccwpck_require__(9321), exports);
 __exportStar(__nccwpck_require__(5057), exports);
 __exportStar(__nccwpck_require__(4090), exports);
 __exportStar(__nccwpck_require__(1626), exports);
+__exportStar(__nccwpck_require__(7127), exports);
 __exportStar(__nccwpck_require__(7859), exports);
 __exportStar(__nccwpck_require__(865), exports);
 __exportStar(__nccwpck_require__(8392), exports);
@@ -45209,7 +50822,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.setPageContent = exports.getReadableFromProtocolStream = exports.getReadableAsBuffer = exports.importFS = exports.waitWithTimeout = exports.pageBindingInitString = exports.addPageBinding = exports.evaluationString = exports.createJSHandle = exports.waitForEvent = exports.isDate = exports.isRegExp = exports.isPlainObject = exports.isNumber = exports.isString = exports.removeEventListeners = exports.addEventListener = exports.releaseObject = exports.valueFromRemoteObject = exports.getExceptionMessage = exports.debugError = void 0;
+exports.setPageContent = exports.getReadableFromProtocolStream = exports.getReadableAsBuffer = exports.importFSPromises = exports.waitWithTimeout = exports.pageBindingInitString = exports.addPageBinding = exports.evaluationString = exports.createJSHandle = exports.waitForEvent = exports.isDate = exports.isRegExp = exports.isPlainObject = exports.isNumber = exports.isString = exports.removeEventListeners = exports.addEventListener = exports.releaseObject = exports.valueFromRemoteObject = exports.getExceptionMessage = exports.debugError = void 0;
 const environment_js_1 = __nccwpck_require__(1577);
 const assert_js_1 = __nccwpck_require__(7729);
 const ErrorLike_js_1 = __nccwpck_require__(2937);
@@ -45487,22 +51100,10 @@ let fs = null;
 /**
  * @internal
  */
-async function importFS() {
+async function importFSPromises() {
     if (!fs) {
-        fs = await Promise.resolve().then(() => __importStar(__nccwpck_require__(7147)));
-    }
-    return fs;
-}
-exports.importFS = importFS;
-/**
- * @internal
- */
-async function getReadableAsBuffer(readable, path) {
-    const buffers = [];
-    if (path) {
-        let fs;
         try {
-            fs = (await importFS()).promises;
+            fs = await Promise.resolve().then(() => __importStar(__nccwpck_require__(3292)));
         }
         catch (error) {
             if (error instanceof TypeError) {
@@ -45510,6 +51111,17 @@ async function getReadableAsBuffer(readable, path) {
             }
             throw error;
         }
+    }
+    return fs;
+}
+exports.importFSPromises = importFSPromises;
+/**
+ * @internal
+ */
+async function getReadableAsBuffer(readable, path) {
+    const buffers = [];
+    if (path) {
+        const fs = await importFSPromises();
         const fileHandle = await fs.open(path, 'w+');
         for await (const chunk of readable) {
             buffers.push(chunk);
@@ -45625,7 +51237,7 @@ exports.source = void 0;
  *
  * @internal
  */
-exports.source = "\"use strict\";var C=Object.defineProperty;var ne=Object.getOwnPropertyDescriptor;var oe=Object.getOwnPropertyNames;var se=Object.prototype.hasOwnProperty;var u=(t,e)=>{for(var n in e)C(t,n,{get:e[n],enumerable:!0})},ie=(t,e,n,r)=>{if(e&&typeof e==\"object\"||typeof e==\"function\")for(let o of oe(e))!se.call(t,o)&&o!==n&&C(t,o,{get:()=>e[o],enumerable:!(r=ne(e,o))||r.enumerable});return t};var le=t=>ie(C({},\"__esModule\",{value:!0}),t);var Oe={};u(Oe,{default:()=>Re});module.exports=le(Oe);var P=class extends Error{constructor(e){super(e),this.name=this.constructor.name,Error.captureStackTrace(this,this.constructor)}},S=class extends P{},I=class extends P{#e;#r=\"\";set code(e){this.#e=e}get code(){return this.#e}set originalMessage(e){this.#r=e}get originalMessage(){return this.#r}},De=Object.freeze({TimeoutError:S,ProtocolError:I});function p(t){let e=!1,n=!1,r,o,i=new Promise((l,a)=>{r=l,o=a}),s=t&&t.timeout>0?setTimeout(()=>{n=!0,o(new S(t.message))},t.timeout):void 0;return Object.assign(i,{resolved:()=>e,finished:()=>e||n,resolve:l=>{s&&clearTimeout(s),e=!0,r(l)},reject:l=>{clearTimeout(s),n=!0,o(l)}})}var G=new Map,X=t=>{let e=G.get(t);return e||(e=new Function(`return ${t}`)(),G.set(t,e),e)};var R={};u(R,{ariaQuerySelector:()=>ae,ariaQuerySelectorAll:()=>k});var ae=(t,e)=>window.__ariaQuerySelector(t,e),k=async function*(t,e){yield*await window.__ariaQuerySelectorAll(t,e)};var D={};u(D,{customQuerySelectors:()=>_});var O=class{#e=new Map;register(e,n){if(!n.queryOne&&n.queryAll){let r=n.queryAll;n.queryOne=(o,i)=>{for(let s of r(o,i))return s;return null}}else if(n.queryOne&&!n.queryAll){let r=n.queryOne;n.queryAll=(o,i)=>{let s=r(o,i);return s?[s]:[]}}else if(!n.queryOne||!n.queryAll)throw new Error(\"At least one query method must be defined.\");this.#e.set(e,{querySelector:n.queryOne,querySelectorAll:n.queryAll})}unregister(e){this.#e.delete(e)}get(e){return this.#e.get(e)}clear(){this.#e.clear()}},_=new O;var M={};u(M,{pierceQuerySelector:()=>ce,pierceQuerySelectorAll:()=>ue});var ce=(t,e)=>{let n=null,r=o=>{let i=document.createTreeWalker(o,NodeFilter.SHOW_ELEMENT);do{let s=i.currentNode;s.shadowRoot&&r(s.shadowRoot),!(s instanceof ShadowRoot)&&s!==o&&!n&&s.matches(e)&&(n=s)}while(!n&&i.nextNode())};return t instanceof Document&&(t=t.documentElement),r(t),n},ue=(t,e)=>{let n=[],r=o=>{let i=document.createTreeWalker(o,NodeFilter.SHOW_ELEMENT);do{let s=i.currentNode;s.shadowRoot&&r(s.shadowRoot),!(s instanceof ShadowRoot)&&s!==o&&s.matches(e)&&n.push(s)}while(i.nextNode())};return t instanceof Document&&(t=t.documentElement),r(t),n};var m=(t,e)=>{if(!t)throw new Error(e)};var T=class{#e;#r;#n;#t;constructor(e,n){this.#e=e,this.#r=n}async start(){let e=this.#t=p(),n=await this.#e();if(n){e.resolve(n);return}this.#n=new MutationObserver(async()=>{let r=await this.#e();r&&(e.resolve(r),await this.stop())}),this.#n.observe(this.#r,{childList:!0,subtree:!0,attributes:!0})}async stop(){m(this.#t,\"Polling never started.\"),this.#t.finished()||this.#t.reject(new Error(\"Polling stopped\")),this.#n&&(this.#n.disconnect(),this.#n=void 0)}result(){return m(this.#t,\"Polling never started.\"),this.#t}},x=class{#e;#r;constructor(e){this.#e=e}async start(){let e=this.#r=p(),n=await this.#e();if(n){e.resolve(n);return}let r=async()=>{if(e.finished())return;let o=await this.#e();if(!o){window.requestAnimationFrame(r);return}e.resolve(o),await this.stop()};window.requestAnimationFrame(r)}async stop(){m(this.#r,\"Polling never started.\"),this.#r.finished()||this.#r.reject(new Error(\"Polling stopped\"))}result(){return m(this.#r,\"Polling never started.\"),this.#r}},E=class{#e;#r;#n;#t;constructor(e,n){this.#e=e,this.#r=n}async start(){let e=this.#t=p(),n=await this.#e();if(n){e.resolve(n);return}this.#n=setInterval(async()=>{let r=await this.#e();r&&(e.resolve(r),await this.stop())},this.#r)}async stop(){m(this.#t,\"Polling never started.\"),this.#t.finished()||this.#t.reject(new Error(\"Polling stopped\")),this.#n&&(clearInterval(this.#n),this.#n=void 0)}result(){return m(this.#t,\"Polling never started.\"),this.#t}};var H={};u(H,{pQuerySelector:()=>Ie,pQuerySelectorAll:()=>re});var c=class{static async*map(e,n){for await(let r of e)yield await n(r)}static async*flatMap(e,n){for await(let r of e)yield*n(r)}static async collect(e){let n=[];for await(let r of e)n.push(r);return n}static async first(e){for await(let n of e)return n}};var h={attribute:/\\[\\s*(?:(?<namespace>\\*|[-\\w\\P{ASCII}]*)\\|)?(?<name>[-\\w\\P{ASCII}]+)\\s*(?:(?<operator>\\W?=)\\s*(?<value>.+?)\\s*(\\s(?<caseSensitive>[iIsS]))?\\s*)?\\]/gu,id:/#(?<name>[-\\w\\P{ASCII}]+)/gu,class:/\\.(?<name>[-\\w\\P{ASCII}]+)/gu,comma:/\\s*,\\s*/g,combinator:/\\s*[\\s>+~]\\s*/g,\"pseudo-element\":/::(?<name>[-\\w\\P{ASCII}]+)(?:\\((?<argument>¶+)\\))?/gu,\"pseudo-class\":/:(?<name>[-\\w\\P{ASCII}]+)(?:\\((?<argument>¶+)\\))?/gu,universal:/(?:(?<namespace>\\*|[-\\w\\P{ASCII}]*)\\|)?\\*/gu,type:/(?:(?<namespace>\\*|[-\\w\\P{ASCII}]*)\\|)?(?<name>[-\\w\\P{ASCII}]+)/gu},fe=new Set([\"combinator\",\"comma\"]);var me=t=>{switch(t){case\"pseudo-element\":case\"pseudo-class\":return new RegExp(h[t].source.replace(\"(?<argument>\\xB6+)\",\"(?<argument>.+)\"),\"gu\");default:return h[t]}};function de(t,e){let n=0,r=\"\";for(;e<t.length;e++){let o=t[e];switch(o){case\"(\":++n;break;case\")\":--n;break}if(r+=o,n===0)return r}return r}function pe(t,e=h){if(!t)return[];let n=[t];for(let[o,i]of Object.entries(e))for(let s=0;s<n.length;s++){let l=n[s];if(typeof l!=\"string\")continue;i.lastIndex=0;let a=i.exec(l);if(!a)continue;let d=a.index-1,f=[],V=a[0],B=l.slice(0,d+1);B&&f.push(B),f.push({...a.groups,type:o,content:V});let z=l.slice(d+V.length+1);z&&f.push(z),n.splice(s,1,...f)}let r=0;for(let o of n)switch(typeof o){case\"string\":throw new Error(`Unexpected sequence ${o} found at index ${r}`);case\"object\":r+=o.content.length,o.pos=[r-o.content.length,r],fe.has(o.type)&&(o.content=o.content.trim()||\" \");break}return n}var he=/(['\"])([^\\\\\\n]+?)\\1/g,ge=/\\\\./g;function K(t,e=h){if(t=t.trim(),t===\"\")return[];let n=[];t=t.replace(ge,(i,s)=>(n.push({value:i,offset:s}),\"\\uE000\".repeat(i.length))),t=t.replace(he,(i,s,l,a)=>(n.push({value:i,offset:a}),`${s}${\"\\uE001\".repeat(l.length)}${s}`));{let i=0,s;for(;(s=t.indexOf(\"(\",i))>-1;){let l=de(t,s);n.push({value:l,offset:s}),t=`${t.substring(0,s)}(${\"\\xB6\".repeat(l.length-2)})${t.substring(s+l.length)}`,i=s+l.length}}let r=pe(t,e),o=new Set;for(let i of n.reverse())for(let s of r){let{offset:l,value:a}=i;if(!(s.pos[0]<=l&&l+a.length<=s.pos[1]))continue;let{content:d}=s,f=l-s.pos[0];s.content=d.slice(0,f)+a+d.slice(f+a.length),s.content!==d&&o.add(s)}for(let i of o){let s=me(i.type);if(!s)throw new Error(`Unknown token type: ${i.type}`);s.lastIndex=0;let l=s.exec(i.content);if(!l)throw new Error(`Unable to parse content for ${i.type}: ${i.content}`);Object.assign(i,l.groups)}return r}function*N(t,e){switch(t.type){case\"list\":for(let n of t.list)yield*N(n,t);break;case\"complex\":yield*N(t.left,t),yield*N(t.right,t);break;case\"compound\":yield*t.list.map(n=>[n,t]);break;default:yield[t,e]}}function g(t){let e;return Array.isArray(t)?e=t:e=[...N(t)].map(([n])=>n),e.map(n=>n.content).join(\"\")}h.combinator=/\\s*(>>>>?|[\\s>+~])\\s*/g;var ye=/\\\\[\\s\\S]/g,we=t=>{if(t.length>1){for(let e of['\"',\"'\"])if(!(!t.startsWith(e)||!t.endsWith(e)))return t.slice(e.length,-e.length).replace(ye,n=>n.slice(1))}return t};function Y(t){let e=!0,n=K(t);if(n.length===0)return[[],e];let r=[],o=[r],i=[o],s=[];for(let l of n){switch(l.type){case\"combinator\":switch(l.content){case\">>>\":e=!1,s.length&&(r.push(g(s)),s.splice(0)),r=[],o.push(\">>>\"),o.push(r);continue;case\">>>>\":e=!1,s.length&&(r.push(g(s)),s.splice(0)),r=[],o.push(\">>>>\"),o.push(r);continue}break;case\"pseudo-element\":if(!l.name.startsWith(\"-p-\"))break;e=!1,s.length&&(r.push(g(s)),s.splice(0)),r.push({name:l.name.slice(3),value:we(l.argument??\"\")});continue;case\"comma\":s.length&&(r.push(g(s)),s.splice(0)),r=[],o=[r],i.push(o);continue}s.push(l)}return s.length&&r.push(g(s)),[i,e]}var Q={};u(Q,{textQuerySelectorAll:()=>b});var Se=new Set([\"checkbox\",\"image\",\"radio\"]),be=t=>t instanceof HTMLSelectElement||t instanceof HTMLTextAreaElement||t instanceof HTMLInputElement&&!Se.has(t.type),Pe=new Set([\"SCRIPT\",\"STYLE\"]),w=t=>!Pe.has(t.nodeName)&&!document.head?.contains(t),q=new WeakMap,Z=t=>{for(;t;)q.delete(t),t instanceof ShadowRoot?t=t.host:t=t.parentNode},J=new WeakSet,Te=new MutationObserver(t=>{for(let e of t)Z(e.target)}),y=t=>{let e=q.get(t);if(e||(e={full:\"\",immediate:[]},!w(t)))return e;let n=\"\";if(be(t))e.full=t.value,e.immediate.push(t.value),t.addEventListener(\"input\",r=>{Z(r.target)},{once:!0,capture:!0});else{for(let r=t.firstChild;r;r=r.nextSibling){if(r.nodeType===Node.TEXT_NODE){e.full+=r.nodeValue??\"\",n+=r.nodeValue??\"\";continue}n&&e.immediate.push(n),n=\"\",r.nodeType===Node.ELEMENT_NODE&&(e.full+=y(r).full)}n&&e.immediate.push(n),t instanceof Element&&t.shadowRoot&&(e.full+=y(t.shadowRoot).full),J.has(t)||(Te.observe(t,{childList:!0,characterData:!0}),J.add(t))}return q.set(t,e),e};var b=function*(t,e){let n=!1;for(let r of t.childNodes)if(r instanceof Element&&w(r)){let o;r.shadowRoot?o=b(r.shadowRoot,e):o=b(r,e);for(let i of o)yield i,n=!0}n||t instanceof Element&&w(t)&&y(t).full.includes(e)&&(yield t)};var $={};u($,{checkVisibility:()=>Ee,pierce:()=>A,pierceAll:()=>L});var xe=[\"hidden\",\"collapse\"],Ee=(t,e)=>{if(!t)return e===!1;if(e===void 0)return t;let n=t.nodeType===Node.TEXT_NODE?t.parentElement:t,r=window.getComputedStyle(n),o=r&&!xe.includes(r.visibility)&&!Ne(n);return e===o?t:!1};function Ne(t){let e=t.getBoundingClientRect();return e.width===0||e.height===0}var Ae=t=>\"shadowRoot\"in t&&t.shadowRoot instanceof ShadowRoot;function*A(t){Ae(t)?yield t.shadowRoot:yield t}function*L(t){yield*A(t);let e=[document.createTreeWalker(t,NodeFilter.SHOW_ELEMENT)];for(let n of e){let r;for(;r=n.nextNode();)r.shadowRoot&&(yield r.shadowRoot,e.push(document.createTreeWalker(r.shadowRoot,NodeFilter.SHOW_ELEMENT)))}}var U={};u(U,{xpathQuerySelectorAll:()=>j});var j=function*(t,e){let r=(t.ownerDocument||document).evaluate(e,t,null,XPathResult.ORDERED_NODE_ITERATOR_TYPE),o;for(;o=r.iterateNext();)yield o};var ve=/[-\\w\\P{ASCII}*]/,ee=t=>\"querySelectorAll\"in t,v=class extends Error{constructor(e,n){super(`${e} is not a valid selector: ${n}`)}},F=class{#e;#r;#n=[];#t=void 0;elements;constructor(e,n,r){this.elements=[e],this.#e=n,this.#r=r,this.#o()}async run(){if(typeof this.#t==\"string\")switch(this.#t.trimStart()){case\":scope\":this.#o();break}for(;this.#t!==void 0;this.#o()){let e=this.#t,n=this.#e;typeof e==\"string\"?e[0]&&ve.test(e[0])?this.elements=c.flatMap(this.elements,async function*(r){ee(r)&&(yield*r.querySelectorAll(e))}):this.elements=c.flatMap(this.elements,async function*(r){if(!r.parentElement){if(!ee(r))return;yield*r.querySelectorAll(e);return}let o=0;for(let i of r.parentElement.children)if(++o,i===r)break;yield*r.parentElement.querySelectorAll(`:scope>:nth-child(${o})${e}`)}):this.elements=c.flatMap(this.elements,async function*(r){switch(e.name){case\"text\":yield*b(r,e.value);break;case\"xpath\":yield*j(r,e.value);break;case\"aria\":yield*k(r,e.value);break;default:let o=_.get(e.name);if(!o)throw new v(n,`Unknown selector type: ${e.name}`);yield*o.querySelectorAll(r,e.value)}})}}#o(){if(this.#n.length!==0){this.#t=this.#n.shift();return}if(this.#r.length===0){this.#t=void 0;return}let e=this.#r.shift();switch(e){case\">>>>\":{this.elements=c.flatMap(this.elements,A),this.#o();break}case\">>>\":{this.elements=c.flatMap(this.elements,L),this.#o();break}default:this.#n=e,this.#o();break}}},W=class{#e=new WeakMap;calculate(e,n=[]){if(e===null)return n;e instanceof ShadowRoot&&(e=e.host);let r=this.#e.get(e);if(r)return[...r,...n];let o=0;for(let s=e.previousSibling;s;s=s.previousSibling)++o;let i=this.calculate(e.parentNode,[o]);return this.#e.set(e,i),[...i,...n]}},te=(t,e)=>{if(t.length+e.length===0)return 0;let[n=-1,...r]=t,[o=-1,...i]=e;return n===o?te(r,i):n<o?-1:1},Ce=async function*(t){let e=new Set;for await(let r of t)e.add(r);let n=new W;yield*[...e.values()].map(r=>[r,n.calculate(r)]).sort(([,r],[,o])=>te(r,o)).map(([r])=>r)},re=function(t,e){let n,r;try{[n,r]=Y(e)}catch{return t.querySelectorAll(e)}if(r)return t.querySelectorAll(e);if(n.some(o=>{let i=0;return o.some(s=>(typeof s==\"string\"?++i:i=0,i>1))}))throw new v(e,\"Multiple deep combinators found in sequence.\");return Ce(c.flatMap(n,o=>{let i=new F(t,e,o);return i.run(),i.elements}))},Ie=async function(t,e){for await(let n of re(t,e))return n;return null};var ke=Object.freeze({...R,...D,...M,...H,...Q,...$,...U,createDeferredPromise:p,createFunction:X,createTextContent:y,IntervalPoller:E,isSuitableNodeForTextMatching:w,MutationPoller:T,RAFPoller:x}),Re=ke;\n";
+exports.source = "\"use strict\";var C=Object.defineProperty;var ne=Object.getOwnPropertyDescriptor;var oe=Object.getOwnPropertyNames;var se=Object.prototype.hasOwnProperty;var u=(e,t)=>{for(var n in t)C(e,n,{get:t[n],enumerable:!0})},ie=(e,t,n,r)=>{if(t&&typeof t==\"object\"||typeof t==\"function\")for(let o of oe(t))!se.call(e,o)&&o!==n&&C(e,o,{get:()=>t[o],enumerable:!(r=ne(t,o))||r.enumerable});return e};var le=e=>ie(C({},\"__esModule\",{value:!0}),e);var Oe={};u(Oe,{default:()=>Re});module.exports=le(Oe);var P=class extends Error{constructor(t){super(t),this.name=this.constructor.name,Error.captureStackTrace(this,this.constructor)}},S=class extends P{};var I=class extends P{#e;#r=\"\";set code(t){this.#e=t}get code(){return this.#e}set originalMessage(t){this.#r=t}get originalMessage(){return this.#r}},De=Object.freeze({TimeoutError:S,ProtocolError:I});function p(e){let t=!1,n=!1,r,o,i=new Promise((l,a)=>{r=l,o=a}),s=e&&e.timeout>0?setTimeout(()=>{n=!0,o(new S(e.message))},e.timeout):void 0;return Object.assign(i,{resolved:()=>t,finished:()=>t||n,resolve:l=>{s&&clearTimeout(s),t=!0,r(l)},reject:l=>{clearTimeout(s),n=!0,o(l)}})}var G=new Map,X=e=>{let t=G.get(e);return t||(t=new Function(`return ${e}`)(),G.set(e,t),t)};var R={};u(R,{ariaQuerySelector:()=>ae,ariaQuerySelectorAll:()=>k});var ae=(e,t)=>window.__ariaQuerySelector(e,t),k=async function*(e,t){yield*await window.__ariaQuerySelectorAll(e,t)};var D={};u(D,{customQuerySelectors:()=>_});var O=class{#e=new Map;register(t,n){if(!n.queryOne&&n.queryAll){let r=n.queryAll;n.queryOne=(o,i)=>{for(let s of r(o,i))return s;return null}}else if(n.queryOne&&!n.queryAll){let r=n.queryOne;n.queryAll=(o,i)=>{let s=r(o,i);return s?[s]:[]}}else if(!n.queryOne||!n.queryAll)throw new Error(\"At least one query method must be defined.\");this.#e.set(t,{querySelector:n.queryOne,querySelectorAll:n.queryAll})}unregister(t){this.#e.delete(t)}get(t){return this.#e.get(t)}clear(){this.#e.clear()}},_=new O;var M={};u(M,{pierceQuerySelector:()=>ce,pierceQuerySelectorAll:()=>ue});var ce=(e,t)=>{let n=null,r=o=>{let i=document.createTreeWalker(o,NodeFilter.SHOW_ELEMENT);do{let s=i.currentNode;s.shadowRoot&&r(s.shadowRoot),!(s instanceof ShadowRoot)&&s!==o&&!n&&s.matches(t)&&(n=s)}while(!n&&i.nextNode())};return e instanceof Document&&(e=e.documentElement),r(e),n},ue=(e,t)=>{let n=[],r=o=>{let i=document.createTreeWalker(o,NodeFilter.SHOW_ELEMENT);do{let s=i.currentNode;s.shadowRoot&&r(s.shadowRoot),!(s instanceof ShadowRoot)&&s!==o&&s.matches(t)&&n.push(s)}while(i.nextNode())};return e instanceof Document&&(e=e.documentElement),r(e),n};var m=(e,t)=>{if(!e)throw new Error(t)};var T=class{#e;#r;#n;#t;constructor(t,n){this.#e=t,this.#r=n}async start(){let t=this.#t=p(),n=await this.#e();if(n){t.resolve(n);return}this.#n=new MutationObserver(async()=>{let r=await this.#e();r&&(t.resolve(r),await this.stop())}),this.#n.observe(this.#r,{childList:!0,subtree:!0,attributes:!0})}async stop(){m(this.#t,\"Polling never started.\"),this.#t.finished()||this.#t.reject(new Error(\"Polling stopped\")),this.#n&&(this.#n.disconnect(),this.#n=void 0)}result(){return m(this.#t,\"Polling never started.\"),this.#t}},x=class{#e;#r;constructor(t){this.#e=t}async start(){let t=this.#r=p(),n=await this.#e();if(n){t.resolve(n);return}let r=async()=>{if(t.finished())return;let o=await this.#e();if(!o){window.requestAnimationFrame(r);return}t.resolve(o),await this.stop()};window.requestAnimationFrame(r)}async stop(){m(this.#r,\"Polling never started.\"),this.#r.finished()||this.#r.reject(new Error(\"Polling stopped\"))}result(){return m(this.#r,\"Polling never started.\"),this.#r}},E=class{#e;#r;#n;#t;constructor(t,n){this.#e=t,this.#r=n}async start(){let t=this.#t=p(),n=await this.#e();if(n){t.resolve(n);return}this.#n=setInterval(async()=>{let r=await this.#e();r&&(t.resolve(r),await this.stop())},this.#r)}async stop(){m(this.#t,\"Polling never started.\"),this.#t.finished()||this.#t.reject(new Error(\"Polling stopped\")),this.#n&&(clearInterval(this.#n),this.#n=void 0)}result(){return m(this.#t,\"Polling never started.\"),this.#t}};var H={};u(H,{pQuerySelector:()=>Ie,pQuerySelectorAll:()=>re});var c=class{static async*map(t,n){for await(let r of t)yield await n(r)}static async*flatMap(t,n){for await(let r of t)yield*n(r)}static async collect(t){let n=[];for await(let r of t)n.push(r);return n}static async first(t){for await(let n of t)return n}};var h={attribute:/\\[\\s*(?:(?<namespace>\\*|[-\\w\\P{ASCII}]*)\\|)?(?<name>[-\\w\\P{ASCII}]+)\\s*(?:(?<operator>\\W?=)\\s*(?<value>.+?)\\s*(\\s(?<caseSensitive>[iIsS]))?\\s*)?\\]/gu,id:/#(?<name>[-\\w\\P{ASCII}]+)/gu,class:/\\.(?<name>[-\\w\\P{ASCII}]+)/gu,comma:/\\s*,\\s*/g,combinator:/\\s*[\\s>+~]\\s*/g,\"pseudo-element\":/::(?<name>[-\\w\\P{ASCII}]+)(?:\\((?<argument>¶+)\\))?/gu,\"pseudo-class\":/:(?<name>[-\\w\\P{ASCII}]+)(?:\\((?<argument>¶+)\\))?/gu,universal:/(?:(?<namespace>\\*|[-\\w\\P{ASCII}]*)\\|)?\\*/gu,type:/(?:(?<namespace>\\*|[-\\w\\P{ASCII}]*)\\|)?(?<name>[-\\w\\P{ASCII}]+)/gu},fe=new Set([\"combinator\",\"comma\"]);var me=e=>{switch(e){case\"pseudo-element\":case\"pseudo-class\":return new RegExp(h[e].source.replace(\"(?<argument>\\xB6+)\",\"(?<argument>.+)\"),\"gu\");default:return h[e]}};function de(e,t){let n=0,r=\"\";for(;t<e.length;t++){let o=e[t];switch(o){case\"(\":++n;break;case\")\":--n;break}if(r+=o,n===0)return r}return r}function pe(e,t=h){if(!e)return[];let n=[e];for(let[o,i]of Object.entries(t))for(let s=0;s<n.length;s++){let l=n[s];if(typeof l!=\"string\")continue;i.lastIndex=0;let a=i.exec(l);if(!a)continue;let d=a.index-1,f=[],V=a[0],B=l.slice(0,d+1);B&&f.push(B),f.push({...a.groups,type:o,content:V});let z=l.slice(d+V.length+1);z&&f.push(z),n.splice(s,1,...f)}let r=0;for(let o of n)switch(typeof o){case\"string\":throw new Error(`Unexpected sequence ${o} found at index ${r}`);case\"object\":r+=o.content.length,o.pos=[r-o.content.length,r],fe.has(o.type)&&(o.content=o.content.trim()||\" \");break}return n}var he=/(['\"])([^\\\\\\n]+?)\\1/g,ge=/\\\\./g;function K(e,t=h){if(e=e.trim(),e===\"\")return[];let n=[];e=e.replace(ge,(i,s)=>(n.push({value:i,offset:s}),\"\\uE000\".repeat(i.length))),e=e.replace(he,(i,s,l,a)=>(n.push({value:i,offset:a}),`${s}${\"\\uE001\".repeat(l.length)}${s}`));{let i=0,s;for(;(s=e.indexOf(\"(\",i))>-1;){let l=de(e,s);n.push({value:l,offset:s}),e=`${e.substring(0,s)}(${\"\\xB6\".repeat(l.length-2)})${e.substring(s+l.length)}`,i=s+l.length}}let r=pe(e,t),o=new Set;for(let i of n.reverse())for(let s of r){let{offset:l,value:a}=i;if(!(s.pos[0]<=l&&l+a.length<=s.pos[1]))continue;let{content:d}=s,f=l-s.pos[0];s.content=d.slice(0,f)+a+d.slice(f+a.length),s.content!==d&&o.add(s)}for(let i of o){let s=me(i.type);if(!s)throw new Error(`Unknown token type: ${i.type}`);s.lastIndex=0;let l=s.exec(i.content);if(!l)throw new Error(`Unable to parse content for ${i.type}: ${i.content}`);Object.assign(i,l.groups)}return r}function*N(e,t){switch(e.type){case\"list\":for(let n of e.list)yield*N(n,e);break;case\"complex\":yield*N(e.left,e),yield*N(e.right,e);break;case\"compound\":yield*e.list.map(n=>[n,e]);break;default:yield[e,t]}}function g(e){let t;return Array.isArray(e)?t=e:t=[...N(e)].map(([n])=>n),t.map(n=>n.content).join(\"\")}h.combinator=/\\s*(>>>>?|[\\s>+~])\\s*/g;var ye=/\\\\[\\s\\S]/g,we=e=>{if(e.length>1){for(let t of['\"',\"'\"])if(!(!e.startsWith(t)||!e.endsWith(t)))return e.slice(t.length,-t.length).replace(ye,n=>n.slice(1))}return e};function Y(e){let t=!0,n=K(e);if(n.length===0)return[[],t];let r=[],o=[r],i=[o],s=[];for(let l of n){switch(l.type){case\"combinator\":switch(l.content){case\">>>\":t=!1,s.length&&(r.push(g(s)),s.splice(0)),r=[],o.push(\">>>\"),o.push(r);continue;case\">>>>\":t=!1,s.length&&(r.push(g(s)),s.splice(0)),r=[],o.push(\">>>>\"),o.push(r);continue}break;case\"pseudo-element\":if(!l.name.startsWith(\"-p-\"))break;t=!1,s.length&&(r.push(g(s)),s.splice(0)),r.push({name:l.name.slice(3),value:we(l.argument??\"\")});continue;case\"comma\":s.length&&(r.push(g(s)),s.splice(0)),r=[],o=[r],i.push(o);continue}s.push(l)}return s.length&&r.push(g(s)),[i,t]}var Q={};u(Q,{textQuerySelectorAll:()=>b});var Se=new Set([\"checkbox\",\"image\",\"radio\"]),be=e=>e instanceof HTMLSelectElement||e instanceof HTMLTextAreaElement||e instanceof HTMLInputElement&&!Se.has(e.type),Pe=new Set([\"SCRIPT\",\"STYLE\"]),w=e=>!Pe.has(e.nodeName)&&!document.head?.contains(e),q=new WeakMap,Z=e=>{for(;e;)q.delete(e),e instanceof ShadowRoot?e=e.host:e=e.parentNode},J=new WeakSet,Te=new MutationObserver(e=>{for(let t of e)Z(t.target)}),y=e=>{let t=q.get(e);if(t||(t={full:\"\",immediate:[]},!w(e)))return t;let n=\"\";if(be(e))t.full=e.value,t.immediate.push(e.value),e.addEventListener(\"input\",r=>{Z(r.target)},{once:!0,capture:!0});else{for(let r=e.firstChild;r;r=r.nextSibling){if(r.nodeType===Node.TEXT_NODE){t.full+=r.nodeValue??\"\",n+=r.nodeValue??\"\";continue}n&&t.immediate.push(n),n=\"\",r.nodeType===Node.ELEMENT_NODE&&(t.full+=y(r).full)}n&&t.immediate.push(n),e instanceof Element&&e.shadowRoot&&(t.full+=y(e.shadowRoot).full),J.has(e)||(Te.observe(e,{childList:!0,characterData:!0}),J.add(e))}return q.set(e,t),t};var b=function*(e,t){let n=!1;for(let r of e.childNodes)if(r instanceof Element&&w(r)){let o;r.shadowRoot?o=b(r.shadowRoot,t):o=b(r,t);for(let i of o)yield i,n=!0}n||e instanceof Element&&w(e)&&y(e).full.includes(t)&&(yield e)};var $={};u($,{checkVisibility:()=>Ee,pierce:()=>A,pierceAll:()=>L});var xe=[\"hidden\",\"collapse\"],Ee=(e,t)=>{if(!e)return t===!1;if(t===void 0)return e;let n=e.nodeType===Node.TEXT_NODE?e.parentElement:e,r=window.getComputedStyle(n),o=r&&!xe.includes(r.visibility)&&!Ne(n);return t===o?e:!1};function Ne(e){let t=e.getBoundingClientRect();return t.width===0||t.height===0}var Ae=e=>\"shadowRoot\"in e&&e.shadowRoot instanceof ShadowRoot;function*A(e){Ae(e)?yield e.shadowRoot:yield e}function*L(e){e=A(e).next().value,yield e;let t=[document.createTreeWalker(e,NodeFilter.SHOW_ELEMENT)];for(let n of t){let r;for(;r=n.nextNode();)r.shadowRoot&&(yield r.shadowRoot,t.push(document.createTreeWalker(r.shadowRoot,NodeFilter.SHOW_ELEMENT)))}}var U={};u(U,{xpathQuerySelectorAll:()=>j});var j=function*(e,t){let r=(e.ownerDocument||document).evaluate(t,e,null,XPathResult.ORDERED_NODE_ITERATOR_TYPE),o;for(;o=r.iterateNext();)yield o};var ve=/[-\\w\\P{ASCII}*]/,ee=e=>\"querySelectorAll\"in e,v=class extends Error{constructor(t,n){super(`${t} is not a valid selector: ${n}`)}},F=class{#e;#r;#n=[];#t=void 0;elements;constructor(t,n,r){this.elements=[t],this.#e=n,this.#r=r,this.#o()}async run(){if(typeof this.#t==\"string\")switch(this.#t.trimStart()){case\":scope\":this.#o();break}for(;this.#t!==void 0;this.#o()){let t=this.#t,n=this.#e;typeof t==\"string\"?t[0]&&ve.test(t[0])?this.elements=c.flatMap(this.elements,async function*(r){ee(r)&&(yield*r.querySelectorAll(t))}):this.elements=c.flatMap(this.elements,async function*(r){if(!r.parentElement){if(!ee(r))return;yield*r.querySelectorAll(t);return}let o=0;for(let i of r.parentElement.children)if(++o,i===r)break;yield*r.parentElement.querySelectorAll(`:scope>:nth-child(${o})${t}`)}):this.elements=c.flatMap(this.elements,async function*(r){switch(t.name){case\"text\":yield*b(r,t.value);break;case\"xpath\":yield*j(r,t.value);break;case\"aria\":yield*k(r,t.value);break;default:let o=_.get(t.name);if(!o)throw new v(n,`Unknown selector type: ${t.name}`);yield*o.querySelectorAll(r,t.value)}})}}#o(){if(this.#n.length!==0){this.#t=this.#n.shift();return}if(this.#r.length===0){this.#t=void 0;return}let t=this.#r.shift();switch(t){case\">>>>\":{this.elements=c.flatMap(this.elements,A),this.#o();break}case\">>>\":{this.elements=c.flatMap(this.elements,L),this.#o();break}default:this.#n=t,this.#o();break}}},W=class{#e=new WeakMap;calculate(t,n=[]){if(t===null)return n;t instanceof ShadowRoot&&(t=t.host);let r=this.#e.get(t);if(r)return[...r,...n];let o=0;for(let s=t.previousSibling;s;s=s.previousSibling)++o;let i=this.calculate(t.parentNode,[o]);return this.#e.set(t,i),[...i,...n]}},te=(e,t)=>{if(e.length+t.length===0)return 0;let[n=-1,...r]=e,[o=-1,...i]=t;return n===o?te(r,i):n<o?-1:1},Ce=async function*(e){let t=new Set;for await(let r of e)t.add(r);let n=new W;yield*[...t.values()].map(r=>[r,n.calculate(r)]).sort(([,r],[,o])=>te(r,o)).map(([r])=>r)},re=function(e,t){let n,r;try{[n,r]=Y(t)}catch{return e.querySelectorAll(t)}if(r)return e.querySelectorAll(t);if(n.some(o=>{let i=0;return o.some(s=>(typeof s==\"string\"?++i:i=0,i>1))}))throw new v(t,\"Multiple deep combinators found in sequence.\");return Ce(c.flatMap(n,o=>{let i=new F(e,t,o);return i.run(),i.elements}))},Ie=async function(e,t){for await(let n of re(e,t))return n;return null};var ke=Object.freeze({...R,...D,...M,...H,...Q,...$,...U,createDeferredPromise:p,createFunction:X,createTextContent:y,IntervalPoller:E,isSuitableNodeForTextMatching:w,MutationPoller:T,RAFPoller:x}),Re=ke;\n";
 //# sourceMappingURL=injected.js.map
 
 /***/ }),
@@ -45640,7 +51252,7 @@ exports.packageVersion = void 0;
 /**
  * @internal
  */
-exports.packageVersion = '19.8.0';
+exports.packageVersion = '19.11.1';
 //# sourceMappingURL=version.js.map
 
 /***/ }),
@@ -45698,7 +51310,7 @@ const tar_fs_1 = __importDefault(__nccwpck_require__(366));
 const unbzip2_stream_1 = __importDefault(__nccwpck_require__(3467));
 const Debug_js_1 = __nccwpck_require__(4090);
 const assert_js_1 = __nccwpck_require__(7729);
-const fs_js_1 = __nccwpck_require__(1554);
+const fs_js_1 = __nccwpck_require__(9146);
 const debugFetcher = (0, Debug_js_1.debug)('puppeteer:fetcher');
 const downloadURLs = {
     chrome: {
@@ -45845,21 +51457,21 @@ class BrowserFetcher {
         (0, assert_js_1.assert)(downloadURLs[__classPrivateFieldGet(this, _BrowserFetcher_product, "f")][__classPrivateFieldGet(this, _BrowserFetcher_platform, "f")], 'Unsupported platform: ' + __classPrivateFieldGet(this, _BrowserFetcher_platform, "f"));
     }
     /**
-     * @returns Returns the current `Platform`, which is one of `mac`, `linux`,
+     * Returns the current `Platform`, which is one of `mac`, `linux`,
      * `win32` or `win64`.
      */
     platform() {
         return __classPrivateFieldGet(this, _BrowserFetcher_platform, "f");
     }
     /**
-     * @returns Returns the current `Product`, which is one of `chrome` or
+     * Returns the current `Product`, which is one of `chrome` or
      * `firefox`.
      */
     product() {
         return __classPrivateFieldGet(this, _BrowserFetcher_product, "f");
     }
     /**
-     * @returns The download host being used.
+     * The download host being used.
      */
     host() {
         return __classPrivateFieldGet(this, _BrowserFetcher_downloadHost, "f");
@@ -46203,13 +51815,13 @@ function httpRequest(url, method, response, keepAlive = true) {
 
 /***/ }),
 
-/***/ 7988:
+/***/ 5524:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
 /**
- * Copyright 2020 Google Inc. All rights reserved.
+ * Copyright 2023 Google Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46223,394 +51835,49 @@ function httpRequest(url, method, response, keepAlive = true) {
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
-var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-var _BrowserRunner_product, _BrowserRunner_executablePath, _BrowserRunner_processArguments, _BrowserRunner_userDataDir, _BrowserRunner_isTempUserDataDir, _BrowserRunner_closed, _BrowserRunner_listeners, _BrowserRunner_processClosing;
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BrowserRunner = void 0;
-const child_process_1 = __importDefault(__nccwpck_require__(2081));
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const promises_1 = __nccwpck_require__(3292);
-const path_1 = __importDefault(__nccwpck_require__(1017));
-const readline_1 = __importDefault(__nccwpck_require__(4521));
-const Connection_js_1 = __nccwpck_require__(370);
-const Debug_js_1 = __nccwpck_require__(4090);
-const Errors_js_1 = __nccwpck_require__(6315);
-const NodeWebSocketTransport_js_1 = __nccwpck_require__(4098);
-const util_js_1 = __nccwpck_require__(8274);
-const assert_js_1 = __nccwpck_require__(7729);
-const ErrorLike_js_1 = __nccwpck_require__(2937);
-const fs_js_1 = __nccwpck_require__(1554);
-const PipeTransport_js_1 = __nccwpck_require__(9238);
-const debugLauncher = (0, Debug_js_1.debug)('puppeteer:launcher');
-const PROCESS_ERROR_EXPLANATION = `Puppeteer was unable to kill the process which ran the browser binary.
-This means that, on future Puppeteer launches, Puppeteer might not be able to launch the browser.
-Please check your open processes and ensure that the browser processes that Puppeteer launched have been killed.
-If you think this is a bug, please report it on the Puppeteer issue tracker.`;
-/**
- * @internal
- */
-class BrowserRunner {
-    constructor(product, executablePath, processArguments, userDataDir, isTempUserDataDir) {
-        _BrowserRunner_product.set(this, void 0);
-        _BrowserRunner_executablePath.set(this, void 0);
-        _BrowserRunner_processArguments.set(this, void 0);
-        _BrowserRunner_userDataDir.set(this, void 0);
-        _BrowserRunner_isTempUserDataDir.set(this, void 0);
-        _BrowserRunner_closed.set(this, true);
-        _BrowserRunner_listeners.set(this, []);
-        _BrowserRunner_processClosing.set(this, void 0);
-        __classPrivateFieldSet(this, _BrowserRunner_product, product, "f");
-        __classPrivateFieldSet(this, _BrowserRunner_executablePath, executablePath, "f");
-        __classPrivateFieldSet(this, _BrowserRunner_processArguments, processArguments, "f");
-        __classPrivateFieldSet(this, _BrowserRunner_userDataDir, userDataDir, "f");
-        __classPrivateFieldSet(this, _BrowserRunner_isTempUserDataDir, isTempUserDataDir, "f");
-    }
-    start(options) {
-        var _a, _b;
-        const { handleSIGINT, handleSIGTERM, handleSIGHUP, dumpio, env, pipe } = options;
-        let stdio;
-        if (pipe) {
-            if (dumpio) {
-                stdio = ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'];
-            }
-            else {
-                stdio = ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'];
-            }
-        }
-        else {
-            if (dumpio) {
-                stdio = ['pipe', 'pipe', 'pipe'];
-            }
-            else {
-                stdio = ['pipe', 'ignore', 'pipe'];
-            }
-        }
-        (0, assert_js_1.assert)(!this.proc, 'This process has previously been started.');
-        debugLauncher(`Calling ${__classPrivateFieldGet(this, _BrowserRunner_executablePath, "f")} ${__classPrivateFieldGet(this, _BrowserRunner_processArguments, "f").join(' ')}`);
-        this.proc = child_process_1.default.spawn(__classPrivateFieldGet(this, _BrowserRunner_executablePath, "f"), __classPrivateFieldGet(this, _BrowserRunner_processArguments, "f"), {
-            // On non-windows platforms, `detached: true` makes child process a
-            // leader of a new process group, making it possible to kill child
-            // process tree with `.kill(-pid)` command. @see
-            // https://nodejs.org/api/child_process.html#child_process_options_detached
-            detached: process.platform !== 'win32',
-            env,
-            stdio,
-        });
-        if (dumpio) {
-            (_a = this.proc.stderr) === null || _a === void 0 ? void 0 : _a.pipe(process.stderr);
-            (_b = this.proc.stdout) === null || _b === void 0 ? void 0 : _b.pipe(process.stdout);
-        }
-        __classPrivateFieldSet(this, _BrowserRunner_closed, false, "f");
-        __classPrivateFieldSet(this, _BrowserRunner_processClosing, new Promise((fulfill, reject) => {
-            this.proc.once('exit', async () => {
-                __classPrivateFieldSet(this, _BrowserRunner_closed, true, "f");
-                // Cleanup as processes exit.
-                if (__classPrivateFieldGet(this, _BrowserRunner_isTempUserDataDir, "f")) {
-                    try {
-                        await (0, fs_js_1.rm)(__classPrivateFieldGet(this, _BrowserRunner_userDataDir, "f"));
-                        fulfill();
-                    }
-                    catch (error) {
-                        (0, util_js_1.debugError)(error);
-                        reject(error);
-                    }
-                }
-                else {
-                    if (__classPrivateFieldGet(this, _BrowserRunner_product, "f") === 'firefox') {
-                        try {
-                            // When an existing user profile has been used remove the user
-                            // preferences file and restore possibly backuped preferences.
-                            await (0, promises_1.unlink)(path_1.default.join(__classPrivateFieldGet(this, _BrowserRunner_userDataDir, "f"), 'user.js'));
-                            const prefsBackupPath = path_1.default.join(__classPrivateFieldGet(this, _BrowserRunner_userDataDir, "f"), 'prefs.js.puppeteer');
-                            if (fs_1.default.existsSync(prefsBackupPath)) {
-                                const prefsPath = path_1.default.join(__classPrivateFieldGet(this, _BrowserRunner_userDataDir, "f"), 'prefs.js');
-                                await (0, promises_1.unlink)(prefsPath);
-                                await (0, promises_1.rename)(prefsBackupPath, prefsPath);
-                            }
-                        }
-                        catch (error) {
-                            (0, util_js_1.debugError)(error);
-                            reject(error);
-                        }
-                    }
-                    fulfill();
-                }
-            });
-        }), "f");
-        __classPrivateFieldSet(this, _BrowserRunner_listeners, [(0, util_js_1.addEventListener)(process, 'exit', this.kill.bind(this))], "f");
-        if (handleSIGINT) {
-            __classPrivateFieldGet(this, _BrowserRunner_listeners, "f").push((0, util_js_1.addEventListener)(process, 'SIGINT', () => {
-                this.kill();
-                process.exit(130);
-            }));
-        }
-        if (handleSIGTERM) {
-            __classPrivateFieldGet(this, _BrowserRunner_listeners, "f").push((0, util_js_1.addEventListener)(process, 'SIGTERM', this.close.bind(this)));
-        }
-        if (handleSIGHUP) {
-            __classPrivateFieldGet(this, _BrowserRunner_listeners, "f").push((0, util_js_1.addEventListener)(process, 'SIGHUP', this.close.bind(this)));
-        }
-    }
-    close() {
-        if (__classPrivateFieldGet(this, _BrowserRunner_closed, "f")) {
-            return Promise.resolve();
-        }
-        if (__classPrivateFieldGet(this, _BrowserRunner_isTempUserDataDir, "f")) {
-            this.kill();
-        }
-        else if (this.connection) {
-            // Attempt to close the browser gracefully
-            this.connection.send('Browser.close').catch(error => {
-                (0, util_js_1.debugError)(error);
-                this.kill();
-            });
-        }
-        // Cleanup this listener last, as that makes sure the full callback runs. If we
-        // perform this earlier, then the previous function calls would not happen.
-        (0, util_js_1.removeEventListeners)(__classPrivateFieldGet(this, _BrowserRunner_listeners, "f"));
-        return __classPrivateFieldGet(this, _BrowserRunner_processClosing, "f");
-    }
-    kill() {
-        // If the process failed to launch (for example if the browser executable path
-        // is invalid), then the process does not get a pid assigned. A call to
-        // `proc.kill` would error, as the `pid` to-be-killed can not be found.
-        if (this.proc && this.proc.pid && pidExists(this.proc.pid)) {
-            const proc = this.proc;
-            try {
-                if (process.platform === 'win32') {
-                    child_process_1.default.exec(`taskkill /pid ${this.proc.pid} /T /F`, error => {
-                        if (error) {
-                            // taskkill can fail to kill the process e.g. due to missing permissions.
-                            // Let's kill the process via Node API. This delays killing of all child
-                            // processes of `this.proc` until the main Node.js process dies.
-                            proc.kill();
-                        }
-                    });
-                }
-                else {
-                    // on linux the process group can be killed with the group id prefixed with
-                    // a minus sign. The process group id is the group leader's pid.
-                    const processGroupId = -this.proc.pid;
-                    try {
-                        process.kill(processGroupId, 'SIGKILL');
-                    }
-                    catch (error) {
-                        // Killing the process group can fail due e.g. to missing permissions.
-                        // Let's kill the process via Node API. This delays killing of all child
-                        // processes of `this.proc` until the main Node.js process dies.
-                        proc.kill('SIGKILL');
-                    }
-                }
-            }
-            catch (error) {
-                throw new Error(`${PROCESS_ERROR_EXPLANATION}\nError cause: ${(0, ErrorLike_js_1.isErrorLike)(error) ? error.stack : error}`);
-            }
-        }
-        // Attempt to remove temporary profile directory to avoid littering.
-        try {
-            if (__classPrivateFieldGet(this, _BrowserRunner_isTempUserDataDir, "f")) {
-                (0, fs_js_1.rmSync)(__classPrivateFieldGet(this, _BrowserRunner_userDataDir, "f"));
-            }
-        }
-        catch (error) { }
-        // Cleanup this listener last, as that makes sure the full callback runs. If we
-        // perform this earlier, then the previous function calls would not happen.
-        (0, util_js_1.removeEventListeners)(__classPrivateFieldGet(this, _BrowserRunner_listeners, "f"));
-    }
-    /**
-     * @internal
-     */
-    async setupWebDriverBiDiConnection(options) {
-        (0, assert_js_1.assert)(this.proc, 'BrowserRunner not started.');
-        const { timeout, slowMo, preferredRevision, protocolTimeout } = options;
-        let browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision, /^WebDriver BiDi listening on (ws:\/\/.*)$/);
-        browserWSEndpoint += '/session';
-        const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
-        const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
-        /* webpackIgnore: true */ 845)));
-        return new BiDi.Connection(transport, slowMo, protocolTimeout);
-    }
-    async setupConnection(options) {
-        (0, assert_js_1.assert)(this.proc, 'BrowserRunner not started.');
-        const { usePipe, timeout, slowMo, preferredRevision, protocolTimeout } = options;
-        if (!usePipe) {
-            const browserWSEndpoint = await waitForWSEndpoint(this.proc, timeout, preferredRevision);
-            const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
-            this.connection = new Connection_js_1.Connection(browserWSEndpoint, transport, slowMo, protocolTimeout);
-        }
-        else {
-            // stdio was assigned during start(), and the 'pipe' option there adds the
-            // 4th and 5th items to stdio array
-            const { 3: pipeWrite, 4: pipeRead } = this.proc.stdio;
-            const transport = new PipeTransport_js_1.PipeTransport(pipeWrite, pipeRead);
-            this.connection = new Connection_js_1.Connection('', transport, slowMo, protocolTimeout);
-        }
-        return this.connection;
-    }
-}
-exports.BrowserRunner = BrowserRunner;
-_BrowserRunner_product = new WeakMap(), _BrowserRunner_executablePath = new WeakMap(), _BrowserRunner_processArguments = new WeakMap(), _BrowserRunner_userDataDir = new WeakMap(), _BrowserRunner_isTempUserDataDir = new WeakMap(), _BrowserRunner_closed = new WeakMap(), _BrowserRunner_listeners = new WeakMap(), _BrowserRunner_processClosing = new WeakMap();
-function waitForWSEndpoint(browserProcess, timeout, preferredRevision, regex = /^DevTools listening on (ws:\/\/.*)$/) {
-    (0, assert_js_1.assert)(browserProcess.stderr, '`browserProcess` does not have stderr.');
-    const rl = readline_1.default.createInterface(browserProcess.stderr);
-    let stderr = '';
-    return new Promise((resolve, reject) => {
-        const listeners = [
-            (0, util_js_1.addEventListener)(rl, 'line', onLine),
-            (0, util_js_1.addEventListener)(rl, 'close', () => {
-                return onClose();
-            }),
-            (0, util_js_1.addEventListener)(browserProcess, 'exit', () => {
-                return onClose();
-            }),
-            (0, util_js_1.addEventListener)(browserProcess, 'error', error => {
-                return onClose(error);
-            }),
-        ];
-        const timeoutId = timeout ? setTimeout(onTimeout, timeout) : 0;
-        function onClose(error) {
-            cleanup();
-            reject(new Error([
-                'Failed to launch the browser process!' +
-                    (error ? ' ' + error.message : ''),
-                stderr,
-                '',
-                'TROUBLESHOOTING: https://pptr.dev/troubleshooting',
-                '',
-            ].join('\n')));
-        }
-        function onTimeout() {
-            cleanup();
-            reject(new Errors_js_1.TimeoutError(`Timed out after ${timeout} ms while trying to connect to the browser! Only Chrome at revision r${preferredRevision} is guaranteed to work.`));
-        }
-        function onLine(line) {
-            stderr += line + '\n';
-            const match = line.match(regex);
-            if (!match) {
-                return;
-            }
-            cleanup();
-            // The RegExp matches, so this will obviously exist.
-            resolve(match[1]);
-        }
-        function cleanup() {
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-            }
-            (0, util_js_1.removeEventListeners)(listeners);
-        }
-    });
-}
-function pidExists(pid) {
-    try {
-        return process.kill(pid, 0);
-    }
-    catch (error) {
-        if ((0, ErrorLike_js_1.isErrnoException)(error)) {
-            if (error.code && error.code === 'ESRCH') {
-                return false;
-            }
-        }
-        throw error;
-    }
-}
-//# sourceMappingURL=BrowserRunner.js.map
-
-/***/ }),
-
-/***/ 5524:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
-var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-var _ChromeLauncher_instances, _ChromeLauncher_executablePathForChannel;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ChromeLauncher = void 0;
-const fs_1 = __nccwpck_require__(7147);
 const promises_1 = __nccwpck_require__(3292);
-const os_1 = __importDefault(__nccwpck_require__(2037));
 const path_1 = __importDefault(__nccwpck_require__(1017));
-const Browser_js_1 = __nccwpck_require__(2087);
+const browsers_1 = __nccwpck_require__(6016);
+const util_js_1 = __nccwpck_require__(8274);
 const assert_js_1 = __nccwpck_require__(7729);
-const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
+const fs_js_1 = __nccwpck_require__(9146);
 /**
  * @internal
  */
 class ChromeLauncher extends ProductLauncher_js_1.ProductLauncher {
     constructor(puppeteer) {
         super(puppeteer, 'chrome');
-        _ChromeLauncher_instances.add(this);
     }
-    async launch(options = {}) {
-        const { ignoreDefaultArgs = false, args = [], dumpio = false, channel, executablePath, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, waitForInitialPage = true, debuggingPort, protocol, protocolTimeout, } = options;
+    launch(options = {}) {
+        var _a;
+        const headless = (_a = options.headless) !== null && _a !== void 0 ? _a : true;
+        if (headless === true &&
+            (!this.puppeteer.configuration.logLevel ||
+                this.puppeteer.configuration.logLevel === 'warn') &&
+            !Boolean(process.env['PUPPETEER_DISABLE_HEADLESS_WARNING'])) {
+            console.warn([
+                '\x1B[1m\x1B[43m\x1B[30m',
+                'Puppeteer old Headless deprecation warning:\x1B[0m\x1B[33m',
+                '  In the near feature `headless: true` will default to the new Headless mode',
+                '  for Chrome instead of the old Headless implementation. For more',
+                '  information, please see https://developer.chrome.com/articles/new-headless/.',
+                '  Consider opting in early by passing `headless: "new"` to `puppeteer.launch()`',
+                '  If you encounter any bugs, please report them to https://github.com/puppeteer/puppeteer/issues/new/choose.\x1B[0m\n',
+            ].join('\n  '));
+        }
+        return super.launch(options);
+    }
+    /**
+     * @internal
+     */
+    async computeLaunchArguments(options = {}) {
+        const { ignoreDefaultArgs = false, args = [], pipe = false, debuggingPort, channel, executablePath, } = options;
         const chromeArguments = [];
         if (!ignoreDefaultArgs) {
             chromeArguments.push(...this.defaultArgs(options));
@@ -46652,60 +51919,26 @@ class ChromeLauncher extends ProductLauncher_js_1.ProductLauncher {
             (0, assert_js_1.assert)(channel || !this.puppeteer._isPuppeteerCore, `An \`executablePath\` or \`channel\` must be specified for \`puppeteer-core\``);
             chromeExecutable = this.executablePath(channel);
         }
-        const usePipe = chromeArguments.includes('--remote-debugging-pipe');
-        const runner = new BrowserRunner_js_1.BrowserRunner(this.product, chromeExecutable, chromeArguments, userDataDir, isTempUserDataDir);
-        runner.start({
-            handleSIGHUP,
-            handleSIGTERM,
-            handleSIGINT,
-            dumpio,
-            env,
-            pipe: usePipe,
-        });
-        let browser;
-        try {
-            const connection = await runner.setupConnection({
-                usePipe,
-                timeout,
-                slowMo,
-                preferredRevision: this.puppeteer.browserRevision,
-                protocolTimeout,
-            });
-            if (protocol === 'webDriverBiDi') {
-                try {
-                    const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
-                    /* webpackIgnore: true */ 845)));
-                    const bidiConnection = await BiDi.connectBidiOverCDP(connection);
-                    browser = await BiDi.Browser.create({
-                        connection: bidiConnection,
-                        closeCallback: runner.close.bind(runner),
-                        process: runner.proc,
-                    });
-                }
-                catch (error) {
-                    runner.kill();
-                    throw error;
-                }
-                return browser;
-            }
-            browser = await Browser_js_1.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
-        }
-        catch (error) {
-            runner.kill();
-            throw error;
-        }
-        if (waitForInitialPage) {
+        return {
+            executablePath: chromeExecutable,
+            args: chromeArguments,
+            isTempUserDataDir,
+            userDataDir,
+        };
+    }
+    /**
+     * @internal
+     */
+    async cleanUserDataDir(path, opts) {
+        if (opts.isTemp) {
             try {
-                await browser.waitForTarget(t => {
-                    return t.type() === 'page';
-                }, { timeout });
+                await (0, fs_js_1.rm)(path);
             }
             catch (error) {
-                await browser.close();
+                (0, util_js_1.debugError)(error);
                 throw error;
             }
         }
-        return browser;
     }
     defaultArgs(options = {}) {
         // See https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
@@ -46761,7 +51994,10 @@ class ChromeLauncher extends ProductLauncher_js_1.ProductLauncher {
     }
     executablePath(channel) {
         if (channel) {
-            return __classPrivateFieldGet(this, _ChromeLauncher_instances, "m", _ChromeLauncher_executablePathForChannel).call(this, channel);
+            return (0, browsers_1.computeSystemExecutablePath)({
+                browser: browsers_1.Browser.CHROME,
+                channel: convertPuppeteerChannelToBrowsersChannel(channel),
+            });
         }
         else {
             return this.resolveExecutablePath();
@@ -46769,72 +52005,18 @@ class ChromeLauncher extends ProductLauncher_js_1.ProductLauncher {
     }
 }
 exports.ChromeLauncher = ChromeLauncher;
-_ChromeLauncher_instances = new WeakSet(), _ChromeLauncher_executablePathForChannel = function _ChromeLauncher_executablePathForChannel(channel) {
-    const platform = os_1.default.platform();
-    let chromePath;
-    switch (platform) {
-        case 'win32':
-            switch (channel) {
-                case 'chrome':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome\\Application\\chrome.exe`;
-                    break;
-                case 'chrome-beta':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome Beta\\Application\\chrome.exe`;
-                    break;
-                case 'chrome-canary':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome SxS\\Application\\chrome.exe`;
-                    break;
-                case 'chrome-dev':
-                    chromePath = `${process.env['PROGRAMFILES']}\\Google\\Chrome Dev\\Application\\chrome.exe`;
-                    break;
-            }
-            break;
-        case 'darwin':
-            switch (channel) {
-                case 'chrome':
-                    chromePath =
-                        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-                    break;
-                case 'chrome-beta':
-                    chromePath =
-                        '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta';
-                    break;
-                case 'chrome-canary':
-                    chromePath =
-                        '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary';
-                    break;
-                case 'chrome-dev':
-                    chromePath =
-                        '/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev';
-                    break;
-            }
-            break;
-        case 'linux':
-            switch (channel) {
-                case 'chrome':
-                    chromePath = '/opt/google/chrome/chrome';
-                    break;
-                case 'chrome-beta':
-                    chromePath = '/opt/google/chrome-beta/chrome';
-                    break;
-                case 'chrome-dev':
-                    chromePath = '/opt/google/chrome-unstable/chrome';
-                    break;
-            }
-            break;
+function convertPuppeteerChannelToBrowsersChannel(channel) {
+    switch (channel) {
+        case 'chrome':
+            return browsers_1.ChromeReleaseChannel.STABLE;
+        case 'chrome-dev':
+            return browsers_1.ChromeReleaseChannel.DEV;
+        case 'chrome-beta':
+            return browsers_1.ChromeReleaseChannel.BETA;
+        case 'chrome-canary':
+            return browsers_1.ChromeReleaseChannel.CANARY;
     }
-    if (!chromePath) {
-        throw new Error(`Unable to detect browser executable path for '${channel}' on ${platform}.`);
-    }
-    // Check if Chrome exists and is accessible.
-    try {
-        (0, fs_1.accessSync)(chromePath);
-    }
-    catch (error) {
-        throw new Error(`Could not find Google Chrome executable for channel '${channel}' at '${chromePath}'.`);
-    }
-    return chromePath;
-};
+}
 //# sourceMappingURL=ChromeLauncher.js.map
 
 /***/ }),
@@ -46844,41 +52026,35 @@ _ChromeLauncher_instances = new WeakSet(), _ChromeLauncher_executablePathForChan
 
 "use strict";
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FirefoxLauncher = void 0;
 const fs_1 = __importDefault(__nccwpck_require__(7147));
+const promises_1 = __nccwpck_require__(3292);
 const os_1 = __importDefault(__nccwpck_require__(2037));
 const path_1 = __importDefault(__nccwpck_require__(1017));
-const Browser_js_1 = __nccwpck_require__(2087);
+const browsers_1 = __nccwpck_require__(6016);
+const util_js_1 = __nccwpck_require__(8274);
 const assert_js_1 = __nccwpck_require__(7729);
-const BrowserRunner_js_1 = __nccwpck_require__(7988);
 const ProductLauncher_js_1 = __nccwpck_require__(9675);
+const fs_js_1 = __nccwpck_require__(9146);
 /**
  * @internal
  */
@@ -46886,8 +52062,11 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
     constructor(puppeteer) {
         super(puppeteer, 'firefox');
     }
-    async launch(options = {}) {
-        const { ignoreDefaultArgs = false, args = [], dumpio = false, executablePath, pipe = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, extraPrefsFirefox = {}, waitForInitialPage = true, debuggingPort = null, protocol = 'cdp', protocolTimeout, } = options;
+    /**
+     * @internal
+     */
+    async computeLaunchArguments(options = {}) {
+        const { ignoreDefaultArgs = false, args = [], executablePath, pipe = false, extraPrefsFirefox = {}, debuggingPort = null, } = options;
         const firefoxArguments = [];
         if (!ignoreDefaultArgs) {
             firefoxArguments.push(...this.defaultArgs(options));
@@ -46923,14 +52102,16 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
             // When using a custom Firefox profile it needs to be populated
             // with required preferences.
             isTempUserDataDir = false;
-            const prefs = this.defaultPreferences(extraPrefsFirefox);
-            this.writePreferences(prefs, userDataDir);
         }
         else {
-            userDataDir = await this._createProfile(extraPrefsFirefox);
+            userDataDir = await (0, promises_1.mkdtemp)(this.getProfilePath());
             firefoxArguments.push('--profile');
             firefoxArguments.push(userDataDir);
         }
+        await (0, browsers_1.createProfile)(browsers_1.Browser.FIREFOX, {
+            path: userDataDir,
+            preferences: extraPrefsFirefox,
+        });
         let firefoxExecutable;
         if (this.puppeteer._isPuppeteerCore || executablePath) {
             (0, assert_js_1.assert)(executablePath, `An \`executablePath\` must be specified for \`puppeteer-core\``);
@@ -46939,65 +52120,42 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
         else {
             firefoxExecutable = this.executablePath();
         }
-        const runner = new BrowserRunner_js_1.BrowserRunner(this.product, firefoxExecutable, firefoxArguments, userDataDir, isTempUserDataDir);
-        runner.start({
-            handleSIGHUP,
-            handleSIGTERM,
-            handleSIGINT,
-            dumpio,
-            env,
-            pipe,
-        });
-        if (protocol === 'webDriverBiDi') {
-            let browser;
+        return {
+            isTempUserDataDir,
+            userDataDir,
+            args: firefoxArguments,
+            executablePath: firefoxExecutable,
+        };
+    }
+    /**
+     * @internal
+     */
+    async cleanUserDataDir(userDataDir, opts) {
+        if (opts.isTemp) {
             try {
-                const connection = await runner.setupWebDriverBiDiConnection({
-                    timeout,
-                    slowMo,
-                    preferredRevision: this.puppeteer.browserRevision,
-                    protocolTimeout,
-                });
-                const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
-                /* webpackIgnore: true */ 845)));
-                browser = await BiDi.Browser.create({
-                    connection,
-                    closeCallback: runner.close.bind(runner),
-                    process: runner.proc,
-                });
+                await (0, fs_js_1.rm)(userDataDir);
             }
             catch (error) {
-                runner.kill();
-                throw error;
-            }
-            return browser;
-        }
-        let browser;
-        try {
-            const connection = await runner.setupConnection({
-                usePipe: pipe,
-                timeout,
-                slowMo,
-                preferredRevision: this.puppeteer.browserRevision,
-                protocolTimeout,
-            });
-            browser = await Browser_js_1.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, runner.proc, runner.close.bind(runner), options.targetFilter);
-        }
-        catch (error) {
-            runner.kill();
-            throw error;
-        }
-        if (waitForInitialPage) {
-            try {
-                await browser.waitForTarget(t => {
-                    return t.type() === 'page';
-                }, { timeout });
-            }
-            catch (error) {
-                await browser.close();
+                (0, util_js_1.debugError)(error);
                 throw error;
             }
         }
-        return browser;
+        else {
+            try {
+                // When an existing user profile has been used remove the user
+                // preferences file and restore possibly backuped preferences.
+                await (0, promises_1.unlink)(path_1.default.join(userDataDir, 'user.js'));
+                const prefsBackupPath = path_1.default.join(userDataDir, 'prefs.js.puppeteer');
+                if (fs_1.default.existsSync(prefsBackupPath)) {
+                    const prefsPath = path_1.default.join(userDataDir, 'prefs.js');
+                    await (0, promises_1.unlink)(prefsPath);
+                    await (0, promises_1.rename)(prefsBackupPath, prefsPath);
+                }
+            }
+            catch (error) {
+                (0, util_js_1.debugError)(error);
+            }
+        }
     }
     executablePath() {
         // replace 'latest' placeholder with actual downloaded revision
@@ -47041,197 +52199,6 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
         }
         firefoxArguments.push(...args);
         return firefoxArguments;
-    }
-    defaultPreferences(extraPrefs) {
-        const server = 'dummy.test';
-        const defaultPrefs = {
-            // Make sure Shield doesn't hit the network.
-            'app.normandy.api_url': '',
-            // Disable Firefox old build background check
-            'app.update.checkInstallTime': false,
-            // Disable automatically upgrading Firefox
-            'app.update.disabledForTesting': true,
-            // Increase the APZ content response timeout to 1 minute
-            'apz.content_response_timeout': 60000,
-            // Prevent various error message on the console
-            // jest-puppeteer asserts that no error message is emitted by the console
-            'browser.contentblocking.features.standard': '-tp,tpPrivate,cookieBehavior0,-cm,-fp',
-            // Enable the dump function: which sends messages to the system
-            // console
-            // https://bugzilla.mozilla.org/show_bug.cgi?id=1543115
-            'browser.dom.window.dump.enabled': true,
-            // Disable topstories
-            'browser.newtabpage.activity-stream.feeds.system.topstories': false,
-            // Always display a blank page
-            'browser.newtabpage.enabled': false,
-            // Background thumbnails in particular cause grief: and disabling
-            // thumbnails in general cannot hurt
-            'browser.pagethumbnails.capturing_disabled': true,
-            // Disable safebrowsing components.
-            'browser.safebrowsing.blockedURIs.enabled': false,
-            'browser.safebrowsing.downloads.enabled': false,
-            'browser.safebrowsing.malware.enabled': false,
-            'browser.safebrowsing.passwords.enabled': false,
-            'browser.safebrowsing.phishing.enabled': false,
-            // Disable updates to search engines.
-            'browser.search.update': false,
-            // Do not restore the last open set of tabs if the browser has crashed
-            'browser.sessionstore.resume_from_crash': false,
-            // Skip check for default browser on startup
-            'browser.shell.checkDefaultBrowser': false,
-            // Disable newtabpage
-            'browser.startup.homepage': 'about:blank',
-            // Do not redirect user when a milstone upgrade of Firefox is detected
-            'browser.startup.homepage_override.mstone': 'ignore',
-            // Start with a blank page about:blank
-            'browser.startup.page': 0,
-            // Do not allow background tabs to be zombified on Android: otherwise for
-            // tests that open additional tabs: the test harness tab itself might get
-            // unloaded
-            'browser.tabs.disableBackgroundZombification': false,
-            // Do not warn when closing all other open tabs
-            'browser.tabs.warnOnCloseOtherTabs': false,
-            // Do not warn when multiple tabs will be opened
-            'browser.tabs.warnOnOpen': false,
-            // Disable the UI tour.
-            'browser.uitour.enabled': false,
-            // Turn off search suggestions in the location bar so as not to trigger
-            // network connections.
-            'browser.urlbar.suggest.searches': false,
-            // Disable first run splash page on Windows 10
-            'browser.usedOnWindows10.introURL': '',
-            // Do not warn on quitting Firefox
-            'browser.warnOnQuit': false,
-            // Defensively disable data reporting systems
-            'datareporting.healthreport.documentServerURI': `http://${server}/dummy/healthreport/`,
-            'datareporting.healthreport.logging.consoleEnabled': false,
-            'datareporting.healthreport.service.enabled': false,
-            'datareporting.healthreport.service.firstRun': false,
-            'datareporting.healthreport.uploadEnabled': false,
-            // Do not show datareporting policy notifications which can interfere with tests
-            'datareporting.policy.dataSubmissionEnabled': false,
-            'datareporting.policy.dataSubmissionPolicyBypassNotification': true,
-            // DevTools JSONViewer sometimes fails to load dependencies with its require.js.
-            // This doesn't affect Puppeteer but spams console (Bug 1424372)
-            'devtools.jsonview.enabled': false,
-            // Disable popup-blocker
-            'dom.disable_open_during_load': false,
-            // Enable the support for File object creation in the content process
-            // Required for |Page.setFileInputFiles| protocol method.
-            'dom.file.createInChild': true,
-            // Disable the ProcessHangMonitor
-            'dom.ipc.reportProcessHangs': false,
-            // Disable slow script dialogues
-            'dom.max_chrome_script_run_time': 0,
-            'dom.max_script_run_time': 0,
-            // Only load extensions from the application and user profile
-            // AddonManager.SCOPE_PROFILE + AddonManager.SCOPE_APPLICATION
-            'extensions.autoDisableScopes': 0,
-            'extensions.enabledScopes': 5,
-            // Disable metadata caching for installed add-ons by default
-            'extensions.getAddons.cache.enabled': false,
-            // Disable installing any distribution extensions or add-ons.
-            'extensions.installDistroAddons': false,
-            // Disabled screenshots extension
-            'extensions.screenshots.disabled': true,
-            // Turn off extension updates so they do not bother tests
-            'extensions.update.enabled': false,
-            // Turn off extension updates so they do not bother tests
-            'extensions.update.notifyUser': false,
-            // Make sure opening about:addons will not hit the network
-            'extensions.webservice.discoverURL': `http://${server}/dummy/discoveryURL`,
-            // Temporarily force disable BFCache in parent (https://bit.ly/bug-1732263)
-            'fission.bfcacheInParent': false,
-            // Force all web content to use a single content process
-            'fission.webContentIsolationStrategy': 0,
-            // Allow the application to have focus even it runs in the background
-            'focusmanager.testmode': true,
-            // Disable useragent updates
-            'general.useragent.updates.enabled': false,
-            // Always use network provider for geolocation tests so we bypass the
-            // macOS dialog raised by the corelocation provider
-            'geo.provider.testing': true,
-            // Do not scan Wifi
-            'geo.wifi.scan': false,
-            // No hang monitor
-            'hangmonitor.timeout': 0,
-            // Show chrome errors and warnings in the error console
-            'javascript.options.showInConsole': true,
-            // Disable download and usage of OpenH264: and Widevine plugins
-            'media.gmp-manager.updateEnabled': false,
-            // Prevent various error message on the console
-            // jest-puppeteer asserts that no error message is emitted by the console
-            'network.cookie.cookieBehavior': 0,
-            // Disable experimental feature that is only available in Nightly
-            'network.cookie.sameSite.laxByDefault': false,
-            // Do not prompt for temporary redirects
-            'network.http.prompt-temp-redirect': false,
-            // Disable speculative connections so they are not reported as leaking
-            // when they are hanging around
-            'network.http.speculative-parallel-limit': 0,
-            // Do not automatically switch between offline and online
-            'network.manage-offline-status': false,
-            // Make sure SNTP requests do not hit the network
-            'network.sntp.pools': server,
-            // Disable Flash.
-            'plugin.state.flash': 0,
-            'privacy.trackingprotection.enabled': false,
-            // Can be removed once Firefox 89 is no longer supported
-            // https://bugzilla.mozilla.org/show_bug.cgi?id=1710839
-            'remote.enabled': true,
-            // Don't do network connections for mitm priming
-            'security.certerrors.mitm.priming.enabled': false,
-            // Local documents have access to all other local documents,
-            // including directory listings
-            'security.fileuri.strict_origin_policy': false,
-            // Do not wait for the notification button security delay
-            'security.notification_enable_delay': 0,
-            // Ensure blocklist updates do not hit the network
-            'services.settings.server': `http://${server}/dummy/blocklist/`,
-            // Do not automatically fill sign-in forms with known usernames and
-            // passwords
-            'signon.autofillForms': false,
-            // Disable password capture, so that tests that include forms are not
-            // influenced by the presence of the persistent doorhanger notification
-            'signon.rememberSignons': false,
-            // Disable first-run welcome page
-            'startup.homepage_welcome_url': 'about:blank',
-            // Disable first-run welcome page
-            'startup.homepage_welcome_url.additional': '',
-            // Disable browser animations (tabs, fullscreen, sliding alerts)
-            'toolkit.cosmeticAnimations.enabled': false,
-            // Prevent starting into safe mode after application crashes
-            'toolkit.startup.max_resumed_crashes': -1,
-        };
-        return Object.assign(defaultPrefs, extraPrefs);
-    }
-    /**
-     * Populates the user.js file with custom preferences as needed to allow
-     * Firefox's CDP support to properly function. These preferences will be
-     * automatically copied over to prefs.js during startup of Firefox. To be
-     * able to restore the original values of preferences a backup of prefs.js
-     * will be created.
-     *
-     * @param prefs - List of preferences to add.
-     * @param profilePath - Firefox profile to write the preferences to.
-     */
-    async writePreferences(prefs, profilePath) {
-        const lines = Object.entries(prefs).map(([key, value]) => {
-            return `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`;
-        });
-        await fs_1.default.promises.writeFile(path_1.default.join(profilePath, 'user.js'), lines.join('\n'));
-        // Create a backup of the preferences file if it already exitsts.
-        const prefsPath = path_1.default.join(profilePath, 'prefs.js');
-        if (fs_1.default.existsSync(prefsPath)) {
-            const prefsBackupPath = path_1.default.join(profilePath, 'prefs.js.puppeteer');
-            await fs_1.default.promises.copyFile(prefsPath, prefsBackupPath);
-        }
-    }
-    async _createProfile(extraPrefs) {
-        const temporaryProfilePath = await fs_1.default.promises.mkdtemp(this.getProfilePath());
-        const prefs = this.defaultPreferences(extraPrefs);
-        await this.writePreferences(prefs, temporaryProfilePath);
-        return temporaryProfilePath;
     }
 }
 exports.FirefoxLauncher = FirefoxLauncher;
@@ -47406,6 +52373,13 @@ exports.ProductLauncher = void 0;
 const fs_1 = __nccwpck_require__(7147);
 const os_1 = __importStar(__nccwpck_require__(2037));
 const path_1 = __nccwpck_require__(1017);
+const browsers_1 = __nccwpck_require__(6016);
+const Browser_js_1 = __nccwpck_require__(2087);
+const Connection_js_1 = __nccwpck_require__(370);
+const Errors_js_1 = __nccwpck_require__(6315);
+const NodeWebSocketTransport_js_1 = __nccwpck_require__(4098);
+const util_js_1 = __nccwpck_require__(8274);
+const PipeTransport_js_1 = __nccwpck_require__(9238);
 /**
  * Describes a launcher - a class that is able to create and launch a browser instance.
  *
@@ -47423,8 +52397,78 @@ class ProductLauncher {
     get product() {
         return __classPrivateFieldGet(this, _ProductLauncher_product, "f");
     }
-    launch() {
-        throw new Error('Not implemented');
+    async launch(options = {}) {
+        const { dumpio = false, env = process.env, handleSIGINT = true, handleSIGTERM = true, handleSIGHUP = true, ignoreHTTPSErrors = false, defaultViewport = { width: 800, height: 600 }, slowMo = 0, timeout = 30000, waitForInitialPage = true, protocol, protocolTimeout, } = options;
+        const launchArgs = await this.computeLaunchArguments(options);
+        const usePipe = launchArgs.args.includes('--remote-debugging-pipe');
+        const onProcessExit = async () => {
+            await this.cleanUserDataDir(launchArgs.userDataDir, {
+                isTemp: launchArgs.isTempUserDataDir,
+            });
+        };
+        const browserProcess = (0, browsers_1.launch)({
+            executablePath: launchArgs.executablePath,
+            args: launchArgs.args,
+            handleSIGHUP,
+            handleSIGTERM,
+            handleSIGINT,
+            dumpio,
+            env,
+            pipe: usePipe,
+            onExit: onProcessExit,
+        });
+        let browser;
+        let connection;
+        let closing = false;
+        const browserCloseCallback = async () => {
+            if (closing) {
+                return;
+            }
+            closing = true;
+            await this.closeBrowser(browserProcess, connection);
+        };
+        try {
+            if (__classPrivateFieldGet(this, _ProductLauncher_product, "f") === 'firefox' && protocol === 'webDriverBiDi') {
+                browser = await this.createBiDiBrowser(browserProcess, browserCloseCallback, {
+                    timeout,
+                    protocolTimeout,
+                    slowMo,
+                });
+            }
+            else {
+                if (usePipe) {
+                    connection = await this.createCDPPipeConnection(browserProcess, {
+                        timeout,
+                        protocolTimeout,
+                        slowMo,
+                    });
+                }
+                else {
+                    connection = await this.createCDPSocketConnection(browserProcess, {
+                        timeout,
+                        protocolTimeout,
+                        slowMo,
+                    });
+                }
+                if (protocol === 'webDriverBiDi') {
+                    browser = await this.createBiDiOverCDPBrowser(browserProcess, connection, browserCloseCallback);
+                }
+                else {
+                    browser = await Browser_js_1.CDPBrowser._create(this.product, connection, [], ignoreHTTPSErrors, defaultViewport, browserProcess.nodeProcess, browserCloseCallback, options.targetFilter);
+                }
+            }
+        }
+        catch (error) {
+            browserCloseCallback();
+            if (error instanceof browsers_1.TimeoutError) {
+                throw new Errors_js_1.TimeoutError(error.message);
+            }
+            throw error;
+        }
+        if (waitForInitialPage && protocol !== 'webDriverBiDi') {
+            await this.waitForPageTarget(browser, timeout);
+        }
+        return browser;
     }
     executablePath() {
         throw new Error('Not implemented');
@@ -47439,6 +52483,91 @@ class ProductLauncher {
      */
     getActualBrowserRevision() {
         return this.actualBrowserRevision;
+    }
+    async computeLaunchArguments() {
+        throw new Error('Not implemented');
+    }
+    async cleanUserDataDir() {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal
+     */
+    async closeBrowser(browserProcess, connection) {
+        if (connection) {
+            // Attempt to close the browser gracefully
+            try {
+                await connection.closeBrowser();
+                await browserProcess.hasClosed();
+            }
+            catch (error) {
+                (0, util_js_1.debugError)(error);
+                await browserProcess.close();
+            }
+        }
+        else {
+            await browserProcess.close();
+        }
+    }
+    /**
+     * @internal
+     */
+    async waitForPageTarget(browser, timeout) {
+        try {
+            await browser.waitForTarget(t => {
+                return t.type() === 'page';
+            }, { timeout });
+        }
+        catch (error) {
+            await browser.close();
+            throw error;
+        }
+    }
+    /**
+     * @internal
+     */
+    async createCDPSocketConnection(browserProcess, opts) {
+        const browserWSEndpoint = await browserProcess.waitForLineOutput(browsers_1.CDP_WEBSOCKET_ENDPOINT_REGEX, opts.timeout);
+        const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
+        return new Connection_js_1.Connection(browserWSEndpoint, transport, opts.slowMo, opts.protocolTimeout);
+    }
+    /**
+     * @internal
+     */
+    async createCDPPipeConnection(browserProcess, opts) {
+        // stdio was assigned during start(), and the 'pipe' option there adds the
+        // 4th and 5th items to stdio array
+        const { 3: pipeWrite, 4: pipeRead } = browserProcess.nodeProcess.stdio;
+        const transport = new PipeTransport_js_1.PipeTransport(pipeWrite, pipeRead);
+        return new Connection_js_1.Connection('', transport, opts.slowMo, opts.protocolTimeout);
+    }
+    /**
+     * @internal
+     */
+    async createBiDiOverCDPBrowser(browserProcess, connection, closeCallback) {
+        const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
+        /* webpackIgnore: true */ 845)));
+        const bidiConnection = await BiDi.connectBidiOverCDP(connection);
+        return await BiDi.Browser.create({
+            connection: bidiConnection,
+            closeCallback,
+            process: browserProcess.nodeProcess,
+        });
+    }
+    /**
+     * @internal
+     */
+    async createBiDiBrowser(browserProcess, closeCallback, opts) {
+        const browserWSEndpoint = (await browserProcess.waitForLineOutput(browsers_1.WEBDRIVER_BIDI_WEBSOCKET_ENDPOINT_REGEX, opts.timeout)) + '/session';
+        const transport = await NodeWebSocketTransport_js_1.NodeWebSocketTransport.create(browserWSEndpoint);
+        const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(
+        /* webpackIgnore: true */ 845)));
+        const bidiConnection = new BiDi.Connection(transport, opts.slowMo, opts.protocolTimeout);
+        return await BiDi.Browser.create({
+            connection: bidiConnection,
+            closeCallback,
+            process: browserProcess.nodeProcess,
+        });
     }
     /**
      * @internal
@@ -47608,8 +52737,6 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      *
      * @param options - Set of configurable options to set on the browser.
      * @returns Promise which resolves to browser instance.
-     *
-     * @public
      */
     connect(options) {
         return super.connect(options);
@@ -47619,11 +52746,11 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      * specified.
      *
      * When using with `puppeteer-core`,
-     * {@link LaunchOptions.executablePath | options.executablePath} or
-     * {@link LaunchOptions.channel | options.channel} must be provided.
+     * {@link LaunchOptions | options.executablePath} or
+     * {@link LaunchOptions | options.channel} must be provided.
      *
      * @example
-     * You can use {@link LaunchOptions.ignoreDefaultArgs | options.ignoreDefaultArgs}
+     * You can use {@link LaunchOptions | options.ignoreDefaultArgs}
      * to filter out `--mute-audio` from default arguments:
      *
      * ```ts
@@ -47647,8 +52774,6 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      * describes some differences for Linux users.
      *
      * @param options - Options to configure launching behavior.
-     *
-     * @public
      */
     launch(options = {}) {
         const { product = this.defaultProduct } = options;
@@ -47656,9 +52781,7 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
         return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).launch(options);
     }
     /**
-     * @returns The default executable path.
-     *
-     * @public
+     * The default executable path.
      */
     executablePath(channel) {
         return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).executablePath(channel);
@@ -47671,7 +52794,7 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
         return ((_c = (_b = (_a = __classPrivateFieldGet(this, _PuppeteerNode__launcher, "f")) === null || _a === void 0 ? void 0 : _a.getActualBrowserRevision()) !== null && _b !== void 0 ? _b : this.configuration.browserRevision) !== null && _c !== void 0 ? _c : this.defaultBrowserRevision);
     }
     /**
-     * @returns The default download path for puppeteer. For puppeteer-core, this
+     * The default download path for puppeteer. For puppeteer-core, this
      * code should never be called as it is never defined.
      *
      * @internal
@@ -47681,20 +52804,16 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
         return ((_a = this.configuration.downloadPath) !== null && _a !== void 0 ? _a : (0, path_1.join)(this.configuration.cacheDirectory, this.product));
     }
     /**
-     * @returns The name of the browser that was last launched.
-     *
-     * @public
+     * The name of the browser that was last launched.
      */
     get lastLaunchedProduct() {
         var _a;
         return (_a = __classPrivateFieldGet(this, _PuppeteerNode_lastLaunchedProduct, "f")) !== null && _a !== void 0 ? _a : this.defaultProduct;
     }
     /**
-     * @returns The name of the browser that will be launched by default. For
+     * The name of the browser that will be launched by default. For
      * `puppeteer`, this is influenced by your configuration. Otherwise, it's
      * `chrome`.
-     *
-     * @public
      */
     get defaultProduct() {
         var _a;
@@ -47707,8 +52826,6 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      * {@link PuppeteerNode.lastLaunchedProduct | lastLaunchedProduct}.
      *
      * @returns The name of the browser that is under automation.
-     *
-     * @public
      */
     get product() {
         return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).product;
@@ -47717,8 +52834,6 @@ class PuppeteerNode extends Puppeteer_js_1.Puppeteer {
      * @param options - Set of configurable options to set on the browser.
      *
      * @returns The default flags that Chromium will be launched with.
-     *
-     * @public
      */
     defaultArgs(options = {}) {
         return __classPrivateFieldGet(this, _PuppeteerNode_instances, "a", _PuppeteerNode_launcher_get).defaultArgs(options);
@@ -47815,7 +52930,6 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 __exportStar(__nccwpck_require__(6573), exports);
-__exportStar(__nccwpck_require__(7988), exports);
 __exportStar(__nccwpck_require__(5524), exports);
 __exportStar(__nccwpck_require__(9585), exports);
 __exportStar(__nccwpck_require__(5608), exports);
@@ -47823,6 +52937,55 @@ __exportStar(__nccwpck_require__(9238), exports);
 __exportStar(__nccwpck_require__(9675), exports);
 __exportStar(__nccwpck_require__(4140), exports);
 //# sourceMappingURL=node.js.map
+
+/***/ }),
+
+/***/ 9146:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Copyright 2023 Google Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rmSync = exports.rm = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const rmOptions = {
+    force: true,
+    recursive: true,
+    maxRetries: 5,
+};
+/**
+ * @internal
+ */
+async function rm(path) {
+    await fs_1.default.promises.rm(path, rmOptions);
+}
+exports.rm = rm;
+/**
+ * @internal
+ */
+function rmSync(path) {
+    fs_1.default.rmSync(path, rmOptions);
+}
+exports.rmSync = rmSync;
+//# sourceMappingURL=fs.js.map
 
 /***/ }),
 
@@ -48223,55 +53386,6 @@ exports.assert = assert;
 
 /***/ }),
 
-/***/ 1554:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-/**
- * Copyright 2023 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rmSync = exports.rm = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const rmOptions = {
-    force: true,
-    recursive: true,
-    maxRetries: 5,
-};
-/**
- * @internal
- */
-async function rm(path) {
-    await fs_1.default.promises.rm(path, rmOptions);
-}
-exports.rm = rm;
-/**
- * @internal
- */
-function rmSync(path) {
-    fs_1.default.rmSync(path, rmOptions);
-}
-exports.rmSync = rmSync;
-//# sourceMappingURL=fs.js.map
-
-/***/ }),
-
 /***/ 1470:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -48308,7 +53422,6 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 __exportStar(__nccwpck_require__(7729), exports);
-__exportStar(__nccwpck_require__(1554), exports);
 __exportStar(__nccwpck_require__(7454), exports);
 __exportStar(__nccwpck_require__(7015), exports);
 __exportStar(__nccwpck_require__(2937), exports);
@@ -48326,6 +53439,1610 @@ __exportStar(__nccwpck_require__(6992), exports);
 function mitt(n){return {all:n=n||new Map,on:function(t,e){var i=n.get(t);i?i.push(e):n.set(t,[e]);},off:function(t,e){var i=n.get(t);i&&(e?i.splice(i.indexOf(e)>>>0,1):n.set(t,[]));},emit:function(t,e){var i=n.get(t);i&&i.slice().map(function(n){n(e);}),(i=n.get("*"))&&i.slice().map(function(n){n(t,e);});}}}
 
 module.exports = mitt;
+
+
+/***/ }),
+
+/***/ 6658:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const {
+  applyExtends,
+  cjsPlatformShim,
+  Parser,
+  processArgv,
+} = __nccwpck_require__(9562);
+
+module.exports = {
+  applyExtends: (config, cwd, mergeExtends) => {
+    return applyExtends(config, cwd, mergeExtends, cjsPlatformShim);
+  },
+  hideBin: processArgv.hideBin,
+  Parser,
+};
+
+
+/***/ }),
+
+/***/ 7059:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const align = {
+    right: alignRight,
+    center: alignCenter
+};
+const top = 0;
+const right = 1;
+const bottom = 2;
+const left = 3;
+class UI {
+    constructor(opts) {
+        var _a;
+        this.width = opts.width;
+        this.wrap = (_a = opts.wrap) !== null && _a !== void 0 ? _a : true;
+        this.rows = [];
+    }
+    span(...args) {
+        const cols = this.div(...args);
+        cols.span = true;
+    }
+    resetOutput() {
+        this.rows = [];
+    }
+    div(...args) {
+        if (args.length === 0) {
+            this.div('');
+        }
+        if (this.wrap && this.shouldApplyLayoutDSL(...args) && typeof args[0] === 'string') {
+            return this.applyLayoutDSL(args[0]);
+        }
+        const cols = args.map(arg => {
+            if (typeof arg === 'string') {
+                return this.colFromString(arg);
+            }
+            return arg;
+        });
+        this.rows.push(cols);
+        return cols;
+    }
+    shouldApplyLayoutDSL(...args) {
+        return args.length === 1 && typeof args[0] === 'string' &&
+            /[\t\n]/.test(args[0]);
+    }
+    applyLayoutDSL(str) {
+        const rows = str.split('\n').map(row => row.split('\t'));
+        let leftColumnWidth = 0;
+        // simple heuristic for layout, make sure the
+        // second column lines up along the left-hand.
+        // don't allow the first column to take up more
+        // than 50% of the screen.
+        rows.forEach(columns => {
+            if (columns.length > 1 && mixin.stringWidth(columns[0]) > leftColumnWidth) {
+                leftColumnWidth = Math.min(Math.floor(this.width * 0.5), mixin.stringWidth(columns[0]));
+            }
+        });
+        // generate a table:
+        //  replacing ' ' with padding calculations.
+        //  using the algorithmically generated width.
+        rows.forEach(columns => {
+            this.div(...columns.map((r, i) => {
+                return {
+                    text: r.trim(),
+                    padding: this.measurePadding(r),
+                    width: (i === 0 && columns.length > 1) ? leftColumnWidth : undefined
+                };
+            }));
+        });
+        return this.rows[this.rows.length - 1];
+    }
+    colFromString(text) {
+        return {
+            text,
+            padding: this.measurePadding(text)
+        };
+    }
+    measurePadding(str) {
+        // measure padding without ansi escape codes
+        const noAnsi = mixin.stripAnsi(str);
+        return [0, noAnsi.match(/\s*$/)[0].length, 0, noAnsi.match(/^\s*/)[0].length];
+    }
+    toString() {
+        const lines = [];
+        this.rows.forEach(row => {
+            this.rowToString(row, lines);
+        });
+        // don't display any lines with the
+        // hidden flag set.
+        return lines
+            .filter(line => !line.hidden)
+            .map(line => line.text)
+            .join('\n');
+    }
+    rowToString(row, lines) {
+        this.rasterize(row).forEach((rrow, r) => {
+            let str = '';
+            rrow.forEach((col, c) => {
+                const { width } = row[c]; // the width with padding.
+                const wrapWidth = this.negatePadding(row[c]); // the width without padding.
+                let ts = col; // temporary string used during alignment/padding.
+                if (wrapWidth > mixin.stringWidth(col)) {
+                    ts += ' '.repeat(wrapWidth - mixin.stringWidth(col));
+                }
+                // align the string within its column.
+                if (row[c].align && row[c].align !== 'left' && this.wrap) {
+                    const fn = align[row[c].align];
+                    ts = fn(ts, wrapWidth);
+                    if (mixin.stringWidth(ts) < wrapWidth) {
+                        ts += ' '.repeat((width || 0) - mixin.stringWidth(ts) - 1);
+                    }
+                }
+                // apply border and padding to string.
+                const padding = row[c].padding || [0, 0, 0, 0];
+                if (padding[left]) {
+                    str += ' '.repeat(padding[left]);
+                }
+                str += addBorder(row[c], ts, '| ');
+                str += ts;
+                str += addBorder(row[c], ts, ' |');
+                if (padding[right]) {
+                    str += ' '.repeat(padding[right]);
+                }
+                // if prior row is span, try to render the
+                // current row on the prior line.
+                if (r === 0 && lines.length > 0) {
+                    str = this.renderInline(str, lines[lines.length - 1]);
+                }
+            });
+            // remove trailing whitespace.
+            lines.push({
+                text: str.replace(/ +$/, ''),
+                span: row.span
+            });
+        });
+        return lines;
+    }
+    // if the full 'source' can render in
+    // the target line, do so.
+    renderInline(source, previousLine) {
+        const match = source.match(/^ */);
+        const leadingWhitespace = match ? match[0].length : 0;
+        const target = previousLine.text;
+        const targetTextWidth = mixin.stringWidth(target.trimRight());
+        if (!previousLine.span) {
+            return source;
+        }
+        // if we're not applying wrapping logic,
+        // just always append to the span.
+        if (!this.wrap) {
+            previousLine.hidden = true;
+            return target + source;
+        }
+        if (leadingWhitespace < targetTextWidth) {
+            return source;
+        }
+        previousLine.hidden = true;
+        return target.trimRight() + ' '.repeat(leadingWhitespace - targetTextWidth) + source.trimLeft();
+    }
+    rasterize(row) {
+        const rrows = [];
+        const widths = this.columnWidths(row);
+        let wrapped;
+        // word wrap all columns, and create
+        // a data-structure that is easy to rasterize.
+        row.forEach((col, c) => {
+            // leave room for left and right padding.
+            col.width = widths[c];
+            if (this.wrap) {
+                wrapped = mixin.wrap(col.text, this.negatePadding(col), { hard: true }).split('\n');
+            }
+            else {
+                wrapped = col.text.split('\n');
+            }
+            if (col.border) {
+                wrapped.unshift('.' + '-'.repeat(this.negatePadding(col) + 2) + '.');
+                wrapped.push("'" + '-'.repeat(this.negatePadding(col) + 2) + "'");
+            }
+            // add top and bottom padding.
+            if (col.padding) {
+                wrapped.unshift(...new Array(col.padding[top] || 0).fill(''));
+                wrapped.push(...new Array(col.padding[bottom] || 0).fill(''));
+            }
+            wrapped.forEach((str, r) => {
+                if (!rrows[r]) {
+                    rrows.push([]);
+                }
+                const rrow = rrows[r];
+                for (let i = 0; i < c; i++) {
+                    if (rrow[i] === undefined) {
+                        rrow.push('');
+                    }
+                }
+                rrow.push(str);
+            });
+        });
+        return rrows;
+    }
+    negatePadding(col) {
+        let wrapWidth = col.width || 0;
+        if (col.padding) {
+            wrapWidth -= (col.padding[left] || 0) + (col.padding[right] || 0);
+        }
+        if (col.border) {
+            wrapWidth -= 4;
+        }
+        return wrapWidth;
+    }
+    columnWidths(row) {
+        if (!this.wrap) {
+            return row.map(col => {
+                return col.width || mixin.stringWidth(col.text);
+            });
+        }
+        let unset = row.length;
+        let remainingWidth = this.width;
+        // column widths can be set in config.
+        const widths = row.map(col => {
+            if (col.width) {
+                unset--;
+                remainingWidth -= col.width;
+                return col.width;
+            }
+            return undefined;
+        });
+        // any unset widths should be calculated.
+        const unsetWidth = unset ? Math.floor(remainingWidth / unset) : 0;
+        return widths.map((w, i) => {
+            if (w === undefined) {
+                return Math.max(unsetWidth, _minWidth(row[i]));
+            }
+            return w;
+        });
+    }
+}
+function addBorder(col, ts, style) {
+    if (col.border) {
+        if (/[.']-+[.']/.test(ts)) {
+            return '';
+        }
+        if (ts.trim().length !== 0) {
+            return style;
+        }
+        return '  ';
+    }
+    return '';
+}
+// calculates the minimum width of
+// a column, based on padding preferences.
+function _minWidth(col) {
+    const padding = col.padding || [];
+    const minWidth = 1 + (padding[left] || 0) + (padding[right] || 0);
+    if (col.border) {
+        return minWidth + 4;
+    }
+    return minWidth;
+}
+function getWindowWidth() {
+    /* istanbul ignore next: depends on terminal */
+    if (typeof process === 'object' && process.stdout && process.stdout.columns) {
+        return process.stdout.columns;
+    }
+    return 80;
+}
+function alignRight(str, width) {
+    str = str.trim();
+    const strWidth = mixin.stringWidth(str);
+    if (strWidth < width) {
+        return ' '.repeat(width - strWidth) + str;
+    }
+    return str;
+}
+function alignCenter(str, width) {
+    str = str.trim();
+    const strWidth = mixin.stringWidth(str);
+    /* istanbul ignore next */
+    if (strWidth >= width) {
+        return str;
+    }
+    return ' '.repeat((width - strWidth) >> 1) + str;
+}
+let mixin;
+function cliui(opts, _mixin) {
+    mixin = _mixin;
+    return new UI({
+        width: (opts === null || opts === void 0 ? void 0 : opts.width) || getWindowWidth(),
+        wrap: opts === null || opts === void 0 ? void 0 : opts.wrap
+    });
+}
+
+// Bootstrap cliui with CommonJS dependencies:
+const stringWidth = __nccwpck_require__(2577);
+const stripAnsi = __nccwpck_require__(5591);
+const wrap = __nccwpck_require__(9824);
+function ui(opts) {
+    return cliui(opts, {
+        stringWidth,
+        stripAnsi,
+        wrap
+    });
+}
+
+module.exports = ui;
+
+
+/***/ }),
+
+/***/ 452:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var fs = __nccwpck_require__(7147);
+var util = __nccwpck_require__(3837);
+var path = __nccwpck_require__(1017);
+
+let shim;
+class Y18N {
+    constructor(opts) {
+        // configurable options.
+        opts = opts || {};
+        this.directory = opts.directory || './locales';
+        this.updateFiles = typeof opts.updateFiles === 'boolean' ? opts.updateFiles : true;
+        this.locale = opts.locale || 'en';
+        this.fallbackToLanguage = typeof opts.fallbackToLanguage === 'boolean' ? opts.fallbackToLanguage : true;
+        // internal stuff.
+        this.cache = Object.create(null);
+        this.writeQueue = [];
+    }
+    __(...args) {
+        if (typeof arguments[0] !== 'string') {
+            return this._taggedLiteral(arguments[0], ...arguments);
+        }
+        const str = args.shift();
+        let cb = function () { }; // start with noop.
+        if (typeof args[args.length - 1] === 'function')
+            cb = args.pop();
+        cb = cb || function () { }; // noop.
+        if (!this.cache[this.locale])
+            this._readLocaleFile();
+        // we've observed a new string, update the language file.
+        if (!this.cache[this.locale][str] && this.updateFiles) {
+            this.cache[this.locale][str] = str;
+            // include the current directory and locale,
+            // since these values could change before the
+            // write is performed.
+            this._enqueueWrite({
+                directory: this.directory,
+                locale: this.locale,
+                cb
+            });
+        }
+        else {
+            cb();
+        }
+        return shim.format.apply(shim.format, [this.cache[this.locale][str] || str].concat(args));
+    }
+    __n() {
+        const args = Array.prototype.slice.call(arguments);
+        const singular = args.shift();
+        const plural = args.shift();
+        const quantity = args.shift();
+        let cb = function () { }; // start with noop.
+        if (typeof args[args.length - 1] === 'function')
+            cb = args.pop();
+        if (!this.cache[this.locale])
+            this._readLocaleFile();
+        let str = quantity === 1 ? singular : plural;
+        if (this.cache[this.locale][singular]) {
+            const entry = this.cache[this.locale][singular];
+            str = entry[quantity === 1 ? 'one' : 'other'];
+        }
+        // we've observed a new string, update the language file.
+        if (!this.cache[this.locale][singular] && this.updateFiles) {
+            this.cache[this.locale][singular] = {
+                one: singular,
+                other: plural
+            };
+            // include the current directory and locale,
+            // since these values could change before the
+            // write is performed.
+            this._enqueueWrite({
+                directory: this.directory,
+                locale: this.locale,
+                cb
+            });
+        }
+        else {
+            cb();
+        }
+        // if a %d placeholder is provided, add quantity
+        // to the arguments expanded by util.format.
+        const values = [str];
+        if (~str.indexOf('%d'))
+            values.push(quantity);
+        return shim.format.apply(shim.format, values.concat(args));
+    }
+    setLocale(locale) {
+        this.locale = locale;
+    }
+    getLocale() {
+        return this.locale;
+    }
+    updateLocale(obj) {
+        if (!this.cache[this.locale])
+            this._readLocaleFile();
+        for (const key in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                this.cache[this.locale][key] = obj[key];
+            }
+        }
+    }
+    _taggedLiteral(parts, ...args) {
+        let str = '';
+        parts.forEach(function (part, i) {
+            const arg = args[i + 1];
+            str += part;
+            if (typeof arg !== 'undefined') {
+                str += '%s';
+            }
+        });
+        return this.__.apply(this, [str].concat([].slice.call(args, 1)));
+    }
+    _enqueueWrite(work) {
+        this.writeQueue.push(work);
+        if (this.writeQueue.length === 1)
+            this._processWriteQueue();
+    }
+    _processWriteQueue() {
+        const _this = this;
+        const work = this.writeQueue[0];
+        // destructure the enqueued work.
+        const directory = work.directory;
+        const locale = work.locale;
+        const cb = work.cb;
+        const languageFile = this._resolveLocaleFile(directory, locale);
+        const serializedLocale = JSON.stringify(this.cache[locale], null, 2);
+        shim.fs.writeFile(languageFile, serializedLocale, 'utf-8', function (err) {
+            _this.writeQueue.shift();
+            if (_this.writeQueue.length > 0)
+                _this._processWriteQueue();
+            cb(err);
+        });
+    }
+    _readLocaleFile() {
+        let localeLookup = {};
+        const languageFile = this._resolveLocaleFile(this.directory, this.locale);
+        try {
+            // When using a bundler such as webpack, readFileSync may not be defined:
+            if (shim.fs.readFileSync) {
+                localeLookup = JSON.parse(shim.fs.readFileSync(languageFile, 'utf-8'));
+            }
+        }
+        catch (err) {
+            if (err instanceof SyntaxError) {
+                err.message = 'syntax error in ' + languageFile;
+            }
+            if (err.code === 'ENOENT')
+                localeLookup = {};
+            else
+                throw err;
+        }
+        this.cache[this.locale] = localeLookup;
+    }
+    _resolveLocaleFile(directory, locale) {
+        let file = shim.resolve(directory, './', locale + '.json');
+        if (this.fallbackToLanguage && !this._fileExistsSync(file) && ~locale.lastIndexOf('_')) {
+            // attempt fallback to language only
+            const languageFile = shim.resolve(directory, './', locale.split('_')[0] + '.json');
+            if (this._fileExistsSync(languageFile))
+                file = languageFile;
+        }
+        return file;
+    }
+    _fileExistsSync(file) {
+        return shim.exists(file);
+    }
+}
+function y18n$1(opts, _shim) {
+    shim = _shim;
+    const y18n = new Y18N(opts);
+    return {
+        __: y18n.__.bind(y18n),
+        __n: y18n.__n.bind(y18n),
+        setLocale: y18n.setLocale.bind(y18n),
+        getLocale: y18n.getLocale.bind(y18n),
+        updateLocale: y18n.updateLocale.bind(y18n),
+        locale: y18n.locale
+    };
+}
+
+var nodePlatformShim = {
+    fs: {
+        readFileSync: fs.readFileSync,
+        writeFile: fs.writeFile
+    },
+    format: util.format,
+    resolve: path.resolve,
+    exists: (file) => {
+        try {
+            return fs.statSync(file).isFile();
+        }
+        catch (err) {
+            return false;
+        }
+    }
+};
+
+const y18n = (opts) => {
+    return y18n$1(opts, nodePlatformShim);
+};
+
+module.exports = y18n;
+
+
+/***/ }),
+
+/***/ 1970:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var util = __nccwpck_require__(3837);
+var path = __nccwpck_require__(1017);
+var fs = __nccwpck_require__(7147);
+
+function camelCase(str) {
+    const isCamelCase = str !== str.toLowerCase() && str !== str.toUpperCase();
+    if (!isCamelCase) {
+        str = str.toLowerCase();
+    }
+    if (str.indexOf('-') === -1 && str.indexOf('_') === -1) {
+        return str;
+    }
+    else {
+        let camelcase = '';
+        let nextChrUpper = false;
+        const leadingHyphens = str.match(/^-+/);
+        for (let i = leadingHyphens ? leadingHyphens[0].length : 0; i < str.length; i++) {
+            let chr = str.charAt(i);
+            if (nextChrUpper) {
+                nextChrUpper = false;
+                chr = chr.toUpperCase();
+            }
+            if (i !== 0 && (chr === '-' || chr === '_')) {
+                nextChrUpper = true;
+            }
+            else if (chr !== '-' && chr !== '_') {
+                camelcase += chr;
+            }
+        }
+        return camelcase;
+    }
+}
+function decamelize(str, joinString) {
+    const lowercase = str.toLowerCase();
+    joinString = joinString || '-';
+    let notCamelcase = '';
+    for (let i = 0; i < str.length; i++) {
+        const chrLower = lowercase.charAt(i);
+        const chrString = str.charAt(i);
+        if (chrLower !== chrString && i > 0) {
+            notCamelcase += `${joinString}${lowercase.charAt(i)}`;
+        }
+        else {
+            notCamelcase += chrString;
+        }
+    }
+    return notCamelcase;
+}
+function looksLikeNumber(x) {
+    if (x === null || x === undefined)
+        return false;
+    if (typeof x === 'number')
+        return true;
+    if (/^0x[0-9a-f]+$/i.test(x))
+        return true;
+    if (/^0[^.]/.test(x))
+        return false;
+    return /^[-]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/.test(x);
+}
+
+function tokenizeArgString(argString) {
+    if (Array.isArray(argString)) {
+        return argString.map(e => typeof e !== 'string' ? e + '' : e);
+    }
+    argString = argString.trim();
+    let i = 0;
+    let prevC = null;
+    let c = null;
+    let opening = null;
+    const args = [];
+    for (let ii = 0; ii < argString.length; ii++) {
+        prevC = c;
+        c = argString.charAt(ii);
+        if (c === ' ' && !opening) {
+            if (!(prevC === ' ')) {
+                i++;
+            }
+            continue;
+        }
+        if (c === opening) {
+            opening = null;
+        }
+        else if ((c === "'" || c === '"') && !opening) {
+            opening = c;
+        }
+        if (!args[i])
+            args[i] = '';
+        args[i] += c;
+    }
+    return args;
+}
+
+var DefaultValuesForTypeKey;
+(function (DefaultValuesForTypeKey) {
+    DefaultValuesForTypeKey["BOOLEAN"] = "boolean";
+    DefaultValuesForTypeKey["STRING"] = "string";
+    DefaultValuesForTypeKey["NUMBER"] = "number";
+    DefaultValuesForTypeKey["ARRAY"] = "array";
+})(DefaultValuesForTypeKey || (DefaultValuesForTypeKey = {}));
+
+let mixin;
+class YargsParser {
+    constructor(_mixin) {
+        mixin = _mixin;
+    }
+    parse(argsInput, options) {
+        const opts = Object.assign({
+            alias: undefined,
+            array: undefined,
+            boolean: undefined,
+            config: undefined,
+            configObjects: undefined,
+            configuration: undefined,
+            coerce: undefined,
+            count: undefined,
+            default: undefined,
+            envPrefix: undefined,
+            narg: undefined,
+            normalize: undefined,
+            string: undefined,
+            number: undefined,
+            __: undefined,
+            key: undefined
+        }, options);
+        const args = tokenizeArgString(argsInput);
+        const inputIsString = typeof argsInput === 'string';
+        const aliases = combineAliases(Object.assign(Object.create(null), opts.alias));
+        const configuration = Object.assign({
+            'boolean-negation': true,
+            'camel-case-expansion': true,
+            'combine-arrays': false,
+            'dot-notation': true,
+            'duplicate-arguments-array': true,
+            'flatten-duplicate-arrays': true,
+            'greedy-arrays': true,
+            'halt-at-non-option': false,
+            'nargs-eats-options': false,
+            'negation-prefix': 'no-',
+            'parse-numbers': true,
+            'parse-positional-numbers': true,
+            'populate--': false,
+            'set-placeholder-key': false,
+            'short-option-groups': true,
+            'strip-aliased': false,
+            'strip-dashed': false,
+            'unknown-options-as-args': false
+        }, opts.configuration);
+        const defaults = Object.assign(Object.create(null), opts.default);
+        const configObjects = opts.configObjects || [];
+        const envPrefix = opts.envPrefix;
+        const notFlagsOption = configuration['populate--'];
+        const notFlagsArgv = notFlagsOption ? '--' : '_';
+        const newAliases = Object.create(null);
+        const defaulted = Object.create(null);
+        const __ = opts.__ || mixin.format;
+        const flags = {
+            aliases: Object.create(null),
+            arrays: Object.create(null),
+            bools: Object.create(null),
+            strings: Object.create(null),
+            numbers: Object.create(null),
+            counts: Object.create(null),
+            normalize: Object.create(null),
+            configs: Object.create(null),
+            nargs: Object.create(null),
+            coercions: Object.create(null),
+            keys: []
+        };
+        const negative = /^-([0-9]+(\.[0-9]+)?|\.[0-9]+)$/;
+        const negatedBoolean = new RegExp('^--' + configuration['negation-prefix'] + '(.+)');
+        [].concat(opts.array || []).filter(Boolean).forEach(function (opt) {
+            const key = typeof opt === 'object' ? opt.key : opt;
+            const assignment = Object.keys(opt).map(function (key) {
+                const arrayFlagKeys = {
+                    boolean: 'bools',
+                    string: 'strings',
+                    number: 'numbers'
+                };
+                return arrayFlagKeys[key];
+            }).filter(Boolean).pop();
+            if (assignment) {
+                flags[assignment][key] = true;
+            }
+            flags.arrays[key] = true;
+            flags.keys.push(key);
+        });
+        [].concat(opts.boolean || []).filter(Boolean).forEach(function (key) {
+            flags.bools[key] = true;
+            flags.keys.push(key);
+        });
+        [].concat(opts.string || []).filter(Boolean).forEach(function (key) {
+            flags.strings[key] = true;
+            flags.keys.push(key);
+        });
+        [].concat(opts.number || []).filter(Boolean).forEach(function (key) {
+            flags.numbers[key] = true;
+            flags.keys.push(key);
+        });
+        [].concat(opts.count || []).filter(Boolean).forEach(function (key) {
+            flags.counts[key] = true;
+            flags.keys.push(key);
+        });
+        [].concat(opts.normalize || []).filter(Boolean).forEach(function (key) {
+            flags.normalize[key] = true;
+            flags.keys.push(key);
+        });
+        if (typeof opts.narg === 'object') {
+            Object.entries(opts.narg).forEach(([key, value]) => {
+                if (typeof value === 'number') {
+                    flags.nargs[key] = value;
+                    flags.keys.push(key);
+                }
+            });
+        }
+        if (typeof opts.coerce === 'object') {
+            Object.entries(opts.coerce).forEach(([key, value]) => {
+                if (typeof value === 'function') {
+                    flags.coercions[key] = value;
+                    flags.keys.push(key);
+                }
+            });
+        }
+        if (typeof opts.config !== 'undefined') {
+            if (Array.isArray(opts.config) || typeof opts.config === 'string') {
+                [].concat(opts.config).filter(Boolean).forEach(function (key) {
+                    flags.configs[key] = true;
+                });
+            }
+            else if (typeof opts.config === 'object') {
+                Object.entries(opts.config).forEach(([key, value]) => {
+                    if (typeof value === 'boolean' || typeof value === 'function') {
+                        flags.configs[key] = value;
+                    }
+                });
+            }
+        }
+        extendAliases(opts.key, aliases, opts.default, flags.arrays);
+        Object.keys(defaults).forEach(function (key) {
+            (flags.aliases[key] || []).forEach(function (alias) {
+                defaults[alias] = defaults[key];
+            });
+        });
+        let error = null;
+        checkConfiguration();
+        let notFlags = [];
+        const argv = Object.assign(Object.create(null), { _: [] });
+        const argvReturn = {};
+        for (let i = 0; i < args.length; i++) {
+            const arg = args[i];
+            const truncatedArg = arg.replace(/^-{3,}/, '---');
+            let broken;
+            let key;
+            let letters;
+            let m;
+            let next;
+            let value;
+            if (arg !== '--' && /^-/.test(arg) && isUnknownOptionAsArg(arg)) {
+                pushPositional(arg);
+            }
+            else if (truncatedArg.match(/^---+(=|$)/)) {
+                pushPositional(arg);
+                continue;
+            }
+            else if (arg.match(/^--.+=/) || (!configuration['short-option-groups'] && arg.match(/^-.+=/))) {
+                m = arg.match(/^--?([^=]+)=([\s\S]*)$/);
+                if (m !== null && Array.isArray(m) && m.length >= 3) {
+                    if (checkAllAliases(m[1], flags.arrays)) {
+                        i = eatArray(i, m[1], args, m[2]);
+                    }
+                    else if (checkAllAliases(m[1], flags.nargs) !== false) {
+                        i = eatNargs(i, m[1], args, m[2]);
+                    }
+                    else {
+                        setArg(m[1], m[2], true);
+                    }
+                }
+            }
+            else if (arg.match(negatedBoolean) && configuration['boolean-negation']) {
+                m = arg.match(negatedBoolean);
+                if (m !== null && Array.isArray(m) && m.length >= 2) {
+                    key = m[1];
+                    setArg(key, checkAllAliases(key, flags.arrays) ? [false] : false);
+                }
+            }
+            else if (arg.match(/^--.+/) || (!configuration['short-option-groups'] && arg.match(/^-[^-]+/))) {
+                m = arg.match(/^--?(.+)/);
+                if (m !== null && Array.isArray(m) && m.length >= 2) {
+                    key = m[1];
+                    if (checkAllAliases(key, flags.arrays)) {
+                        i = eatArray(i, key, args);
+                    }
+                    else if (checkAllAliases(key, flags.nargs) !== false) {
+                        i = eatNargs(i, key, args);
+                    }
+                    else {
+                        next = args[i + 1];
+                        if (next !== undefined && (!next.match(/^-/) ||
+                            next.match(negative)) &&
+                            !checkAllAliases(key, flags.bools) &&
+                            !checkAllAliases(key, flags.counts)) {
+                            setArg(key, next);
+                            i++;
+                        }
+                        else if (/^(true|false)$/.test(next)) {
+                            setArg(key, next);
+                            i++;
+                        }
+                        else {
+                            setArg(key, defaultValue(key));
+                        }
+                    }
+                }
+            }
+            else if (arg.match(/^-.\..+=/)) {
+                m = arg.match(/^-([^=]+)=([\s\S]*)$/);
+                if (m !== null && Array.isArray(m) && m.length >= 3) {
+                    setArg(m[1], m[2]);
+                }
+            }
+            else if (arg.match(/^-.\..+/) && !arg.match(negative)) {
+                next = args[i + 1];
+                m = arg.match(/^-(.\..+)/);
+                if (m !== null && Array.isArray(m) && m.length >= 2) {
+                    key = m[1];
+                    if (next !== undefined && !next.match(/^-/) &&
+                        !checkAllAliases(key, flags.bools) &&
+                        !checkAllAliases(key, flags.counts)) {
+                        setArg(key, next);
+                        i++;
+                    }
+                    else {
+                        setArg(key, defaultValue(key));
+                    }
+                }
+            }
+            else if (arg.match(/^-[^-]+/) && !arg.match(negative)) {
+                letters = arg.slice(1, -1).split('');
+                broken = false;
+                for (let j = 0; j < letters.length; j++) {
+                    next = arg.slice(j + 2);
+                    if (letters[j + 1] && letters[j + 1] === '=') {
+                        value = arg.slice(j + 3);
+                        key = letters[j];
+                        if (checkAllAliases(key, flags.arrays)) {
+                            i = eatArray(i, key, args, value);
+                        }
+                        else if (checkAllAliases(key, flags.nargs) !== false) {
+                            i = eatNargs(i, key, args, value);
+                        }
+                        else {
+                            setArg(key, value);
+                        }
+                        broken = true;
+                        break;
+                    }
+                    if (next === '-') {
+                        setArg(letters[j], next);
+                        continue;
+                    }
+                    if (/[A-Za-z]/.test(letters[j]) &&
+                        /^-?\d+(\.\d*)?(e-?\d+)?$/.test(next) &&
+                        checkAllAliases(next, flags.bools) === false) {
+                        setArg(letters[j], next);
+                        broken = true;
+                        break;
+                    }
+                    if (letters[j + 1] && letters[j + 1].match(/\W/)) {
+                        setArg(letters[j], next);
+                        broken = true;
+                        break;
+                    }
+                    else {
+                        setArg(letters[j], defaultValue(letters[j]));
+                    }
+                }
+                key = arg.slice(-1)[0];
+                if (!broken && key !== '-') {
+                    if (checkAllAliases(key, flags.arrays)) {
+                        i = eatArray(i, key, args);
+                    }
+                    else if (checkAllAliases(key, flags.nargs) !== false) {
+                        i = eatNargs(i, key, args);
+                    }
+                    else {
+                        next = args[i + 1];
+                        if (next !== undefined && (!/^(-|--)[^-]/.test(next) ||
+                            next.match(negative)) &&
+                            !checkAllAliases(key, flags.bools) &&
+                            !checkAllAliases(key, flags.counts)) {
+                            setArg(key, next);
+                            i++;
+                        }
+                        else if (/^(true|false)$/.test(next)) {
+                            setArg(key, next);
+                            i++;
+                        }
+                        else {
+                            setArg(key, defaultValue(key));
+                        }
+                    }
+                }
+            }
+            else if (arg.match(/^-[0-9]$/) &&
+                arg.match(negative) &&
+                checkAllAliases(arg.slice(1), flags.bools)) {
+                key = arg.slice(1);
+                setArg(key, defaultValue(key));
+            }
+            else if (arg === '--') {
+                notFlags = args.slice(i + 1);
+                break;
+            }
+            else if (configuration['halt-at-non-option']) {
+                notFlags = args.slice(i);
+                break;
+            }
+            else {
+                pushPositional(arg);
+            }
+        }
+        applyEnvVars(argv, true);
+        applyEnvVars(argv, false);
+        setConfig(argv);
+        setConfigObjects();
+        applyDefaultsAndAliases(argv, flags.aliases, defaults, true);
+        applyCoercions(argv);
+        if (configuration['set-placeholder-key'])
+            setPlaceholderKeys(argv);
+        Object.keys(flags.counts).forEach(function (key) {
+            if (!hasKey(argv, key.split('.')))
+                setArg(key, 0);
+        });
+        if (notFlagsOption && notFlags.length)
+            argv[notFlagsArgv] = [];
+        notFlags.forEach(function (key) {
+            argv[notFlagsArgv].push(key);
+        });
+        if (configuration['camel-case-expansion'] && configuration['strip-dashed']) {
+            Object.keys(argv).filter(key => key !== '--' && key.includes('-')).forEach(key => {
+                delete argv[key];
+            });
+        }
+        if (configuration['strip-aliased']) {
+            [].concat(...Object.keys(aliases).map(k => aliases[k])).forEach(alias => {
+                if (configuration['camel-case-expansion'] && alias.includes('-')) {
+                    delete argv[alias.split('.').map(prop => camelCase(prop)).join('.')];
+                }
+                delete argv[alias];
+            });
+        }
+        function pushPositional(arg) {
+            const maybeCoercedNumber = maybeCoerceNumber('_', arg);
+            if (typeof maybeCoercedNumber === 'string' || typeof maybeCoercedNumber === 'number') {
+                argv._.push(maybeCoercedNumber);
+            }
+        }
+        function eatNargs(i, key, args, argAfterEqualSign) {
+            let ii;
+            let toEat = checkAllAliases(key, flags.nargs);
+            toEat = typeof toEat !== 'number' || isNaN(toEat) ? 1 : toEat;
+            if (toEat === 0) {
+                if (!isUndefined(argAfterEqualSign)) {
+                    error = Error(__('Argument unexpected for: %s', key));
+                }
+                setArg(key, defaultValue(key));
+                return i;
+            }
+            let available = isUndefined(argAfterEqualSign) ? 0 : 1;
+            if (configuration['nargs-eats-options']) {
+                if (args.length - (i + 1) + available < toEat) {
+                    error = Error(__('Not enough arguments following: %s', key));
+                }
+                available = toEat;
+            }
+            else {
+                for (ii = i + 1; ii < args.length; ii++) {
+                    if (!args[ii].match(/^-[^0-9]/) || args[ii].match(negative) || isUnknownOptionAsArg(args[ii]))
+                        available++;
+                    else
+                        break;
+                }
+                if (available < toEat)
+                    error = Error(__('Not enough arguments following: %s', key));
+            }
+            let consumed = Math.min(available, toEat);
+            if (!isUndefined(argAfterEqualSign) && consumed > 0) {
+                setArg(key, argAfterEqualSign);
+                consumed--;
+            }
+            for (ii = i + 1; ii < (consumed + i + 1); ii++) {
+                setArg(key, args[ii]);
+            }
+            return (i + consumed);
+        }
+        function eatArray(i, key, args, argAfterEqualSign) {
+            let argsToSet = [];
+            let next = argAfterEqualSign || args[i + 1];
+            const nargsCount = checkAllAliases(key, flags.nargs);
+            if (checkAllAliases(key, flags.bools) && !(/^(true|false)$/.test(next))) {
+                argsToSet.push(true);
+            }
+            else if (isUndefined(next) ||
+                (isUndefined(argAfterEqualSign) && /^-/.test(next) && !negative.test(next) && !isUnknownOptionAsArg(next))) {
+                if (defaults[key] !== undefined) {
+                    const defVal = defaults[key];
+                    argsToSet = Array.isArray(defVal) ? defVal : [defVal];
+                }
+            }
+            else {
+                if (!isUndefined(argAfterEqualSign)) {
+                    argsToSet.push(processValue(key, argAfterEqualSign, true));
+                }
+                for (let ii = i + 1; ii < args.length; ii++) {
+                    if ((!configuration['greedy-arrays'] && argsToSet.length > 0) ||
+                        (nargsCount && typeof nargsCount === 'number' && argsToSet.length >= nargsCount))
+                        break;
+                    next = args[ii];
+                    if (/^-/.test(next) && !negative.test(next) && !isUnknownOptionAsArg(next))
+                        break;
+                    i = ii;
+                    argsToSet.push(processValue(key, next, inputIsString));
+                }
+            }
+            if (typeof nargsCount === 'number' && ((nargsCount && argsToSet.length < nargsCount) ||
+                (isNaN(nargsCount) && argsToSet.length === 0))) {
+                error = Error(__('Not enough arguments following: %s', key));
+            }
+            setArg(key, argsToSet);
+            return i;
+        }
+        function setArg(key, val, shouldStripQuotes = inputIsString) {
+            if (/-/.test(key) && configuration['camel-case-expansion']) {
+                const alias = key.split('.').map(function (prop) {
+                    return camelCase(prop);
+                }).join('.');
+                addNewAlias(key, alias);
+            }
+            const value = processValue(key, val, shouldStripQuotes);
+            const splitKey = key.split('.');
+            setKey(argv, splitKey, value);
+            if (flags.aliases[key]) {
+                flags.aliases[key].forEach(function (x) {
+                    const keyProperties = x.split('.');
+                    setKey(argv, keyProperties, value);
+                });
+            }
+            if (splitKey.length > 1 && configuration['dot-notation']) {
+                (flags.aliases[splitKey[0]] || []).forEach(function (x) {
+                    let keyProperties = x.split('.');
+                    const a = [].concat(splitKey);
+                    a.shift();
+                    keyProperties = keyProperties.concat(a);
+                    if (!(flags.aliases[key] || []).includes(keyProperties.join('.'))) {
+                        setKey(argv, keyProperties, value);
+                    }
+                });
+            }
+            if (checkAllAliases(key, flags.normalize) && !checkAllAliases(key, flags.arrays)) {
+                const keys = [key].concat(flags.aliases[key] || []);
+                keys.forEach(function (key) {
+                    Object.defineProperty(argvReturn, key, {
+                        enumerable: true,
+                        get() {
+                            return val;
+                        },
+                        set(value) {
+                            val = typeof value === 'string' ? mixin.normalize(value) : value;
+                        }
+                    });
+                });
+            }
+        }
+        function addNewAlias(key, alias) {
+            if (!(flags.aliases[key] && flags.aliases[key].length)) {
+                flags.aliases[key] = [alias];
+                newAliases[alias] = true;
+            }
+            if (!(flags.aliases[alias] && flags.aliases[alias].length)) {
+                addNewAlias(alias, key);
+            }
+        }
+        function processValue(key, val, shouldStripQuotes) {
+            if (shouldStripQuotes) {
+                val = stripQuotes(val);
+            }
+            if (checkAllAliases(key, flags.bools) || checkAllAliases(key, flags.counts)) {
+                if (typeof val === 'string')
+                    val = val === 'true';
+            }
+            let value = Array.isArray(val)
+                ? val.map(function (v) { return maybeCoerceNumber(key, v); })
+                : maybeCoerceNumber(key, val);
+            if (checkAllAliases(key, flags.counts) && (isUndefined(value) || typeof value === 'boolean')) {
+                value = increment();
+            }
+            if (checkAllAliases(key, flags.normalize) && checkAllAliases(key, flags.arrays)) {
+                if (Array.isArray(val))
+                    value = val.map((val) => { return mixin.normalize(val); });
+                else
+                    value = mixin.normalize(val);
+            }
+            return value;
+        }
+        function maybeCoerceNumber(key, value) {
+            if (!configuration['parse-positional-numbers'] && key === '_')
+                return value;
+            if (!checkAllAliases(key, flags.strings) && !checkAllAliases(key, flags.bools) && !Array.isArray(value)) {
+                const shouldCoerceNumber = looksLikeNumber(value) && configuration['parse-numbers'] && (Number.isSafeInteger(Math.floor(parseFloat(`${value}`))));
+                if (shouldCoerceNumber || (!isUndefined(value) && checkAllAliases(key, flags.numbers))) {
+                    value = Number(value);
+                }
+            }
+            return value;
+        }
+        function setConfig(argv) {
+            const configLookup = Object.create(null);
+            applyDefaultsAndAliases(configLookup, flags.aliases, defaults);
+            Object.keys(flags.configs).forEach(function (configKey) {
+                const configPath = argv[configKey] || configLookup[configKey];
+                if (configPath) {
+                    try {
+                        let config = null;
+                        const resolvedConfigPath = mixin.resolve(mixin.cwd(), configPath);
+                        const resolveConfig = flags.configs[configKey];
+                        if (typeof resolveConfig === 'function') {
+                            try {
+                                config = resolveConfig(resolvedConfigPath);
+                            }
+                            catch (e) {
+                                config = e;
+                            }
+                            if (config instanceof Error) {
+                                error = config;
+                                return;
+                            }
+                        }
+                        else {
+                            config = mixin.require(resolvedConfigPath);
+                        }
+                        setConfigObject(config);
+                    }
+                    catch (ex) {
+                        if (ex.name === 'PermissionDenied')
+                            error = ex;
+                        else if (argv[configKey])
+                            error = Error(__('Invalid JSON config file: %s', configPath));
+                    }
+                }
+            });
+        }
+        function setConfigObject(config, prev) {
+            Object.keys(config).forEach(function (key) {
+                const value = config[key];
+                const fullKey = prev ? prev + '.' + key : key;
+                if (typeof value === 'object' && value !== null && !Array.isArray(value) && configuration['dot-notation']) {
+                    setConfigObject(value, fullKey);
+                }
+                else {
+                    if (!hasKey(argv, fullKey.split('.')) || (checkAllAliases(fullKey, flags.arrays) && configuration['combine-arrays'])) {
+                        setArg(fullKey, value);
+                    }
+                }
+            });
+        }
+        function setConfigObjects() {
+            if (typeof configObjects !== 'undefined') {
+                configObjects.forEach(function (configObject) {
+                    setConfigObject(configObject);
+                });
+            }
+        }
+        function applyEnvVars(argv, configOnly) {
+            if (typeof envPrefix === 'undefined')
+                return;
+            const prefix = typeof envPrefix === 'string' ? envPrefix : '';
+            const env = mixin.env();
+            Object.keys(env).forEach(function (envVar) {
+                if (prefix === '' || envVar.lastIndexOf(prefix, 0) === 0) {
+                    const keys = envVar.split('__').map(function (key, i) {
+                        if (i === 0) {
+                            key = key.substring(prefix.length);
+                        }
+                        return camelCase(key);
+                    });
+                    if (((configOnly && flags.configs[keys.join('.')]) || !configOnly) && !hasKey(argv, keys)) {
+                        setArg(keys.join('.'), env[envVar]);
+                    }
+                }
+            });
+        }
+        function applyCoercions(argv) {
+            let coerce;
+            const applied = new Set();
+            Object.keys(argv).forEach(function (key) {
+                if (!applied.has(key)) {
+                    coerce = checkAllAliases(key, flags.coercions);
+                    if (typeof coerce === 'function') {
+                        try {
+                            const value = maybeCoerceNumber(key, coerce(argv[key]));
+                            ([].concat(flags.aliases[key] || [], key)).forEach(ali => {
+                                applied.add(ali);
+                                argv[ali] = value;
+                            });
+                        }
+                        catch (err) {
+                            error = err;
+                        }
+                    }
+                }
+            });
+        }
+        function setPlaceholderKeys(argv) {
+            flags.keys.forEach((key) => {
+                if (~key.indexOf('.'))
+                    return;
+                if (typeof argv[key] === 'undefined')
+                    argv[key] = undefined;
+            });
+            return argv;
+        }
+        function applyDefaultsAndAliases(obj, aliases, defaults, canLog = false) {
+            Object.keys(defaults).forEach(function (key) {
+                if (!hasKey(obj, key.split('.'))) {
+                    setKey(obj, key.split('.'), defaults[key]);
+                    if (canLog)
+                        defaulted[key] = true;
+                    (aliases[key] || []).forEach(function (x) {
+                        if (hasKey(obj, x.split('.')))
+                            return;
+                        setKey(obj, x.split('.'), defaults[key]);
+                    });
+                }
+            });
+        }
+        function hasKey(obj, keys) {
+            let o = obj;
+            if (!configuration['dot-notation'])
+                keys = [keys.join('.')];
+            keys.slice(0, -1).forEach(function (key) {
+                o = (o[key] || {});
+            });
+            const key = keys[keys.length - 1];
+            if (typeof o !== 'object')
+                return false;
+            else
+                return key in o;
+        }
+        function setKey(obj, keys, value) {
+            let o = obj;
+            if (!configuration['dot-notation'])
+                keys = [keys.join('.')];
+            keys.slice(0, -1).forEach(function (key) {
+                key = sanitizeKey(key);
+                if (typeof o === 'object' && o[key] === undefined) {
+                    o[key] = {};
+                }
+                if (typeof o[key] !== 'object' || Array.isArray(o[key])) {
+                    if (Array.isArray(o[key])) {
+                        o[key].push({});
+                    }
+                    else {
+                        o[key] = [o[key], {}];
+                    }
+                    o = o[key][o[key].length - 1];
+                }
+                else {
+                    o = o[key];
+                }
+            });
+            const key = sanitizeKey(keys[keys.length - 1]);
+            const isTypeArray = checkAllAliases(keys.join('.'), flags.arrays);
+            const isValueArray = Array.isArray(value);
+            let duplicate = configuration['duplicate-arguments-array'];
+            if (!duplicate && checkAllAliases(key, flags.nargs)) {
+                duplicate = true;
+                if ((!isUndefined(o[key]) && flags.nargs[key] === 1) || (Array.isArray(o[key]) && o[key].length === flags.nargs[key])) {
+                    o[key] = undefined;
+                }
+            }
+            if (value === increment()) {
+                o[key] = increment(o[key]);
+            }
+            else if (Array.isArray(o[key])) {
+                if (duplicate && isTypeArray && isValueArray) {
+                    o[key] = configuration['flatten-duplicate-arrays'] ? o[key].concat(value) : (Array.isArray(o[key][0]) ? o[key] : [o[key]]).concat([value]);
+                }
+                else if (!duplicate && Boolean(isTypeArray) === Boolean(isValueArray)) {
+                    o[key] = value;
+                }
+                else {
+                    o[key] = o[key].concat([value]);
+                }
+            }
+            else if (o[key] === undefined && isTypeArray) {
+                o[key] = isValueArray ? value : [value];
+            }
+            else if (duplicate && !(o[key] === undefined ||
+                checkAllAliases(key, flags.counts) ||
+                checkAllAliases(key, flags.bools))) {
+                o[key] = [o[key], value];
+            }
+            else {
+                o[key] = value;
+            }
+        }
+        function extendAliases(...args) {
+            args.forEach(function (obj) {
+                Object.keys(obj || {}).forEach(function (key) {
+                    if (flags.aliases[key])
+                        return;
+                    flags.aliases[key] = [].concat(aliases[key] || []);
+                    flags.aliases[key].concat(key).forEach(function (x) {
+                        if (/-/.test(x) && configuration['camel-case-expansion']) {
+                            const c = camelCase(x);
+                            if (c !== key && flags.aliases[key].indexOf(c) === -1) {
+                                flags.aliases[key].push(c);
+                                newAliases[c] = true;
+                            }
+                        }
+                    });
+                    flags.aliases[key].concat(key).forEach(function (x) {
+                        if (x.length > 1 && /[A-Z]/.test(x) && configuration['camel-case-expansion']) {
+                            const c = decamelize(x, '-');
+                            if (c !== key && flags.aliases[key].indexOf(c) === -1) {
+                                flags.aliases[key].push(c);
+                                newAliases[c] = true;
+                            }
+                        }
+                    });
+                    flags.aliases[key].forEach(function (x) {
+                        flags.aliases[x] = [key].concat(flags.aliases[key].filter(function (y) {
+                            return x !== y;
+                        }));
+                    });
+                });
+            });
+        }
+        function checkAllAliases(key, flag) {
+            const toCheck = [].concat(flags.aliases[key] || [], key);
+            const keys = Object.keys(flag);
+            const setAlias = toCheck.find(key => keys.includes(key));
+            return setAlias ? flag[setAlias] : false;
+        }
+        function hasAnyFlag(key) {
+            const flagsKeys = Object.keys(flags);
+            const toCheck = [].concat(flagsKeys.map(k => flags[k]));
+            return toCheck.some(function (flag) {
+                return Array.isArray(flag) ? flag.includes(key) : flag[key];
+            });
+        }
+        function hasFlagsMatching(arg, ...patterns) {
+            const toCheck = [].concat(...patterns);
+            return toCheck.some(function (pattern) {
+                const match = arg.match(pattern);
+                return match && hasAnyFlag(match[1]);
+            });
+        }
+        function hasAllShortFlags(arg) {
+            if (arg.match(negative) || !arg.match(/^-[^-]+/)) {
+                return false;
+            }
+            let hasAllFlags = true;
+            let next;
+            const letters = arg.slice(1).split('');
+            for (let j = 0; j < letters.length; j++) {
+                next = arg.slice(j + 2);
+                if (!hasAnyFlag(letters[j])) {
+                    hasAllFlags = false;
+                    break;
+                }
+                if ((letters[j + 1] && letters[j + 1] === '=') ||
+                    next === '-' ||
+                    (/[A-Za-z]/.test(letters[j]) && /^-?\d+(\.\d*)?(e-?\d+)?$/.test(next)) ||
+                    (letters[j + 1] && letters[j + 1].match(/\W/))) {
+                    break;
+                }
+            }
+            return hasAllFlags;
+        }
+        function isUnknownOptionAsArg(arg) {
+            return configuration['unknown-options-as-args'] && isUnknownOption(arg);
+        }
+        function isUnknownOption(arg) {
+            arg = arg.replace(/^-{3,}/, '--');
+            if (arg.match(negative)) {
+                return false;
+            }
+            if (hasAllShortFlags(arg)) {
+                return false;
+            }
+            const flagWithEquals = /^-+([^=]+?)=[\s\S]*$/;
+            const normalFlag = /^-+([^=]+?)$/;
+            const flagEndingInHyphen = /^-+([^=]+?)-$/;
+            const flagEndingInDigits = /^-+([^=]+?\d+)$/;
+            const flagEndingInNonWordCharacters = /^-+([^=]+?)\W+.*$/;
+            return !hasFlagsMatching(arg, flagWithEquals, negatedBoolean, normalFlag, flagEndingInHyphen, flagEndingInDigits, flagEndingInNonWordCharacters);
+        }
+        function defaultValue(key) {
+            if (!checkAllAliases(key, flags.bools) &&
+                !checkAllAliases(key, flags.counts) &&
+                `${key}` in defaults) {
+                return defaults[key];
+            }
+            else {
+                return defaultForType(guessType(key));
+            }
+        }
+        function defaultForType(type) {
+            const def = {
+                [DefaultValuesForTypeKey.BOOLEAN]: true,
+                [DefaultValuesForTypeKey.STRING]: '',
+                [DefaultValuesForTypeKey.NUMBER]: undefined,
+                [DefaultValuesForTypeKey.ARRAY]: []
+            };
+            return def[type];
+        }
+        function guessType(key) {
+            let type = DefaultValuesForTypeKey.BOOLEAN;
+            if (checkAllAliases(key, flags.strings))
+                type = DefaultValuesForTypeKey.STRING;
+            else if (checkAllAliases(key, flags.numbers))
+                type = DefaultValuesForTypeKey.NUMBER;
+            else if (checkAllAliases(key, flags.bools))
+                type = DefaultValuesForTypeKey.BOOLEAN;
+            else if (checkAllAliases(key, flags.arrays))
+                type = DefaultValuesForTypeKey.ARRAY;
+            return type;
+        }
+        function isUndefined(num) {
+            return num === undefined;
+        }
+        function checkConfiguration() {
+            Object.keys(flags.counts).find(key => {
+                if (checkAllAliases(key, flags.arrays)) {
+                    error = Error(__('Invalid configuration: %s, opts.count excludes opts.array.', key));
+                    return true;
+                }
+                else if (checkAllAliases(key, flags.nargs)) {
+                    error = Error(__('Invalid configuration: %s, opts.count excludes opts.narg.', key));
+                    return true;
+                }
+                return false;
+            });
+        }
+        return {
+            aliases: Object.assign({}, flags.aliases),
+            argv: Object.assign(argvReturn, argv),
+            configuration: configuration,
+            defaulted: Object.assign({}, defaulted),
+            error: error,
+            newAliases: Object.assign({}, newAliases)
+        };
+    }
+}
+function combineAliases(aliases) {
+    const aliasArrays = [];
+    const combined = Object.create(null);
+    let change = true;
+    Object.keys(aliases).forEach(function (key) {
+        aliasArrays.push([].concat(aliases[key], key));
+    });
+    while (change) {
+        change = false;
+        for (let i = 0; i < aliasArrays.length; i++) {
+            for (let ii = i + 1; ii < aliasArrays.length; ii++) {
+                const intersect = aliasArrays[i].filter(function (v) {
+                    return aliasArrays[ii].indexOf(v) !== -1;
+                });
+                if (intersect.length) {
+                    aliasArrays[i] = aliasArrays[i].concat(aliasArrays[ii]);
+                    aliasArrays.splice(ii, 1);
+                    change = true;
+                    break;
+                }
+            }
+        }
+    }
+    aliasArrays.forEach(function (aliasArray) {
+        aliasArray = aliasArray.filter(function (v, i, self) {
+            return self.indexOf(v) === i;
+        });
+        const lastAlias = aliasArray.pop();
+        if (lastAlias !== undefined && typeof lastAlias === 'string') {
+            combined[lastAlias] = aliasArray;
+        }
+    });
+    return combined;
+}
+function increment(orig) {
+    return orig !== undefined ? orig + 1 : 1;
+}
+function sanitizeKey(key) {
+    if (key === '__proto__')
+        return '___proto___';
+    return key;
+}
+function stripQuotes(val) {
+    return (typeof val === 'string' &&
+        (val[0] === "'" || val[0] === '"') &&
+        val[val.length - 1] === val[0])
+        ? val.substring(1, val.length - 1)
+        : val;
+}
+
+var _a, _b, _c;
+const minNodeVersion = (process && process.env && process.env.YARGS_MIN_NODE_VERSION)
+    ? Number(process.env.YARGS_MIN_NODE_VERSION)
+    : 12;
+const nodeVersion = (_b = (_a = process === null || process === void 0 ? void 0 : process.versions) === null || _a === void 0 ? void 0 : _a.node) !== null && _b !== void 0 ? _b : (_c = process === null || process === void 0 ? void 0 : process.version) === null || _c === void 0 ? void 0 : _c.slice(1);
+if (nodeVersion) {
+    const major = Number(nodeVersion.match(/^([^.]+)/)[1]);
+    if (major < minNodeVersion) {
+        throw Error(`yargs parser supports a minimum Node.js version of ${minNodeVersion}. Read our version support policy: https://github.com/yargs/yargs-parser#supported-nodejs-versions`);
+    }
+}
+const env = process ? process.env : {};
+const parser = new YargsParser({
+    cwd: process.cwd,
+    env: () => {
+        return env;
+    },
+    format: util.format,
+    normalize: path.normalize,
+    resolve: path.resolve,
+    require: (path) => {
+        if (true) {
+            return __nccwpck_require__(5670)(path);
+        }
+        else {}
+    }
+});
+const yargsParser = function Parser(args, opts) {
+    const result = parser.parse(args.slice(), opts);
+    return result.argv;
+};
+yargsParser.detailed = function (args, opts) {
+    return parser.parse(args.slice(), opts);
+};
+yargsParser.camelCase = camelCase;
+yargsParser.decamelize = decamelize;
+yargsParser.looksLikeNumber = looksLikeNumber;
+
+module.exports = yargsParser;
+
+
+/***/ }),
+
+/***/ 9562:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+var t=__nccwpck_require__(9491);class e extends Error{constructor(t){super(t||"yargs error"),this.name="YError",Error.captureStackTrace&&Error.captureStackTrace(this,e)}}let s,i=[];function n(t,o,a,h){s=h;let l={};if(Object.prototype.hasOwnProperty.call(t,"extends")){if("string"!=typeof t.extends)return l;const r=/\.json|\..*rc$/.test(t.extends);let h=null;if(r)h=function(t,e){return s.path.resolve(t,e)}(o,t.extends);else try{h=/*require.resolve*/(__nccwpck_require__(9167).resolve(t.extends))}catch(e){return t}!function(t){if(i.indexOf(t)>-1)throw new e(`Circular extended configurations: '${t}'.`)}(h),i.push(h),l=r?JSON.parse(s.readFileSync(h,"utf8")):__nccwpck_require__(9167)(t.extends),delete t.extends,l=n(l,s.path.dirname(h),a,s)}return i=[],a?r(l,t):Object.assign({},l,t)}function r(t,e){const s={};function i(t){return t&&"object"==typeof t&&!Array.isArray(t)}Object.assign(s,t);for(const n of Object.keys(e))i(e[n])&&i(s[n])?s[n]=r(t[n],e[n]):s[n]=e[n];return s}function o(t){const e=t.replace(/\s{2,}/g," ").split(/\s+(?![^[]*]|[^<]*>)/),s=/\.*[\][<>]/g,i=e.shift();if(!i)throw new Error(`No command found in: ${t}`);const n={cmd:i.replace(s,""),demanded:[],optional:[]};return e.forEach(((t,i)=>{let r=!1;t=t.replace(/\s/g,""),/\.+[\]>]/.test(t)&&i===e.length-1&&(r=!0),/^\[/.test(t)?n.optional.push({cmd:t.replace(s,"").split("|"),variadic:r}):n.demanded.push({cmd:t.replace(s,"").split("|"),variadic:r})})),n}const a=["first","second","third","fourth","fifth","sixth"];function h(t,s,i){try{let n=0;const[r,a,h]="object"==typeof t?[{demanded:[],optional:[]},t,s]:[o(`cmd ${t}`),s,i],f=[].slice.call(a);for(;f.length&&void 0===f[f.length-1];)f.pop();const d=h||f.length;if(d<r.demanded.length)throw new e(`Not enough arguments provided. Expected ${r.demanded.length} but received ${f.length}.`);const u=r.demanded.length+r.optional.length;if(d>u)throw new e(`Too many arguments provided. Expected max ${u} but received ${d}.`);r.demanded.forEach((t=>{const e=l(f.shift());0===t.cmd.filter((t=>t===e||"*"===t)).length&&c(e,t.cmd,n),n+=1})),r.optional.forEach((t=>{if(0===f.length)return;const e=l(f.shift());0===t.cmd.filter((t=>t===e||"*"===t)).length&&c(e,t.cmd,n),n+=1}))}catch(t){console.warn(t.stack)}}function l(t){return Array.isArray(t)?"array":null===t?"null":typeof t}function c(t,s,i){throw new e(`Invalid ${a[i]||"manyith"} argument. Expected ${s.join(" or ")} but received ${t}.`)}function f(t){return!!t&&!!t.then&&"function"==typeof t.then}function d(t,e,s,i){s.assert.notStrictEqual(t,e,i)}function u(t,e){e.assert.strictEqual(typeof t,"string")}function p(t){return Object.keys(t)}function g(t={},e=(()=>!0)){const s={};return p(t).forEach((i=>{e(i,t[i])&&(s[i]=t[i])})),s}function m(){return process.versions.electron&&!process.defaultApp?0:1}function y(){return process.argv[m()]}var b=Object.freeze({__proto__:null,hideBin:function(t){return t.slice(m()+1)},getProcessArgvBin:y});function v(t,e,s,i){if("a"===s&&!i)throw new TypeError("Private accessor was defined without a getter");if("function"==typeof e?t!==e||!i:!e.has(t))throw new TypeError("Cannot read private member from an object whose class did not declare it");return"m"===s?i:"a"===s?i.call(t):i?i.value:e.get(t)}function O(t,e,s,i,n){if("m"===i)throw new TypeError("Private method is not writable");if("a"===i&&!n)throw new TypeError("Private accessor was defined without a setter");if("function"==typeof e?t!==e||!n:!e.has(t))throw new TypeError("Cannot write private member to an object whose class did not declare it");return"a"===i?n.call(t,s):n?n.value=s:e.set(t,s),s}class w{constructor(t){this.globalMiddleware=[],this.frozens=[],this.yargs=t}addMiddleware(t,e,s=!0,i=!1){if(h("<array|function> [boolean] [boolean] [boolean]",[t,e,s],arguments.length),Array.isArray(t)){for(let i=0;i<t.length;i++){if("function"!=typeof t[i])throw Error("middleware must be a function");const n=t[i];n.applyBeforeValidation=e,n.global=s}Array.prototype.push.apply(this.globalMiddleware,t)}else if("function"==typeof t){const n=t;n.applyBeforeValidation=e,n.global=s,n.mutates=i,this.globalMiddleware.push(t)}return this.yargs}addCoerceMiddleware(t,e){const s=this.yargs.getAliases();return this.globalMiddleware=this.globalMiddleware.filter((t=>{const i=[...s[e]||[],e];return!t.option||!i.includes(t.option)})),t.option=e,this.addMiddleware(t,!0,!0,!0)}getMiddleware(){return this.globalMiddleware}freeze(){this.frozens.push([...this.globalMiddleware])}unfreeze(){const t=this.frozens.pop();void 0!==t&&(this.globalMiddleware=t)}reset(){this.globalMiddleware=this.globalMiddleware.filter((t=>t.global))}}function C(t,e,s,i){return s.reduce(((t,s)=>{if(s.applyBeforeValidation!==i)return t;if(s.mutates){if(s.applied)return t;s.applied=!0}if(f(t))return t.then((t=>Promise.all([t,s(t,e)]))).then((([t,e])=>Object.assign(t,e)));{const i=s(t,e);return f(i)?i.then((e=>Object.assign(t,e))):Object.assign(t,i)}}),t)}function j(t,e,s=(t=>{throw t})){try{const s="function"==typeof t?t():t;return f(s)?s.then((t=>e(t))):e(s)}catch(t){return s(t)}}const M=/(^\*)|(^\$0)/;class _{constructor(t,e,s,i){this.requireCache=new Set,this.handlers={},this.aliasMap={},this.frozens=[],this.shim=i,this.usage=t,this.globalMiddleware=s,this.validation=e}addDirectory(t,e,s,i){"boolean"!=typeof(i=i||{}).recurse&&(i.recurse=!1),Array.isArray(i.extensions)||(i.extensions=["js"]);const n="function"==typeof i.visit?i.visit:t=>t;i.visit=(t,e,s)=>{const i=n(t,e,s);if(i){if(this.requireCache.has(e))return i;this.requireCache.add(e),this.addHandler(i)}return i},this.shim.requireDirectory({require:e,filename:s},t,i)}addHandler(t,e,s,i,n,r){let a=[];const h=function(t){return t?t.map((t=>(t.applyBeforeValidation=!1,t))):[]}(n);if(i=i||(()=>{}),Array.isArray(t))if(function(t){return t.every((t=>"string"==typeof t))}(t))[t,...a]=t;else for(const e of t)this.addHandler(e);else{if(function(t){return"object"==typeof t&&!Array.isArray(t)}(t)){let e=Array.isArray(t.command)||"string"==typeof t.command?t.command:this.moduleName(t);return t.aliases&&(e=[].concat(e).concat(t.aliases)),void this.addHandler(e,this.extractDesc(t),t.builder,t.handler,t.middlewares,t.deprecated)}if(k(s))return void this.addHandler([t].concat(a),e,s.builder,s.handler,s.middlewares,s.deprecated)}if("string"==typeof t){const n=o(t);a=a.map((t=>o(t).cmd));let l=!1;const c=[n.cmd].concat(a).filter((t=>!M.test(t)||(l=!0,!1)));0===c.length&&l&&c.push("$0"),l&&(n.cmd=c[0],a=c.slice(1),t=t.replace(M,n.cmd)),a.forEach((t=>{this.aliasMap[t]=n.cmd})),!1!==e&&this.usage.command(t,e,l,a,r),this.handlers[n.cmd]={original:t,description:e,handler:i,builder:s||{},middlewares:h,deprecated:r,demanded:n.demanded,optional:n.optional},l&&(this.defaultCommand=this.handlers[n.cmd])}}getCommandHandlers(){return this.handlers}getCommands(){return Object.keys(this.handlers).concat(Object.keys(this.aliasMap))}hasDefaultCommand(){return!!this.defaultCommand}runCommand(t,e,s,i,n,r){const o=this.handlers[t]||this.handlers[this.aliasMap[t]]||this.defaultCommand,a=e.getInternalMethods().getContext(),h=a.commands.slice(),l=!t;t&&(a.commands.push(t),a.fullCommands.push(o.original));const c=this.applyBuilderUpdateUsageAndParse(l,o,e,s.aliases,h,i,n,r);return f(c)?c.then((t=>this.applyMiddlewareAndGetResult(l,o,t.innerArgv,a,n,t.aliases,e))):this.applyMiddlewareAndGetResult(l,o,c.innerArgv,a,n,c.aliases,e)}applyBuilderUpdateUsageAndParse(t,e,s,i,n,r,o,a){const h=e.builder;let l=s;if(x(h)){s.getInternalMethods().getUsageInstance().freeze();const c=h(s.getInternalMethods().reset(i),a);if(f(c))return c.then((i=>{var a;return l=(a=i)&&"function"==typeof a.getInternalMethods?i:s,this.parseAndUpdateUsage(t,e,l,n,r,o)}))}else(function(t){return"object"==typeof t})(h)&&(s.getInternalMethods().getUsageInstance().freeze(),l=s.getInternalMethods().reset(i),Object.keys(e.builder).forEach((t=>{l.option(t,h[t])})));return this.parseAndUpdateUsage(t,e,l,n,r,o)}parseAndUpdateUsage(t,e,s,i,n,r){t&&s.getInternalMethods().getUsageInstance().unfreeze(!0),this.shouldUpdateUsage(s)&&s.getInternalMethods().getUsageInstance().usage(this.usageFromParentCommandsCommandHandler(i,e),e.description);const o=s.getInternalMethods().runYargsParserAndExecuteCommands(null,void 0,!0,n,r);return f(o)?o.then((t=>({aliases:s.parsed.aliases,innerArgv:t}))):{aliases:s.parsed.aliases,innerArgv:o}}shouldUpdateUsage(t){return!t.getInternalMethods().getUsageInstance().getUsageDisabled()&&0===t.getInternalMethods().getUsageInstance().getUsage().length}usageFromParentCommandsCommandHandler(t,e){const s=M.test(e.original)?e.original.replace(M,"").trim():e.original,i=t.filter((t=>!M.test(t)));return i.push(s),`$0 ${i.join(" ")}`}handleValidationAndGetResult(t,e,s,i,n,r,o,a){if(!r.getInternalMethods().getHasOutput()){const e=r.getInternalMethods().runValidation(n,a,r.parsed.error,t);s=j(s,(t=>(e(t),t)))}if(e.handler&&!r.getInternalMethods().getHasOutput()){r.getInternalMethods().setHasOutput();const i=!!r.getOptions().configuration["populate--"];r.getInternalMethods().postProcess(s,i,!1,!1),s=j(s=C(s,r,o,!1),(t=>{const s=e.handler(t);return f(s)?s.then((()=>t)):t})),t||r.getInternalMethods().getUsageInstance().cacheHelpMessage(),f(s)&&!r.getInternalMethods().hasParseCallback()&&s.catch((t=>{try{r.getInternalMethods().getUsageInstance().fail(null,t)}catch(t){}}))}return t||(i.commands.pop(),i.fullCommands.pop()),s}applyMiddlewareAndGetResult(t,e,s,i,n,r,o){let a={};if(n)return s;o.getInternalMethods().getHasOutput()||(a=this.populatePositionals(e,s,i,o));const h=this.globalMiddleware.getMiddleware().slice(0).concat(e.middlewares),l=C(s,o,h,!0);return f(l)?l.then((s=>this.handleValidationAndGetResult(t,e,s,i,r,o,h,a))):this.handleValidationAndGetResult(t,e,l,i,r,o,h,a)}populatePositionals(t,e,s,i){e._=e._.slice(s.commands.length);const n=t.demanded.slice(0),r=t.optional.slice(0),o={};for(this.validation.positionalCount(n.length,e._.length);n.length;){const t=n.shift();this.populatePositional(t,e,o)}for(;r.length;){const t=r.shift();this.populatePositional(t,e,o)}return e._=s.commands.concat(e._.map((t=>""+t))),this.postProcessPositionals(e,o,this.cmdToParseOptions(t.original),i),o}populatePositional(t,e,s){const i=t.cmd[0];t.variadic?s[i]=e._.splice(0).map(String):e._.length&&(s[i]=[String(e._.shift())])}cmdToParseOptions(t){const e={array:[],default:{},alias:{},demand:{}},s=o(t);return s.demanded.forEach((t=>{const[s,...i]=t.cmd;t.variadic&&(e.array.push(s),e.default[s]=[]),e.alias[s]=i,e.demand[s]=!0})),s.optional.forEach((t=>{const[s,...i]=t.cmd;t.variadic&&(e.array.push(s),e.default[s]=[]),e.alias[s]=i})),e}postProcessPositionals(t,e,s,i){const n=Object.assign({},i.getOptions());n.default=Object.assign(s.default,n.default);for(const t of Object.keys(s.alias))n.alias[t]=(n.alias[t]||[]).concat(s.alias[t]);n.array=n.array.concat(s.array),n.config={};const r=[];if(Object.keys(e).forEach((t=>{e[t].map((e=>{n.configuration["unknown-options-as-args"]&&(n.key[t]=!0),r.push(`--${t}`),r.push(e)}))})),!r.length)return;const o=Object.assign({},n.configuration,{"populate--":!1}),a=this.shim.Parser.detailed(r,Object.assign({},n,{configuration:o}));if(a.error)i.getInternalMethods().getUsageInstance().fail(a.error.message,a.error);else{const s=Object.keys(e);Object.keys(e).forEach((t=>{s.push(...a.aliases[t])})),Object.keys(a.argv).forEach((n=>{s.includes(n)&&(e[n]||(e[n]=a.argv[n]),!this.isInConfigs(i,n)&&!this.isDefaulted(i,n)&&Object.prototype.hasOwnProperty.call(t,n)&&Object.prototype.hasOwnProperty.call(a.argv,n)&&(Array.isArray(t[n])||Array.isArray(a.argv[n]))?t[n]=[].concat(t[n],a.argv[n]):t[n]=a.argv[n])}))}}isDefaulted(t,e){const{default:s}=t.getOptions();return Object.prototype.hasOwnProperty.call(s,e)||Object.prototype.hasOwnProperty.call(s,this.shim.Parser.camelCase(e))}isInConfigs(t,e){const{configObjects:s}=t.getOptions();return s.some((t=>Object.prototype.hasOwnProperty.call(t,e)))||s.some((t=>Object.prototype.hasOwnProperty.call(t,this.shim.Parser.camelCase(e))))}runDefaultBuilderOn(t){if(!this.defaultCommand)return;if(this.shouldUpdateUsage(t)){const e=M.test(this.defaultCommand.original)?this.defaultCommand.original:this.defaultCommand.original.replace(/^[^[\]<>]*/,"$0 ");t.getInternalMethods().getUsageInstance().usage(e,this.defaultCommand.description)}const e=this.defaultCommand.builder;if(x(e))return e(t,!0);k(e)||Object.keys(e).forEach((s=>{t.option(s,e[s])}))}moduleName(t){const e=function(t){if(false){}for(let e,s=0,i=Object.keys(__nccwpck_require__.c);s<i.length;s++)if(e=__nccwpck_require__.c[i[s]],e.exports===t)return e;return null}(t);if(!e)throw new Error(`No command name given for module: ${this.shim.inspect(t)}`);return this.commandFromFilename(e.filename)}commandFromFilename(t){return this.shim.path.basename(t,this.shim.path.extname(t))}extractDesc({describe:t,description:e,desc:s}){for(const i of[t,e,s]){if("string"==typeof i||!1===i)return i;d(i,!0,this.shim)}return!1}freeze(){this.frozens.push({handlers:this.handlers,aliasMap:this.aliasMap,defaultCommand:this.defaultCommand})}unfreeze(){const t=this.frozens.pop();d(t,void 0,this.shim),({handlers:this.handlers,aliasMap:this.aliasMap,defaultCommand:this.defaultCommand}=t)}reset(){return this.handlers={},this.aliasMap={},this.defaultCommand=void 0,this.requireCache=new Set,this}}function k(t){return"object"==typeof t&&!!t.builder&&"function"==typeof t.handler}function x(t){return"function"==typeof t}function E(t){"undefined"!=typeof process&&[process.stdout,process.stderr].forEach((e=>{const s=e;s._handle&&s.isTTY&&"function"==typeof s._handle.setBlocking&&s._handle.setBlocking(t)}))}function A(t){return"boolean"==typeof t}function P(t,s){const i=s.y18n.__,n={},r=[];n.failFn=function(t){r.push(t)};let o=null,a=null,h=!0;n.showHelpOnFail=function(e=!0,s){const[i,r]="string"==typeof e?[!0,e]:[e,s];return t.getInternalMethods().isGlobalContext()&&(a=r),o=r,h=i,n};let l=!1;n.fail=function(s,i){const c=t.getInternalMethods().getLoggerInstance();if(!r.length){if(t.getExitProcess()&&E(!0),!l){l=!0,h&&(t.showHelp("error"),c.error()),(s||i)&&c.error(s||i);const e=o||a;e&&((s||i)&&c.error(""),c.error(e))}if(i=i||new e(s),t.getExitProcess())return t.exit(1);if(t.getInternalMethods().hasParseCallback())return t.exit(1,i);throw i}for(let t=r.length-1;t>=0;--t){const e=r[t];if(A(e)){if(i)throw i;if(s)throw Error(s)}else e(s,i,n)}};let c=[],f=!1;n.usage=(t,e)=>null===t?(f=!0,c=[],n):(f=!1,c.push([t,e||""]),n),n.getUsage=()=>c,n.getUsageDisabled=()=>f,n.getPositionalGroupName=()=>i("Positionals:");let d=[];n.example=(t,e)=>{d.push([t,e||""])};let u=[];n.command=function(t,e,s,i,n=!1){s&&(u=u.map((t=>(t[2]=!1,t)))),u.push([t,e||"",s,i,n])},n.getCommands=()=>u;let p={};n.describe=function(t,e){Array.isArray(t)?t.forEach((t=>{n.describe(t,e)})):"object"==typeof t?Object.keys(t).forEach((e=>{n.describe(e,t[e])})):p[t]=e},n.getDescriptions=()=>p;let m=[];n.epilog=t=>{m.push(t)};let y,b=!1;n.wrap=t=>{b=!0,y=t},n.getWrap=()=>s.getEnv("YARGS_DISABLE_WRAP")?null:(b||(y=function(){const t=80;return s.process.stdColumns?Math.min(t,s.process.stdColumns):t}(),b=!0),y);const v="__yargsString__:";function O(t,e,i){let n=0;return Array.isArray(t)||(t=Object.values(t).map((t=>[t]))),t.forEach((t=>{n=Math.max(s.stringWidth(i?`${i} ${I(t[0])}`:I(t[0]))+$(t[0]),n)})),e&&(n=Math.min(n,parseInt((.5*e).toString(),10))),n}let w;function C(e){return t.getOptions().hiddenOptions.indexOf(e)<0||t.parsed.argv[t.getOptions().showHiddenOpt]}function j(t,e){let s=`[${i("default:")} `;if(void 0===t&&!e)return null;if(e)s+=e;else switch(typeof t){case"string":s+=`"${t}"`;break;case"object":s+=JSON.stringify(t);break;default:s+=t}return`${s}]`}n.deferY18nLookup=t=>v+t,n.help=function(){if(w)return w;!function(){const e=t.getDemandedOptions(),s=t.getOptions();(Object.keys(s.alias)||[]).forEach((i=>{s.alias[i].forEach((r=>{p[r]&&n.describe(i,p[r]),r in e&&t.demandOption(i,e[r]),s.boolean.includes(r)&&t.boolean(i),s.count.includes(r)&&t.count(i),s.string.includes(r)&&t.string(i),s.normalize.includes(r)&&t.normalize(i),s.array.includes(r)&&t.array(i),s.number.includes(r)&&t.number(i)}))}))}();const e=t.customScriptName?t.$0:s.path.basename(t.$0),r=t.getDemandedOptions(),o=t.getDemandedCommands(),a=t.getDeprecatedOptions(),h=t.getGroups(),l=t.getOptions();let g=[];g=g.concat(Object.keys(p)),g=g.concat(Object.keys(r)),g=g.concat(Object.keys(o)),g=g.concat(Object.keys(l.default)),g=g.filter(C),g=Object.keys(g.reduce(((t,e)=>("_"!==e&&(t[e]=!0),t)),{}));const y=n.getWrap(),b=s.cliui({width:y,wrap:!!y});if(!f)if(c.length)c.forEach((t=>{b.div({text:`${t[0].replace(/\$0/g,e)}`}),t[1]&&b.div({text:`${t[1]}`,padding:[1,0,0,0]})})),b.div();else if(u.length){let t=null;t=o._?`${e} <${i("command")}>\n`:`${e} [${i("command")}]\n`,b.div(`${t}`)}if(u.length>1||1===u.length&&!u[0][2]){b.div(i("Commands:"));const s=t.getInternalMethods().getContext(),n=s.commands.length?`${s.commands.join(" ")} `:"";!0===t.getInternalMethods().getParserConfiguration()["sort-commands"]&&(u=u.sort(((t,e)=>t[0].localeCompare(e[0]))));const r=e?`${e} `:"";u.forEach((t=>{const s=`${r}${n}${t[0].replace(/^\$0 ?/,"")}`;b.span({text:s,padding:[0,2,0,2],width:O(u,y,`${e}${n}`)+4},{text:t[1]});const o=[];t[2]&&o.push(`[${i("default")}]`),t[3]&&t[3].length&&o.push(`[${i("aliases:")} ${t[3].join(", ")}]`),t[4]&&("string"==typeof t[4]?o.push(`[${i("deprecated: %s",t[4])}]`):o.push(`[${i("deprecated")}]`)),o.length?b.div({text:o.join(" "),padding:[0,0,0,2],align:"right"}):b.div()})),b.div()}const M=(Object.keys(l.alias)||[]).concat(Object.keys(t.parsed.newAliases)||[]);g=g.filter((e=>!t.parsed.newAliases[e]&&M.every((t=>-1===(l.alias[t]||[]).indexOf(e)))));const _=i("Options:");h[_]||(h[_]=[]),function(t,e,s,i){let n=[],r=null;Object.keys(s).forEach((t=>{n=n.concat(s[t])})),t.forEach((t=>{r=[t].concat(e[t]),r.some((t=>-1!==n.indexOf(t)))||s[i].push(t)}))}(g,l.alias,h,_);const k=t=>/^--/.test(I(t)),x=Object.keys(h).filter((t=>h[t].length>0)).map((t=>({groupName:t,normalizedKeys:h[t].filter(C).map((t=>{if(M.includes(t))return t;for(let e,s=0;void 0!==(e=M[s]);s++)if((l.alias[e]||[]).includes(t))return e;return t}))}))).filter((({normalizedKeys:t})=>t.length>0)).map((({groupName:t,normalizedKeys:e})=>{const s=e.reduce(((e,s)=>(e[s]=[s].concat(l.alias[s]||[]).map((e=>t===n.getPositionalGroupName()?e:(/^[0-9]$/.test(e)?l.boolean.includes(s)?"-":"--":e.length>1?"--":"-")+e)).sort(((t,e)=>k(t)===k(e)?0:k(t)?1:-1)).join(", "),e)),{});return{groupName:t,normalizedKeys:e,switches:s}}));if(x.filter((({groupName:t})=>t!==n.getPositionalGroupName())).some((({normalizedKeys:t,switches:e})=>!t.every((t=>k(e[t])))))&&x.filter((({groupName:t})=>t!==n.getPositionalGroupName())).forEach((({normalizedKeys:t,switches:e})=>{t.forEach((t=>{var s,i;k(e[t])&&(e[t]=(s=e[t],i="-x, ".length,S(s)?{text:s.text,indentation:s.indentation+i}:{text:s,indentation:i}))}))})),x.forEach((({groupName:e,normalizedKeys:s,switches:o})=>{b.div(e),s.forEach((e=>{const s=o[e];let h=p[e]||"",c=null;h.includes(v)&&(h=i(h.substring(v.length))),l.boolean.includes(e)&&(c=`[${i("boolean")}]`),l.count.includes(e)&&(c=`[${i("count")}]`),l.string.includes(e)&&(c=`[${i("string")}]`),l.normalize.includes(e)&&(c=`[${i("string")}]`),l.array.includes(e)&&(c=`[${i("array")}]`),l.number.includes(e)&&(c=`[${i("number")}]`);const f=[e in a?(d=a[e],"string"==typeof d?`[${i("deprecated: %s",d)}]`:`[${i("deprecated")}]`):null,c,e in r?`[${i("required")}]`:null,l.choices&&l.choices[e]?`[${i("choices:")} ${n.stringifiedValues(l.choices[e])}]`:null,j(l.default[e],l.defaultDescription[e])].filter(Boolean).join(" ");var d;b.span({text:I(s),padding:[0,2,0,2+$(s)],width:O(o,y)+4},h);const u=!0===t.getInternalMethods().getUsageConfiguration()["hide-types"];f&&!u?b.div({text:f,padding:[0,0,0,2],align:"right"}):b.div()})),b.div()})),d.length&&(b.div(i("Examples:")),d.forEach((t=>{t[0]=t[0].replace(/\$0/g,e)})),d.forEach((t=>{""===t[1]?b.div({text:t[0],padding:[0,2,0,2]}):b.div({text:t[0],padding:[0,2,0,2],width:O(d,y)+4},{text:t[1]})})),b.div()),m.length>0){const t=m.map((t=>t.replace(/\$0/g,e))).join("\n");b.div(`${t}\n`)}return b.toString().replace(/\s*$/,"")},n.cacheHelpMessage=function(){w=this.help()},n.clearCachedHelpMessage=function(){w=void 0},n.hasCachedHelpMessage=function(){return!!w},n.showHelp=e=>{const s=t.getInternalMethods().getLoggerInstance();e||(e="error");("function"==typeof e?e:s[e])(n.help())},n.functionDescription=t=>["(",t.name?s.Parser.decamelize(t.name,"-"):i("generated-value"),")"].join(""),n.stringifiedValues=function(t,e){let s="";const i=e||", ",n=[].concat(t);return t&&n.length?(n.forEach((t=>{s.length&&(s+=i),s+=JSON.stringify(t)})),s):s};let M=null;n.version=t=>{M=t},n.showVersion=e=>{const s=t.getInternalMethods().getLoggerInstance();e||(e="error");("function"==typeof e?e:s[e])(M)},n.reset=function(t){return o=null,l=!1,c=[],f=!1,m=[],d=[],u=[],p=g(p,(e=>!t[e])),n};const _=[];return n.freeze=function(){_.push({failMessage:o,failureOutput:l,usages:c,usageDisabled:f,epilogs:m,examples:d,commands:u,descriptions:p})},n.unfreeze=function(t=!1){const e=_.pop();e&&(t?(p={...e.descriptions,...p},u=[...e.commands,...u],c=[...e.usages,...c],d=[...e.examples,...d],m=[...e.epilogs,...m]):({failMessage:o,failureOutput:l,usages:c,usageDisabled:f,epilogs:m,examples:d,commands:u,descriptions:p}=e))},n}function S(t){return"object"==typeof t}function $(t){return S(t)?t.indentation:0}function I(t){return S(t)?t.text:t}class D{constructor(t,e,s,i){var n,r,o;this.yargs=t,this.usage=e,this.command=s,this.shim=i,this.completionKey="get-yargs-completions",this.aliases=null,this.customCompletionFunction=null,this.indexAfterLastReset=0,this.zshShell=null!==(o=(null===(n=this.shim.getEnv("SHELL"))||void 0===n?void 0:n.includes("zsh"))||(null===(r=this.shim.getEnv("ZSH_NAME"))||void 0===r?void 0:r.includes("zsh")))&&void 0!==o&&o}defaultCompletion(t,e,s,i){const n=this.command.getCommandHandlers();for(let e=0,s=t.length;e<s;++e)if(n[t[e]]&&n[t[e]].builder){const s=n[t[e]].builder;if(x(s)){this.indexAfterLastReset=e+1;const t=this.yargs.getInternalMethods().reset();return s(t,!0),t.argv}}const r=[];this.commandCompletions(r,t,s),this.optionCompletions(r,t,e,s),this.choicesFromOptionsCompletions(r,t,e,s),this.choicesFromPositionalsCompletions(r,t,e,s),i(null,r)}commandCompletions(t,e,s){const i=this.yargs.getInternalMethods().getContext().commands;s.match(/^-/)||i[i.length-1]===s||this.previousArgHasChoices(e)||this.usage.getCommands().forEach((s=>{const i=o(s[0]).cmd;if(-1===e.indexOf(i))if(this.zshShell){const e=s[1]||"";t.push(i.replace(/:/g,"\\:")+":"+e)}else t.push(i)}))}optionCompletions(t,e,s,i){if((i.match(/^-/)||""===i&&0===t.length)&&!this.previousArgHasChoices(e)){const s=this.yargs.getOptions(),n=this.yargs.getGroups()[this.usage.getPositionalGroupName()]||[];Object.keys(s.key).forEach((r=>{const o=!!s.configuration["boolean-negation"]&&s.boolean.includes(r);n.includes(r)||s.hiddenOptions.includes(r)||this.argsContainKey(e,r,o)||(this.completeOptionKey(r,t,i),o&&s.default[r]&&this.completeOptionKey(`no-${r}`,t,i))}))}}choicesFromOptionsCompletions(t,e,s,i){if(this.previousArgHasChoices(e)){const s=this.getPreviousArgChoices(e);s&&s.length>0&&t.push(...s.map((t=>t.replace(/:/g,"\\:"))))}}choicesFromPositionalsCompletions(t,e,s,i){if(""===i&&t.length>0&&this.previousArgHasChoices(e))return;const n=this.yargs.getGroups()[this.usage.getPositionalGroupName()]||[],r=Math.max(this.indexAfterLastReset,this.yargs.getInternalMethods().getContext().commands.length+1),o=n[s._.length-r-1];if(!o)return;const a=this.yargs.getOptions().choices[o]||[];for(const e of a)e.startsWith(i)&&t.push(e.replace(/:/g,"\\:"))}getPreviousArgChoices(t){if(t.length<1)return;let e=t[t.length-1],s="";if(!e.startsWith("-")&&t.length>1&&(s=e,e=t[t.length-2]),!e.startsWith("-"))return;const i=e.replace(/^-+/,""),n=this.yargs.getOptions(),r=[i,...this.yargs.getAliases()[i]||[]];let o;for(const t of r)if(Object.prototype.hasOwnProperty.call(n.key,t)&&Array.isArray(n.choices[t])){o=n.choices[t];break}return o?o.filter((t=>!s||t.startsWith(s))):void 0}previousArgHasChoices(t){const e=this.getPreviousArgChoices(t);return void 0!==e&&e.length>0}argsContainKey(t,e,s){const i=e=>-1!==t.indexOf((/^[^0-9]$/.test(e)?"-":"--")+e);if(i(e))return!0;if(s&&i(`no-${e}`))return!0;if(this.aliases)for(const t of this.aliases[e])if(i(t))return!0;return!1}completeOptionKey(t,e,s){var i,n,r;const o=this.usage.getDescriptions(),a=!/^--/.test(s)&&(t=>/^[^0-9]$/.test(t))(t)?"-":"--";if(this.zshShell){const s=null===(i=null==this?void 0:this.aliases)||void 0===i?void 0:i[t].find((t=>{const e=o[t];return"string"==typeof e&&e.length>0})),h=s?o[s]:void 0,l=null!==(r=null!==(n=o[t])&&void 0!==n?n:h)&&void 0!==r?r:"";e.push(a+`${t.replace(/:/g,"\\:")}:${l.replace("__yargsString__:","").replace(/(\r\n|\n|\r)/gm," ")}`)}else e.push(a+t)}customCompletion(t,e,s,i){if(d(this.customCompletionFunction,null,this.shim),this.customCompletionFunction.length<3){const t=this.customCompletionFunction(s,e);return f(t)?t.then((t=>{this.shim.process.nextTick((()=>{i(null,t)}))})).catch((t=>{this.shim.process.nextTick((()=>{i(t,void 0)}))})):i(null,t)}return function(t){return t.length>3}(this.customCompletionFunction)?this.customCompletionFunction(s,e,((n=i)=>this.defaultCompletion(t,e,s,n)),(t=>{i(null,t)})):this.customCompletionFunction(s,e,(t=>{i(null,t)}))}getCompletion(t,e){const s=t.length?t[t.length-1]:"",i=this.yargs.parse(t,!0),n=this.customCompletionFunction?i=>this.customCompletion(t,i,s,e):i=>this.defaultCompletion(t,i,s,e);return f(i)?i.then(n):n(i)}generateCompletionScript(t,e){let s=this.zshShell?'#compdef {{app_name}}\n###-begin-{{app_name}}-completions-###\n#\n# yargs command completion script\n#\n# Installation: {{app_path}} {{completion_command}} >> ~/.zshrc\n#    or {{app_path}} {{completion_command}} >> ~/.zprofile on OSX.\n#\n_{{app_name}}_yargs_completions()\n{\n  local reply\n  local si=$IFS\n  IFS=$\'\n\' reply=($(COMP_CWORD="$((CURRENT-1))" COMP_LINE="$BUFFER" COMP_POINT="$CURSOR" {{app_path}} --get-yargs-completions "${words[@]}"))\n  IFS=$si\n  _describe \'values\' reply\n}\ncompdef _{{app_name}}_yargs_completions {{app_name}}\n###-end-{{app_name}}-completions-###\n':'###-begin-{{app_name}}-completions-###\n#\n# yargs command completion script\n#\n# Installation: {{app_path}} {{completion_command}} >> ~/.bashrc\n#    or {{app_path}} {{completion_command}} >> ~/.bash_profile on OSX.\n#\n_{{app_name}}_yargs_completions()\n{\n    local cur_word args type_list\n\n    cur_word="${COMP_WORDS[COMP_CWORD]}"\n    args=("${COMP_WORDS[@]}")\n\n    # ask yargs to generate completions.\n    type_list=$({{app_path}} --get-yargs-completions "${args[@]}")\n\n    COMPREPLY=( $(compgen -W "${type_list}" -- ${cur_word}) )\n\n    # if no match was found, fall back to filename completion\n    if [ ${#COMPREPLY[@]} -eq 0 ]; then\n      COMPREPLY=()\n    fi\n\n    return 0\n}\ncomplete -o bashdefault -o default -F _{{app_name}}_yargs_completions {{app_name}}\n###-end-{{app_name}}-completions-###\n';const i=this.shim.path.basename(t);return t.match(/\.js$/)&&(t=`./${t}`),s=s.replace(/{{app_name}}/g,i),s=s.replace(/{{completion_command}}/g,e),s.replace(/{{app_path}}/g,t)}registerFunction(t){this.customCompletionFunction=t}setParsed(t){this.aliases=t.aliases}}function N(t,e){if(0===t.length)return e.length;if(0===e.length)return t.length;const s=[];let i,n;for(i=0;i<=e.length;i++)s[i]=[i];for(n=0;n<=t.length;n++)s[0][n]=n;for(i=1;i<=e.length;i++)for(n=1;n<=t.length;n++)e.charAt(i-1)===t.charAt(n-1)?s[i][n]=s[i-1][n-1]:i>1&&n>1&&e.charAt(i-2)===t.charAt(n-1)&&e.charAt(i-1)===t.charAt(n-2)?s[i][n]=s[i-2][n-2]+1:s[i][n]=Math.min(s[i-1][n-1]+1,Math.min(s[i][n-1]+1,s[i-1][n]+1));return s[e.length][t.length]}const H=["$0","--","_"];var z,W,q,U,F,L,V,G,R,T,B,K,Y,J,Z,X,Q,tt,et,st,it,nt,rt,ot,at,ht,lt,ct,ft,dt,ut,pt,gt,mt,yt;const bt=Symbol("copyDoubleDash"),vt=Symbol("copyDoubleDash"),Ot=Symbol("deleteFromParserHintObject"),wt=Symbol("emitWarning"),Ct=Symbol("freeze"),jt=Symbol("getDollarZero"),Mt=Symbol("getParserConfiguration"),_t=Symbol("getUsageConfiguration"),kt=Symbol("guessLocale"),xt=Symbol("guessVersion"),Et=Symbol("parsePositionalNumbers"),At=Symbol("pkgUp"),Pt=Symbol("populateParserHintArray"),St=Symbol("populateParserHintSingleValueDictionary"),$t=Symbol("populateParserHintArrayDictionary"),It=Symbol("populateParserHintDictionary"),Dt=Symbol("sanitizeKey"),Nt=Symbol("setKey"),Ht=Symbol("unfreeze"),zt=Symbol("validateAsync"),Wt=Symbol("getCommandInstance"),qt=Symbol("getContext"),Ut=Symbol("getHasOutput"),Ft=Symbol("getLoggerInstance"),Lt=Symbol("getParseContext"),Vt=Symbol("getUsageInstance"),Gt=Symbol("getValidationInstance"),Rt=Symbol("hasParseCallback"),Tt=Symbol("isGlobalContext"),Bt=Symbol("postProcess"),Kt=Symbol("rebase"),Yt=Symbol("reset"),Jt=Symbol("runYargsParserAndExecuteCommands"),Zt=Symbol("runValidation"),Xt=Symbol("setHasOutput"),Qt=Symbol("kTrackManuallySetKeys");class te{constructor(t=[],e,s,i){this.customScriptName=!1,this.parsed=!1,z.set(this,void 0),W.set(this,void 0),q.set(this,{commands:[],fullCommands:[]}),U.set(this,null),F.set(this,null),L.set(this,"show-hidden"),V.set(this,null),G.set(this,!0),R.set(this,{}),T.set(this,!0),B.set(this,[]),K.set(this,void 0),Y.set(this,{}),J.set(this,!1),Z.set(this,null),X.set(this,!0),Q.set(this,void 0),tt.set(this,""),et.set(this,void 0),st.set(this,void 0),it.set(this,{}),nt.set(this,null),rt.set(this,null),ot.set(this,{}),at.set(this,{}),ht.set(this,void 0),lt.set(this,!1),ct.set(this,void 0),ft.set(this,!1),dt.set(this,!1),ut.set(this,!1),pt.set(this,void 0),gt.set(this,{}),mt.set(this,null),yt.set(this,void 0),O(this,ct,i,"f"),O(this,ht,t,"f"),O(this,W,e,"f"),O(this,st,s,"f"),O(this,K,new w(this),"f"),this.$0=this[jt](),this[Yt](),O(this,z,v(this,z,"f"),"f"),O(this,pt,v(this,pt,"f"),"f"),O(this,yt,v(this,yt,"f"),"f"),O(this,et,v(this,et,"f"),"f"),v(this,et,"f").showHiddenOpt=v(this,L,"f"),O(this,Q,this[vt](),"f")}addHelpOpt(t,e){return h("[string|boolean] [string]",[t,e],arguments.length),v(this,Z,"f")&&(this[Ot](v(this,Z,"f")),O(this,Z,null,"f")),!1===t&&void 0===e||(O(this,Z,"string"==typeof t?t:"help","f"),this.boolean(v(this,Z,"f")),this.describe(v(this,Z,"f"),e||v(this,pt,"f").deferY18nLookup("Show help"))),this}help(t,e){return this.addHelpOpt(t,e)}addShowHiddenOpt(t,e){if(h("[string|boolean] [string]",[t,e],arguments.length),!1===t&&void 0===e)return this;const s="string"==typeof t?t:v(this,L,"f");return this.boolean(s),this.describe(s,e||v(this,pt,"f").deferY18nLookup("Show hidden options")),v(this,et,"f").showHiddenOpt=s,this}showHidden(t,e){return this.addShowHiddenOpt(t,e)}alias(t,e){return h("<object|string|array> [string|array]",[t,e],arguments.length),this[$t](this.alias.bind(this),"alias",t,e),this}array(t){return h("<array|string>",[t],arguments.length),this[Pt]("array",t),this[Qt](t),this}boolean(t){return h("<array|string>",[t],arguments.length),this[Pt]("boolean",t),this[Qt](t),this}check(t,e){return h("<function> [boolean]",[t,e],arguments.length),this.middleware(((e,s)=>j((()=>t(e,s.getOptions())),(s=>(s?("string"==typeof s||s instanceof Error)&&v(this,pt,"f").fail(s.toString(),s):v(this,pt,"f").fail(v(this,ct,"f").y18n.__("Argument check failed: %s",t.toString())),e)),(t=>(v(this,pt,"f").fail(t.message?t.message:t.toString(),t),e)))),!1,e),this}choices(t,e){return h("<object|string|array> [string|array]",[t,e],arguments.length),this[$t](this.choices.bind(this),"choices",t,e),this}coerce(t,s){if(h("<object|string|array> [function]",[t,s],arguments.length),Array.isArray(t)){if(!s)throw new e("coerce callback must be provided");for(const e of t)this.coerce(e,s);return this}if("object"==typeof t){for(const e of Object.keys(t))this.coerce(e,t[e]);return this}if(!s)throw new e("coerce callback must be provided");return v(this,et,"f").key[t]=!0,v(this,K,"f").addCoerceMiddleware(((i,n)=>{let r;return Object.prototype.hasOwnProperty.call(i,t)?j((()=>(r=n.getAliases(),s(i[t]))),(e=>{i[t]=e;const s=n.getInternalMethods().getParserConfiguration()["strip-aliased"];if(r[t]&&!0!==s)for(const s of r[t])i[s]=e;return i}),(t=>{throw new e(t.message)})):i}),t),this}conflicts(t,e){return h("<string|object> [string|array]",[t,e],arguments.length),v(this,yt,"f").conflicts(t,e),this}config(t="config",e,s){return h("[object|string] [string|function] [function]",[t,e,s],arguments.length),"object"!=typeof t||Array.isArray(t)?("function"==typeof e&&(s=e,e=void 0),this.describe(t,e||v(this,pt,"f").deferY18nLookup("Path to JSON config file")),(Array.isArray(t)?t:[t]).forEach((t=>{v(this,et,"f").config[t]=s||!0})),this):(t=n(t,v(this,W,"f"),this[Mt]()["deep-merge-config"]||!1,v(this,ct,"f")),v(this,et,"f").configObjects=(v(this,et,"f").configObjects||[]).concat(t),this)}completion(t,e,s){return h("[string] [string|boolean|function] [function]",[t,e,s],arguments.length),"function"==typeof e&&(s=e,e=void 0),O(this,F,t||v(this,F,"f")||"completion","f"),e||!1===e||(e="generate completion script"),this.command(v(this,F,"f"),e),s&&v(this,U,"f").registerFunction(s),this}command(t,e,s,i,n,r){return h("<string|array|object> [string|boolean] [function|object] [function] [array] [boolean|string]",[t,e,s,i,n,r],arguments.length),v(this,z,"f").addHandler(t,e,s,i,n,r),this}commands(t,e,s,i,n,r){return this.command(t,e,s,i,n,r)}commandDir(t,e){h("<string> [object]",[t,e],arguments.length);const s=v(this,st,"f")||v(this,ct,"f").require;return v(this,z,"f").addDirectory(t,s,v(this,ct,"f").getCallerFile(),e),this}count(t){return h("<array|string>",[t],arguments.length),this[Pt]("count",t),this[Qt](t),this}default(t,e,s){return h("<object|string|array> [*] [string]",[t,e,s],arguments.length),s&&(u(t,v(this,ct,"f")),v(this,et,"f").defaultDescription[t]=s),"function"==typeof e&&(u(t,v(this,ct,"f")),v(this,et,"f").defaultDescription[t]||(v(this,et,"f").defaultDescription[t]=v(this,pt,"f").functionDescription(e)),e=e.call()),this[St](this.default.bind(this),"default",t,e),this}defaults(t,e,s){return this.default(t,e,s)}demandCommand(t=1,e,s,i){return h("[number] [number|string] [string|null|undefined] [string|null|undefined]",[t,e,s,i],arguments.length),"number"!=typeof e&&(s=e,e=1/0),this.global("_",!1),v(this,et,"f").demandedCommands._={min:t,max:e,minMsg:s,maxMsg:i},this}demand(t,e,s){return Array.isArray(e)?(e.forEach((t=>{d(s,!0,v(this,ct,"f")),this.demandOption(t,s)})),e=1/0):"number"!=typeof e&&(s=e,e=1/0),"number"==typeof t?(d(s,!0,v(this,ct,"f")),this.demandCommand(t,e,s,s)):Array.isArray(t)?t.forEach((t=>{d(s,!0,v(this,ct,"f")),this.demandOption(t,s)})):"string"==typeof s?this.demandOption(t,s):!0!==s&&void 0!==s||this.demandOption(t),this}demandOption(t,e){return h("<object|string|array> [string]",[t,e],arguments.length),this[St](this.demandOption.bind(this),"demandedOptions",t,e),this}deprecateOption(t,e){return h("<string> [string|boolean]",[t,e],arguments.length),v(this,et,"f").deprecatedOptions[t]=e,this}describe(t,e){return h("<object|string|array> [string]",[t,e],arguments.length),this[Nt](t,!0),v(this,pt,"f").describe(t,e),this}detectLocale(t){return h("<boolean>",[t],arguments.length),O(this,G,t,"f"),this}env(t){return h("[string|boolean]",[t],arguments.length),!1===t?delete v(this,et,"f").envPrefix:v(this,et,"f").envPrefix=t||"",this}epilogue(t){return h("<string>",[t],arguments.length),v(this,pt,"f").epilog(t),this}epilog(t){return this.epilogue(t)}example(t,e){return h("<string|array> [string]",[t,e],arguments.length),Array.isArray(t)?t.forEach((t=>this.example(...t))):v(this,pt,"f").example(t,e),this}exit(t,e){O(this,J,!0,"f"),O(this,V,e,"f"),v(this,T,"f")&&v(this,ct,"f").process.exit(t)}exitProcess(t=!0){return h("[boolean]",[t],arguments.length),O(this,T,t,"f"),this}fail(t){if(h("<function|boolean>",[t],arguments.length),"boolean"==typeof t&&!1!==t)throw new e("Invalid first argument. Expected function or boolean 'false'");return v(this,pt,"f").failFn(t),this}getAliases(){return this.parsed?this.parsed.aliases:{}}async getCompletion(t,e){return h("<array> [function]",[t,e],arguments.length),e?v(this,U,"f").getCompletion(t,e):new Promise(((e,s)=>{v(this,U,"f").getCompletion(t,((t,i)=>{t?s(t):e(i)}))}))}getDemandedOptions(){return h([],0),v(this,et,"f").demandedOptions}getDemandedCommands(){return h([],0),v(this,et,"f").demandedCommands}getDeprecatedOptions(){return h([],0),v(this,et,"f").deprecatedOptions}getDetectLocale(){return v(this,G,"f")}getExitProcess(){return v(this,T,"f")}getGroups(){return Object.assign({},v(this,Y,"f"),v(this,at,"f"))}getHelp(){if(O(this,J,!0,"f"),!v(this,pt,"f").hasCachedHelpMessage()){if(!this.parsed){const t=this[Jt](v(this,ht,"f"),void 0,void 0,0,!0);if(f(t))return t.then((()=>v(this,pt,"f").help()))}const t=v(this,z,"f").runDefaultBuilderOn(this);if(f(t))return t.then((()=>v(this,pt,"f").help()))}return Promise.resolve(v(this,pt,"f").help())}getOptions(){return v(this,et,"f")}getStrict(){return v(this,ft,"f")}getStrictCommands(){return v(this,dt,"f")}getStrictOptions(){return v(this,ut,"f")}global(t,e){return h("<string|array> [boolean]",[t,e],arguments.length),t=[].concat(t),!1!==e?v(this,et,"f").local=v(this,et,"f").local.filter((e=>-1===t.indexOf(e))):t.forEach((t=>{v(this,et,"f").local.includes(t)||v(this,et,"f").local.push(t)})),this}group(t,e){h("<string|array> <string>",[t,e],arguments.length);const s=v(this,at,"f")[e]||v(this,Y,"f")[e];v(this,at,"f")[e]&&delete v(this,at,"f")[e];const i={};return v(this,Y,"f")[e]=(s||[]).concat(t).filter((t=>!i[t]&&(i[t]=!0))),this}hide(t){return h("<string>",[t],arguments.length),v(this,et,"f").hiddenOptions.push(t),this}implies(t,e){return h("<string|object> [number|string|array]",[t,e],arguments.length),v(this,yt,"f").implies(t,e),this}locale(t){return h("[string]",[t],arguments.length),void 0===t?(this[kt](),v(this,ct,"f").y18n.getLocale()):(O(this,G,!1,"f"),v(this,ct,"f").y18n.setLocale(t),this)}middleware(t,e,s){return v(this,K,"f").addMiddleware(t,!!e,s)}nargs(t,e){return h("<string|object|array> [number]",[t,e],arguments.length),this[St](this.nargs.bind(this),"narg",t,e),this}normalize(t){return h("<array|string>",[t],arguments.length),this[Pt]("normalize",t),this}number(t){return h("<array|string>",[t],arguments.length),this[Pt]("number",t),this[Qt](t),this}option(t,e){if(h("<string|object> [object]",[t,e],arguments.length),"object"==typeof t)Object.keys(t).forEach((e=>{this.options(e,t[e])}));else{"object"!=typeof e&&(e={}),this[Qt](t),!v(this,mt,"f")||"version"!==t&&"version"!==(null==e?void 0:e.alias)||this[wt](['"version" is a reserved word.',"Please do one of the following:",'- Disable version with `yargs.version(false)` if using "version" as an option',"- Use the built-in `yargs.version` method instead (if applicable)","- Use a different option key","https://yargs.js.org/docs/#api-reference-version"].join("\n"),void 0,"versionWarning"),v(this,et,"f").key[t]=!0,e.alias&&this.alias(t,e.alias);const s=e.deprecate||e.deprecated;s&&this.deprecateOption(t,s);const i=e.demand||e.required||e.require;i&&this.demand(t,i),e.demandOption&&this.demandOption(t,"string"==typeof e.demandOption?e.demandOption:void 0),e.conflicts&&this.conflicts(t,e.conflicts),"default"in e&&this.default(t,e.default),void 0!==e.implies&&this.implies(t,e.implies),void 0!==e.nargs&&this.nargs(t,e.nargs),e.config&&this.config(t,e.configParser),e.normalize&&this.normalize(t),e.choices&&this.choices(t,e.choices),e.coerce&&this.coerce(t,e.coerce),e.group&&this.group(t,e.group),(e.boolean||"boolean"===e.type)&&(this.boolean(t),e.alias&&this.boolean(e.alias)),(e.array||"array"===e.type)&&(this.array(t),e.alias&&this.array(e.alias)),(e.number||"number"===e.type)&&(this.number(t),e.alias&&this.number(e.alias)),(e.string||"string"===e.type)&&(this.string(t),e.alias&&this.string(e.alias)),(e.count||"count"===e.type)&&this.count(t),"boolean"==typeof e.global&&this.global(t,e.global),e.defaultDescription&&(v(this,et,"f").defaultDescription[t]=e.defaultDescription),e.skipValidation&&this.skipValidation(t);const n=e.describe||e.description||e.desc,r=v(this,pt,"f").getDescriptions();Object.prototype.hasOwnProperty.call(r,t)&&"string"!=typeof n||this.describe(t,n),e.hidden&&this.hide(t),e.requiresArg&&this.requiresArg(t)}return this}options(t,e){return this.option(t,e)}parse(t,e,s){h("[string|array] [function|boolean|object] [function]",[t,e,s],arguments.length),this[Ct](),void 0===t&&(t=v(this,ht,"f")),"object"==typeof e&&(O(this,rt,e,"f"),e=s),"function"==typeof e&&(O(this,nt,e,"f"),e=!1),e||O(this,ht,t,"f"),v(this,nt,"f")&&O(this,T,!1,"f");const i=this[Jt](t,!!e),n=this.parsed;return v(this,U,"f").setParsed(this.parsed),f(i)?i.then((t=>(v(this,nt,"f")&&v(this,nt,"f").call(this,v(this,V,"f"),t,v(this,tt,"f")),t))).catch((t=>{throw v(this,nt,"f")&&v(this,nt,"f")(t,this.parsed.argv,v(this,tt,"f")),t})).finally((()=>{this[Ht](),this.parsed=n})):(v(this,nt,"f")&&v(this,nt,"f").call(this,v(this,V,"f"),i,v(this,tt,"f")),this[Ht](),this.parsed=n,i)}parseAsync(t,e,s){const i=this.parse(t,e,s);return f(i)?i:Promise.resolve(i)}parseSync(t,s,i){const n=this.parse(t,s,i);if(f(n))throw new e(".parseSync() must not be used with asynchronous builders, handlers, or middleware");return n}parserConfiguration(t){return h("<object>",[t],arguments.length),O(this,it,t,"f"),this}pkgConf(t,e){h("<string> [string]",[t,e],arguments.length);let s=null;const i=this[At](e||v(this,W,"f"));return i[t]&&"object"==typeof i[t]&&(s=n(i[t],e||v(this,W,"f"),this[Mt]()["deep-merge-config"]||!1,v(this,ct,"f")),v(this,et,"f").configObjects=(v(this,et,"f").configObjects||[]).concat(s)),this}positional(t,e){h("<string> <object>",[t,e],arguments.length);const s=["default","defaultDescription","implies","normalize","choices","conflicts","coerce","type","describe","desc","description","alias"];e=g(e,((t,e)=>!("type"===t&&!["string","number","boolean"].includes(e))&&s.includes(t)));const i=v(this,q,"f").fullCommands[v(this,q,"f").fullCommands.length-1],n=i?v(this,z,"f").cmdToParseOptions(i):{array:[],alias:{},default:{},demand:{}};return p(n).forEach((s=>{const i=n[s];Array.isArray(i)?-1!==i.indexOf(t)&&(e[s]=!0):i[t]&&!(s in e)&&(e[s]=i[t])})),this.group(t,v(this,pt,"f").getPositionalGroupName()),this.option(t,e)}recommendCommands(t=!0){return h("[boolean]",[t],arguments.length),O(this,lt,t,"f"),this}required(t,e,s){return this.demand(t,e,s)}require(t,e,s){return this.demand(t,e,s)}requiresArg(t){return h("<array|string|object> [number]",[t],arguments.length),"string"==typeof t&&v(this,et,"f").narg[t]||this[St](this.requiresArg.bind(this),"narg",t,NaN),this}showCompletionScript(t,e){return h("[string] [string]",[t,e],arguments.length),t=t||this.$0,v(this,Q,"f").log(v(this,U,"f").generateCompletionScript(t,e||v(this,F,"f")||"completion")),this}showHelp(t){if(h("[string|function]",[t],arguments.length),O(this,J,!0,"f"),!v(this,pt,"f").hasCachedHelpMessage()){if(!this.parsed){const e=this[Jt](v(this,ht,"f"),void 0,void 0,0,!0);if(f(e))return e.then((()=>{v(this,pt,"f").showHelp(t)})),this}const e=v(this,z,"f").runDefaultBuilderOn(this);if(f(e))return e.then((()=>{v(this,pt,"f").showHelp(t)})),this}return v(this,pt,"f").showHelp(t),this}scriptName(t){return this.customScriptName=!0,this.$0=t,this}showHelpOnFail(t,e){return h("[boolean|string] [string]",[t,e],arguments.length),v(this,pt,"f").showHelpOnFail(t,e),this}showVersion(t){return h("[string|function]",[t],arguments.length),v(this,pt,"f").showVersion(t),this}skipValidation(t){return h("<array|string>",[t],arguments.length),this[Pt]("skipValidation",t),this}strict(t){return h("[boolean]",[t],arguments.length),O(this,ft,!1!==t,"f"),this}strictCommands(t){return h("[boolean]",[t],arguments.length),O(this,dt,!1!==t,"f"),this}strictOptions(t){return h("[boolean]",[t],arguments.length),O(this,ut,!1!==t,"f"),this}string(t){return h("<array|string>",[t],arguments.length),this[Pt]("string",t),this[Qt](t),this}terminalWidth(){return h([],0),v(this,ct,"f").process.stdColumns}updateLocale(t){return this.updateStrings(t)}updateStrings(t){return h("<object>",[t],arguments.length),O(this,G,!1,"f"),v(this,ct,"f").y18n.updateLocale(t),this}usage(t,s,i,n){if(h("<string|null|undefined> [string|boolean] [function|object] [function]",[t,s,i,n],arguments.length),void 0!==s){if(d(t,null,v(this,ct,"f")),(t||"").match(/^\$0( |$)/))return this.command(t,s,i,n);throw new e(".usage() description must start with $0 if being used as alias for .command()")}return v(this,pt,"f").usage(t),this}usageConfiguration(t){return h("<object>",[t],arguments.length),O(this,gt,t,"f"),this}version(t,e,s){const i="version";if(h("[boolean|string] [string] [string]",[t,e,s],arguments.length),v(this,mt,"f")&&(this[Ot](v(this,mt,"f")),v(this,pt,"f").version(void 0),O(this,mt,null,"f")),0===arguments.length)s=this[xt](),t=i;else if(1===arguments.length){if(!1===t)return this;s=t,t=i}else 2===arguments.length&&(s=e,e=void 0);return O(this,mt,"string"==typeof t?t:i,"f"),e=e||v(this,pt,"f").deferY18nLookup("Show version number"),v(this,pt,"f").version(s||void 0),this.boolean(v(this,mt,"f")),this.describe(v(this,mt,"f"),e),this}wrap(t){return h("<number|null|undefined>",[t],arguments.length),v(this,pt,"f").wrap(t),this}[(z=new WeakMap,W=new WeakMap,q=new WeakMap,U=new WeakMap,F=new WeakMap,L=new WeakMap,V=new WeakMap,G=new WeakMap,R=new WeakMap,T=new WeakMap,B=new WeakMap,K=new WeakMap,Y=new WeakMap,J=new WeakMap,Z=new WeakMap,X=new WeakMap,Q=new WeakMap,tt=new WeakMap,et=new WeakMap,st=new WeakMap,it=new WeakMap,nt=new WeakMap,rt=new WeakMap,ot=new WeakMap,at=new WeakMap,ht=new WeakMap,lt=new WeakMap,ct=new WeakMap,ft=new WeakMap,dt=new WeakMap,ut=new WeakMap,pt=new WeakMap,gt=new WeakMap,mt=new WeakMap,yt=new WeakMap,bt)](t){if(!t._||!t["--"])return t;t._.push.apply(t._,t["--"]);try{delete t["--"]}catch(t){}return t}[vt](){return{log:(...t)=>{this[Rt]()||console.log(...t),O(this,J,!0,"f"),v(this,tt,"f").length&&O(this,tt,v(this,tt,"f")+"\n","f"),O(this,tt,v(this,tt,"f")+t.join(" "),"f")},error:(...t)=>{this[Rt]()||console.error(...t),O(this,J,!0,"f"),v(this,tt,"f").length&&O(this,tt,v(this,tt,"f")+"\n","f"),O(this,tt,v(this,tt,"f")+t.join(" "),"f")}}}[Ot](t){p(v(this,et,"f")).forEach((e=>{if("configObjects"===e)return;const s=v(this,et,"f")[e];Array.isArray(s)?s.includes(t)&&s.splice(s.indexOf(t),1):"object"==typeof s&&delete s[t]})),delete v(this,pt,"f").getDescriptions()[t]}[wt](t,e,s){v(this,R,"f")[s]||(v(this,ct,"f").process.emitWarning(t,e),v(this,R,"f")[s]=!0)}[Ct](){v(this,B,"f").push({options:v(this,et,"f"),configObjects:v(this,et,"f").configObjects.slice(0),exitProcess:v(this,T,"f"),groups:v(this,Y,"f"),strict:v(this,ft,"f"),strictCommands:v(this,dt,"f"),strictOptions:v(this,ut,"f"),completionCommand:v(this,F,"f"),output:v(this,tt,"f"),exitError:v(this,V,"f"),hasOutput:v(this,J,"f"),parsed:this.parsed,parseFn:v(this,nt,"f"),parseContext:v(this,rt,"f")}),v(this,pt,"f").freeze(),v(this,yt,"f").freeze(),v(this,z,"f").freeze(),v(this,K,"f").freeze()}[jt](){let t,e="";return t=/\b(node|iojs|electron)(\.exe)?$/.test(v(this,ct,"f").process.argv()[0])?v(this,ct,"f").process.argv().slice(1,2):v(this,ct,"f").process.argv().slice(0,1),e=t.map((t=>{const e=this[Kt](v(this,W,"f"),t);return t.match(/^(\/|([a-zA-Z]:)?\\)/)&&e.length<t.length?e:t})).join(" ").trim(),v(this,ct,"f").getEnv("_")&&v(this,ct,"f").getProcessArgvBin()===v(this,ct,"f").getEnv("_")&&(e=v(this,ct,"f").getEnv("_").replace(`${v(this,ct,"f").path.dirname(v(this,ct,"f").process.execPath())}/`,"")),e}[Mt](){return v(this,it,"f")}[_t](){return v(this,gt,"f")}[kt](){if(!v(this,G,"f"))return;const t=v(this,ct,"f").getEnv("LC_ALL")||v(this,ct,"f").getEnv("LC_MESSAGES")||v(this,ct,"f").getEnv("LANG")||v(this,ct,"f").getEnv("LANGUAGE")||"en_US";this.locale(t.replace(/[.:].*/,""))}[xt](){return this[At]().version||"unknown"}[Et](t){const e=t["--"]?t["--"]:t._;for(let t,s=0;void 0!==(t=e[s]);s++)v(this,ct,"f").Parser.looksLikeNumber(t)&&Number.isSafeInteger(Math.floor(parseFloat(`${t}`)))&&(e[s]=Number(t));return t}[At](t){const e=t||"*";if(v(this,ot,"f")[e])return v(this,ot,"f")[e];let s={};try{let e=t||v(this,ct,"f").mainFilename;!t&&v(this,ct,"f").path.extname(e)&&(e=v(this,ct,"f").path.dirname(e));const i=v(this,ct,"f").findUp(e,((t,e)=>e.includes("package.json")?"package.json":void 0));d(i,void 0,v(this,ct,"f")),s=JSON.parse(v(this,ct,"f").readFileSync(i,"utf8"))}catch(t){}return v(this,ot,"f")[e]=s||{},v(this,ot,"f")[e]}[Pt](t,e){(e=[].concat(e)).forEach((e=>{e=this[Dt](e),v(this,et,"f")[t].push(e)}))}[St](t,e,s,i){this[It](t,e,s,i,((t,e,s)=>{v(this,et,"f")[t][e]=s}))}[$t](t,e,s,i){this[It](t,e,s,i,((t,e,s)=>{v(this,et,"f")[t][e]=(v(this,et,"f")[t][e]||[]).concat(s)}))}[It](t,e,s,i,n){if(Array.isArray(s))s.forEach((e=>{t(e,i)}));else if((t=>"object"==typeof t)(s))for(const e of p(s))t(e,s[e]);else n(e,this[Dt](s),i)}[Dt](t){return"__proto__"===t?"___proto___":t}[Nt](t,e){return this[St](this[Nt].bind(this),"key",t,e),this}[Ht](){var t,e,s,i,n,r,o,a,h,l,c,f;const u=v(this,B,"f").pop();let p;d(u,void 0,v(this,ct,"f")),t=this,e=this,s=this,i=this,n=this,r=this,o=this,a=this,h=this,l=this,c=this,f=this,({options:{set value(e){O(t,et,e,"f")}}.value,configObjects:p,exitProcess:{set value(t){O(e,T,t,"f")}}.value,groups:{set value(t){O(s,Y,t,"f")}}.value,output:{set value(t){O(i,tt,t,"f")}}.value,exitError:{set value(t){O(n,V,t,"f")}}.value,hasOutput:{set value(t){O(r,J,t,"f")}}.value,parsed:this.parsed,strict:{set value(t){O(o,ft,t,"f")}}.value,strictCommands:{set value(t){O(a,dt,t,"f")}}.value,strictOptions:{set value(t){O(h,ut,t,"f")}}.value,completionCommand:{set value(t){O(l,F,t,"f")}}.value,parseFn:{set value(t){O(c,nt,t,"f")}}.value,parseContext:{set value(t){O(f,rt,t,"f")}}.value}=u),v(this,et,"f").configObjects=p,v(this,pt,"f").unfreeze(),v(this,yt,"f").unfreeze(),v(this,z,"f").unfreeze(),v(this,K,"f").unfreeze()}[zt](t,e){return j(e,(e=>(t(e),e)))}getInternalMethods(){return{getCommandInstance:this[Wt].bind(this),getContext:this[qt].bind(this),getHasOutput:this[Ut].bind(this),getLoggerInstance:this[Ft].bind(this),getParseContext:this[Lt].bind(this),getParserConfiguration:this[Mt].bind(this),getUsageConfiguration:this[_t].bind(this),getUsageInstance:this[Vt].bind(this),getValidationInstance:this[Gt].bind(this),hasParseCallback:this[Rt].bind(this),isGlobalContext:this[Tt].bind(this),postProcess:this[Bt].bind(this),reset:this[Yt].bind(this),runValidation:this[Zt].bind(this),runYargsParserAndExecuteCommands:this[Jt].bind(this),setHasOutput:this[Xt].bind(this)}}[Wt](){return v(this,z,"f")}[qt](){return v(this,q,"f")}[Ut](){return v(this,J,"f")}[Ft](){return v(this,Q,"f")}[Lt](){return v(this,rt,"f")||{}}[Vt](){return v(this,pt,"f")}[Gt](){return v(this,yt,"f")}[Rt](){return!!v(this,nt,"f")}[Tt](){return v(this,X,"f")}[Bt](t,e,s,i){if(s)return t;if(f(t))return t;e||(t=this[bt](t));return(this[Mt]()["parse-positional-numbers"]||void 0===this[Mt]()["parse-positional-numbers"])&&(t=this[Et](t)),i&&(t=C(t,this,v(this,K,"f").getMiddleware(),!1)),t}[Yt](t={}){O(this,et,v(this,et,"f")||{},"f");const e={};e.local=v(this,et,"f").local||[],e.configObjects=v(this,et,"f").configObjects||[];const s={};e.local.forEach((e=>{s[e]=!0,(t[e]||[]).forEach((t=>{s[t]=!0}))})),Object.assign(v(this,at,"f"),Object.keys(v(this,Y,"f")).reduce(((t,e)=>{const i=v(this,Y,"f")[e].filter((t=>!(t in s)));return i.length>0&&(t[e]=i),t}),{})),O(this,Y,{},"f");return["array","boolean","string","skipValidation","count","normalize","number","hiddenOptions"].forEach((t=>{e[t]=(v(this,et,"f")[t]||[]).filter((t=>!s[t]))})),["narg","key","alias","default","defaultDescription","config","choices","demandedOptions","demandedCommands","deprecatedOptions"].forEach((t=>{e[t]=g(v(this,et,"f")[t],(t=>!s[t]))})),e.envPrefix=v(this,et,"f").envPrefix,O(this,et,e,"f"),O(this,pt,v(this,pt,"f")?v(this,pt,"f").reset(s):P(this,v(this,ct,"f")),"f"),O(this,yt,v(this,yt,"f")?v(this,yt,"f").reset(s):function(t,e,s){const i=s.y18n.__,n=s.y18n.__n,r={nonOptionCount:function(s){const i=t.getDemandedCommands(),r=s._.length+(s["--"]?s["--"].length:0)-t.getInternalMethods().getContext().commands.length;i._&&(r<i._.min||r>i._.max)&&(r<i._.min?void 0!==i._.minMsg?e.fail(i._.minMsg?i._.minMsg.replace(/\$0/g,r.toString()).replace(/\$1/,i._.min.toString()):null):e.fail(n("Not enough non-option arguments: got %s, need at least %s","Not enough non-option arguments: got %s, need at least %s",r,r.toString(),i._.min.toString())):r>i._.max&&(void 0!==i._.maxMsg?e.fail(i._.maxMsg?i._.maxMsg.replace(/\$0/g,r.toString()).replace(/\$1/,i._.max.toString()):null):e.fail(n("Too many non-option arguments: got %s, maximum of %s","Too many non-option arguments: got %s, maximum of %s",r,r.toString(),i._.max.toString()))))},positionalCount:function(t,s){s<t&&e.fail(n("Not enough non-option arguments: got %s, need at least %s","Not enough non-option arguments: got %s, need at least %s",s,s+"",t+""))},requiredArguments:function(t,s){let i=null;for(const e of Object.keys(s))Object.prototype.hasOwnProperty.call(t,e)&&void 0!==t[e]||(i=i||{},i[e]=s[e]);if(i){const t=[];for(const e of Object.keys(i)){const s=i[e];s&&t.indexOf(s)<0&&t.push(s)}const s=t.length?`\n${t.join("\n")}`:"";e.fail(n("Missing required argument: %s","Missing required arguments: %s",Object.keys(i).length,Object.keys(i).join(", ")+s))}},unknownArguments:function(s,i,o,a,h=!0){var l;const c=t.getInternalMethods().getCommandInstance().getCommands(),f=[],d=t.getInternalMethods().getContext();if(Object.keys(s).forEach((e=>{H.includes(e)||Object.prototype.hasOwnProperty.call(o,e)||Object.prototype.hasOwnProperty.call(t.getInternalMethods().getParseContext(),e)||r.isValidAndSomeAliasIsNotNew(e,i)||f.push(e)})),h&&(d.commands.length>0||c.length>0||a)&&s._.slice(d.commands.length).forEach((t=>{c.includes(""+t)||f.push(""+t)})),h){const e=(null===(l=t.getDemandedCommands()._)||void 0===l?void 0:l.max)||0,i=d.commands.length+e;i<s._.length&&s._.slice(i).forEach((t=>{t=String(t),d.commands.includes(t)||f.includes(t)||f.push(t)}))}f.length&&e.fail(n("Unknown argument: %s","Unknown arguments: %s",f.length,f.map((t=>t.trim()?t:`"${t}"`)).join(", ")))},unknownCommands:function(s){const i=t.getInternalMethods().getCommandInstance().getCommands(),r=[],o=t.getInternalMethods().getContext();return(o.commands.length>0||i.length>0)&&s._.slice(o.commands.length).forEach((t=>{i.includes(""+t)||r.push(""+t)})),r.length>0&&(e.fail(n("Unknown command: %s","Unknown commands: %s",r.length,r.join(", "))),!0)},isValidAndSomeAliasIsNotNew:function(e,s){if(!Object.prototype.hasOwnProperty.call(s,e))return!1;const i=t.parsed.newAliases;return[e,...s[e]].some((t=>!Object.prototype.hasOwnProperty.call(i,t)||!i[e]))},limitedChoices:function(s){const n=t.getOptions(),r={};if(!Object.keys(n.choices).length)return;Object.keys(s).forEach((t=>{-1===H.indexOf(t)&&Object.prototype.hasOwnProperty.call(n.choices,t)&&[].concat(s[t]).forEach((e=>{-1===n.choices[t].indexOf(e)&&void 0!==e&&(r[t]=(r[t]||[]).concat(e))}))}));const o=Object.keys(r);if(!o.length)return;let a=i("Invalid values:");o.forEach((t=>{a+=`\n  ${i("Argument: %s, Given: %s, Choices: %s",t,e.stringifiedValues(r[t]),e.stringifiedValues(n.choices[t]))}`})),e.fail(a)}};let o={};function a(t,e){const s=Number(e);return"number"==typeof(e=isNaN(s)?e:s)?e=t._.length>=e:e.match(/^--no-.+/)?(e=e.match(/^--no-(.+)/)[1],e=!Object.prototype.hasOwnProperty.call(t,e)):e=Object.prototype.hasOwnProperty.call(t,e),e}r.implies=function(e,i){h("<string|object> [array|number|string]",[e,i],arguments.length),"object"==typeof e?Object.keys(e).forEach((t=>{r.implies(t,e[t])})):(t.global(e),o[e]||(o[e]=[]),Array.isArray(i)?i.forEach((t=>r.implies(e,t))):(d(i,void 0,s),o[e].push(i)))},r.getImplied=function(){return o},r.implications=function(t){const s=[];if(Object.keys(o).forEach((e=>{const i=e;(o[e]||[]).forEach((e=>{let n=i;const r=e;n=a(t,n),e=a(t,e),n&&!e&&s.push(` ${i} -> ${r}`)}))})),s.length){let t=`${i("Implications failed:")}\n`;s.forEach((e=>{t+=e})),e.fail(t)}};let l={};r.conflicts=function(e,s){h("<string|object> [array|string]",[e,s],arguments.length),"object"==typeof e?Object.keys(e).forEach((t=>{r.conflicts(t,e[t])})):(t.global(e),l[e]||(l[e]=[]),Array.isArray(s)?s.forEach((t=>r.conflicts(e,t))):l[e].push(s))},r.getConflicting=()=>l,r.conflicting=function(n){Object.keys(n).forEach((t=>{l[t]&&l[t].forEach((s=>{s&&void 0!==n[t]&&void 0!==n[s]&&e.fail(i("Arguments %s and %s are mutually exclusive",t,s))}))})),t.getInternalMethods().getParserConfiguration()["strip-dashed"]&&Object.keys(l).forEach((t=>{l[t].forEach((r=>{r&&void 0!==n[s.Parser.camelCase(t)]&&void 0!==n[s.Parser.camelCase(r)]&&e.fail(i("Arguments %s and %s are mutually exclusive",t,r))}))}))},r.recommendCommands=function(t,s){s=s.sort(((t,e)=>e.length-t.length));let n=null,r=1/0;for(let e,i=0;void 0!==(e=s[i]);i++){const s=N(t,e);s<=3&&s<r&&(r=s,n=e)}n&&e.fail(i("Did you mean %s?",n))},r.reset=function(t){return o=g(o,(e=>!t[e])),l=g(l,(e=>!t[e])),r};const c=[];return r.freeze=function(){c.push({implied:o,conflicting:l})},r.unfreeze=function(){const t=c.pop();d(t,void 0,s),({implied:o,conflicting:l}=t)},r}(this,v(this,pt,"f"),v(this,ct,"f")),"f"),O(this,z,v(this,z,"f")?v(this,z,"f").reset():function(t,e,s,i){return new _(t,e,s,i)}(v(this,pt,"f"),v(this,yt,"f"),v(this,K,"f"),v(this,ct,"f")),"f"),v(this,U,"f")||O(this,U,function(t,e,s,i){return new D(t,e,s,i)}(this,v(this,pt,"f"),v(this,z,"f"),v(this,ct,"f")),"f"),v(this,K,"f").reset(),O(this,F,null,"f"),O(this,tt,"","f"),O(this,V,null,"f"),O(this,J,!1,"f"),this.parsed=!1,this}[Kt](t,e){return v(this,ct,"f").path.relative(t,e)}[Jt](t,s,i,n=0,r=!1){let o=!!i||r;t=t||v(this,ht,"f"),v(this,et,"f").__=v(this,ct,"f").y18n.__,v(this,et,"f").configuration=this[Mt]();const a=!!v(this,et,"f").configuration["populate--"],h=Object.assign({},v(this,et,"f").configuration,{"populate--":!0}),l=v(this,ct,"f").Parser.detailed(t,Object.assign({},v(this,et,"f"),{configuration:{"parse-positional-numbers":!1,...h}})),c=Object.assign(l.argv,v(this,rt,"f"));let d;const u=l.aliases;let p=!1,g=!1;Object.keys(c).forEach((t=>{t===v(this,Z,"f")&&c[t]?p=!0:t===v(this,mt,"f")&&c[t]&&(g=!0)})),c.$0=this.$0,this.parsed=l,0===n&&v(this,pt,"f").clearCachedHelpMessage();try{if(this[kt](),s)return this[Bt](c,a,!!i,!1);if(v(this,Z,"f")){[v(this,Z,"f")].concat(u[v(this,Z,"f")]||[]).filter((t=>t.length>1)).includes(""+c._[c._.length-1])&&(c._.pop(),p=!0)}O(this,X,!1,"f");const h=v(this,z,"f").getCommands(),m=v(this,U,"f").completionKey in c,y=p||m||r;if(c._.length){if(h.length){let t;for(let e,s=n||0;void 0!==c._[s];s++){if(e=String(c._[s]),h.includes(e)&&e!==v(this,F,"f")){const t=v(this,z,"f").runCommand(e,this,l,s+1,r,p||g||r);return this[Bt](t,a,!!i,!1)}if(!t&&e!==v(this,F,"f")){t=e;break}}!v(this,z,"f").hasDefaultCommand()&&v(this,lt,"f")&&t&&!y&&v(this,yt,"f").recommendCommands(t,h)}v(this,F,"f")&&c._.includes(v(this,F,"f"))&&!m&&(v(this,T,"f")&&E(!0),this.showCompletionScript(),this.exit(0))}if(v(this,z,"f").hasDefaultCommand()&&!y){const t=v(this,z,"f").runCommand(null,this,l,0,r,p||g||r);return this[Bt](t,a,!!i,!1)}if(m){v(this,T,"f")&&E(!0);const s=(t=[].concat(t)).slice(t.indexOf(`--${v(this,U,"f").completionKey}`)+1);return v(this,U,"f").getCompletion(s,((t,s)=>{if(t)throw new e(t.message);(s||[]).forEach((t=>{v(this,Q,"f").log(t)})),this.exit(0)})),this[Bt](c,!a,!!i,!1)}if(v(this,J,"f")||(p?(v(this,T,"f")&&E(!0),o=!0,this.showHelp("log"),this.exit(0)):g&&(v(this,T,"f")&&E(!0),o=!0,v(this,pt,"f").showVersion("log"),this.exit(0))),!o&&v(this,et,"f").skipValidation.length>0&&(o=Object.keys(c).some((t=>v(this,et,"f").skipValidation.indexOf(t)>=0&&!0===c[t]))),!o){if(l.error)throw new e(l.error.message);if(!m){const t=this[Zt](u,{},l.error);i||(d=C(c,this,v(this,K,"f").getMiddleware(),!0)),d=this[zt](t,null!=d?d:c),f(d)&&!i&&(d=d.then((()=>C(c,this,v(this,K,"f").getMiddleware(),!1))))}}}catch(t){if(!(t instanceof e))throw t;v(this,pt,"f").fail(t.message,t)}return this[Bt](null!=d?d:c,a,!!i,!0)}[Zt](t,s,i,n){const r={...this.getDemandedOptions()};return o=>{if(i)throw new e(i.message);v(this,yt,"f").nonOptionCount(o),v(this,yt,"f").requiredArguments(o,r);let a=!1;v(this,dt,"f")&&(a=v(this,yt,"f").unknownCommands(o)),v(this,ft,"f")&&!a?v(this,yt,"f").unknownArguments(o,t,s,!!n):v(this,ut,"f")&&v(this,yt,"f").unknownArguments(o,t,{},!1,!1),v(this,yt,"f").limitedChoices(o),v(this,yt,"f").implications(o),v(this,yt,"f").conflicting(o)}}[Xt](){O(this,J,!0,"f")}[Qt](t){if("string"==typeof t)v(this,et,"f").key[t]=!0;else for(const e of t)v(this,et,"f").key[e]=!0}}var ee,se;const{readFileSync:ie}=__nccwpck_require__(7147),{inspect:ne}=__nccwpck_require__(3837),{resolve:re}=__nccwpck_require__(1017),oe=__nccwpck_require__(452),ae=__nccwpck_require__(1970);var he,le={assert:{notStrictEqual:t.notStrictEqual,strictEqual:t.strictEqual},cliui:__nccwpck_require__(7059),findUp:__nccwpck_require__(2644),getEnv:t=>process.env[t],getCallerFile:__nccwpck_require__(351),getProcessArgvBin:y,inspect:ne,mainFilename:null!==(se=null===(ee= false||void 0===__nccwpck_require__(9167)?void 0:__nccwpck_require__.c[__nccwpck_require__.s])||void 0===ee?void 0:ee.filename)&&void 0!==se?se:process.cwd(),Parser:ae,path:__nccwpck_require__(1017),process:{argv:()=>process.argv,cwd:process.cwd,emitWarning:(t,e)=>process.emitWarning(t,e),execPath:()=>process.execPath,exit:t=>{process.exit(t)},nextTick:process.nextTick,stdColumns:void 0!==process.stdout.columns?process.stdout.columns:null},readFileSync:ie,require:__nccwpck_require__(9167),requireDirectory:__nccwpck_require__(9200),stringWidth:__nccwpck_require__(2577),y18n:oe({directory:re(__dirname,"../locales"),updateFiles:!1})};const ce=(null===(he=null===process||void 0===process?void 0:process.env)||void 0===he?void 0:he.YARGS_MIN_NODE_VERSION)?Number(process.env.YARGS_MIN_NODE_VERSION):12;if(process&&process.version){if(Number(process.version.match(/v([^.]+)/)[1])<ce)throw Error(`yargs supports a minimum Node.js version of ${ce}. Read our version support policy: https://github.com/yargs/yargs#supported-nodejs-versions`)}const fe=__nccwpck_require__(1970);var de,ue={applyExtends:n,cjsPlatformShim:le,Yargs:(de=le,(t=[],e=de.process.cwd(),s)=>{const i=new te(t,e,s,de);return Object.defineProperty(i,"argv",{get:()=>i.parse(),enumerable:!0}),i.help(),i.version(),i}),argsert:h,isPromise:f,objFilter:g,parseCommand:o,Parser:fe,processArgv:b,YError:e};module.exports=ue;
 
 
 /***/ }),
@@ -48352,8 +55069,8 @@ module.exports = JSON.parse('[[[0,44],"disallowed_STD3_valid"],[[45,46],"valid"]
 /******/ 		}
 /******/ 		// Create a new module (and put it into the cache)
 /******/ 		var module = __webpack_module_cache__[moduleId] = {
-/******/ 			// no module.id needed
-/******/ 			// no module.loaded needed
+/******/ 			id: moduleId,
+/******/ 			loaded: false,
 /******/ 			exports: {}
 /******/ 		};
 /******/ 	
@@ -48366,110 +55083,42 @@ module.exports = JSON.parse('[[[0,44],"disallowed_STD3_valid"],[[45,46],"valid"]
 /******/ 			if(threw) delete __webpack_module_cache__[moduleId];
 /******/ 		}
 /******/ 	
+/******/ 		// Flag the module as loaded
+/******/ 		module.loaded = true;
+/******/ 	
 /******/ 		// Return the exports of the module
 /******/ 		return module.exports;
 /******/ 	}
 /******/ 	
+/******/ 	// expose the module cache
+/******/ 	__nccwpck_require__.c = __webpack_module_cache__;
+/******/ 	
 /************************************************************************/
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/node module decorator */
+/******/ 	(() => {
+/******/ 		__nccwpck_require__.nmd = (module) => {
+/******/ 			module.paths = [];
+/******/ 			if (!module.children) module.children = [];
+/******/ 			return module;
+/******/ 		};
+/******/ 	})();
+/******/ 	
 /******/ 	/* webpack/runtime/compat */
 /******/ 	
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
-var __webpack_exports__ = {};
-// This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
-(() => {
-const fs = __nccwpck_require__(3292);
-const path = __nccwpck_require__(1017);
-const core = __nccwpck_require__(2186);
-const tc = __nccwpck_require__(7784);
-const puppeteer = __nccwpck_require__(4807);
-const { CHROMIUM_REVISION } = __nccwpck_require__(1942);
-
-async function main() {
-  const script = core.getInput("script", { required: true });
-
-  const chromiumPath = await findOrDownloadChromium();
-
-  core.info("Launching browser");
-  const browser = await puppeteer.launch({
-    executablePath: chromiumPath,
-  });
-
-  try {
-    core.info("Script running");
-    const result = JSON.stringify(await callAsyncFunction({ browser }, script));
-    core.debug(`result: ${result}`);
-    core.setOutput("result", result);
-    core.info("Script finished!");
-  } catch (error) {
-    core.error("Error during running script");
-    core.setFailed(error.message);
-  }
-
-  await browser.close();
-  core.info("Browser closed");
-}
-
-async function findOrDownloadChromium() {
-  core.info(`Target Chromium revision: ${CHROMIUM_REVISION}`);
-
-  // Download and create cache if cache is not found
-  const cacheVersion = `0.0.${CHROMIUM_REVISION}`;
-  let cachedPath = tc.find("chromium", cacheVersion);
-  if (cachedPath) {
-    core.info("Using cached Chromium");
-  } else {
-    core.info(`Chromium cache not found; Downloading`);
-    const downloadPath = path.resolve(__dirname, "tmp");
-    const browserFetcher = new puppeteer.BrowserFetcher({
-      path: downloadPath,
-    });
-    const revisionInfo = await browserFetcher.download(
-      CHROMIUM_REVISION,
-      (x, y) => {
-        core.debug(`Download progress: ${x}/${y}`);
-      }
-    );
-    core.info("Download finished!");
-
-    core.debug("Revision info: ", revisionInfo);
-
-    // Create symlink to launch the executable easily
-    await fs.symlink(
-      revisionInfo.executablePath,
-      path.join(revisionInfo.folderPath, "chromium")
-    );
-
-    cachedPath = await tc.cacheDir(
-      revisionInfo.folderPath,
-      "chromium",
-      cacheVersion
-    );
-  }
-
-  core.debug(`Cached path: ${cachedPath}`);
-
-  return path.join(cachedPath, "chromium");
-}
-
-const AsyncFunction = (async () => {}).constructor;
-
-async function callAsyncFunction(args, source) {
-  const fn = new AsyncFunction(...Object.keys(args), source);
-  return fn(...Object.values(args));
-}
-
-function handleError(error) {
-  console.error(error);
-  core.setFailed(error);
-}
-
-main().catch(handleError);
-process.on("unhandledRejection", handleError);
-
-})();
-
-module.exports = __webpack_exports__;
+/******/ 	
+/******/ 	// module cache are used so entry inlining is disabled
+/******/ 	// startup
+/******/ 	// Load entry module and return exports
+/******/ 	var __webpack_exports__ = __nccwpck_require__(__nccwpck_require__.s = 4351);
+/******/ 	module.exports = __webpack_exports__;
+/******/ 	
 /******/ })()
 ;
